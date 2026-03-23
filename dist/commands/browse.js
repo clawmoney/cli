@@ -82,7 +82,7 @@ export async function browseCommand(options) {
     if (taskType === 'boost' || taskType === 'all') {
         const boostSpinner = ora('Fetching boost tasks...').start();
         try {
-            const resp = await apiGet(`/api/v1/tasks/?status=${status}&sort=reward&limit=${limit}`, apiKey);
+            const resp = await apiGet(`/api/v1/boost/?status=${status}&limit=${limit}`, apiKey);
             if (!resp.ok) {
                 boostSpinner.fail(`Failed to fetch boost tasks (${resp.status})`);
             }

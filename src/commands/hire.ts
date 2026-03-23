@@ -1,17 +1,20 @@
 import chalk from 'chalk';
 import ora from 'ora';
-import { apiPost } from '../utils/api.js';
+import { apiGet, apiPost } from '../utils/api.js';
 import { awalExec } from '../utils/awal.js';
 import { requireConfig } from '../utils/config.js';
-import { prompt, confirm } from '../utils/prompt.js';
 
 interface SubmitOptions {
   url: string;
+  platform?: string;
   text?: string;
 }
 
 interface VerifyOptions {
   witness?: boolean;
+  relevance: string;
+  quality: string;
+  vote?: string;
 }
 
 export async function hireSubmitCommand(
@@ -20,18 +23,31 @@ export async function hireSubmitCommand(
 ): Promise<void> {
   const config = requireConfig();
 
+  // 自动检测平台（从 task 获取）
+  let platform = options.platform;
+  if (!platform) {
+    try {
+      const taskResp = await apiGet<{ platform?: string }>(`/api/v1/hire/${taskId}`, config.api_key);
+      if (taskResp.ok && taskResp.data.platform) {
+        platform = taskResp.data.platform;
+      }
+    } catch { /* ignore */ }
+  }
+  if (!platform) platform = 'twitter';
+
   console.log('');
-  const spinner = ora(`Submitting proof for task ${taskId}...`).start();
+  const spinner = ora(`Submitting proof for task ${taskId.slice(0, 8)}...`).start();
 
   try {
     const body: Record<string, string> = {
+      platform,
       proof_url: options.url,
     };
     if (options.text) {
-      body.content = options.text;
+      body.content_text = options.text;
     }
 
-    const resp = await apiPost<{ id?: string; message?: string }>(
+    const resp = await apiPost<{ id?: string; detail?: string }>(
       `/api/v1/hire/${taskId}/submit`,
       body,
       config.api_key
@@ -39,16 +55,14 @@ export async function hireSubmitCommand(
 
     if (!resp.ok) {
       spinner.fail('Submission failed');
-      console.error(chalk.red(JSON.stringify(resp.data)));
+      const detail = typeof resp.data === 'object' ? (resp.data.detail || JSON.stringify(resp.data)) : String(resp.data);
+      console.error(chalk.red(`  ${detail}`));
       return;
     }
 
-    spinner.succeed('Proof submitted successfully');
+    spinner.succeed('Proof submitted');
     if (resp.data.id) {
       console.log(chalk.dim(`  Submission ID: ${resp.data.id}`));
-    }
-    if (resp.data.message) {
-      console.log(chalk.dim(`  ${resp.data.message}`));
     }
   } catch (err) {
     spinner.fail('Submission failed');
@@ -58,7 +72,7 @@ export async function hireSubmitCommand(
 }
 
 export async function hireVerifyCommand(
-  taskId: string,
+  submissionId: string,
   options: VerifyOptions
 ): Promise<void> {
   const config = requireConfig();
@@ -66,80 +80,120 @@ export async function hireVerifyCommand(
   console.log('');
 
   if (options.witness) {
-    // Witness verification via x402
-    const tweetUrl = await prompt(
-      chalk.cyan('? ') + 'Enter the tweet URL to verify: '
-    );
-
-    if (!tweetUrl) {
-      console.log(chalk.red('Tweet URL is required for witness verification.'));
-      return;
-    }
-
-    // Extract tweet ID from URL
-    const tweetIdMatch = tweetUrl.match(/status\/(\d+)/);
-    if (!tweetIdMatch) {
-      console.log(chalk.red('Could not extract tweet ID from URL.'));
-      return;
-    }
-    const tweetId = tweetIdMatch[1];
-
-    const witnessSpinner = ora('Paying for witness verification via x402...').start();
+    // Get submission to extract proof_url
+    const subSpinner = ora('Fetching submission...').start();
+    let proofUrl = '';
     try {
-      const witnessResult = await awalExec([
-        'x402',
-        'pay',
-        `https://witness.bnbot.ai/x/${tweetId}`,
+      // Try to get submission details - submissionId might be used directly
+      const resp = await apiGet<{ proof_url?: string }>(`/api/v1/hire/submissions/${submissionId}`, config.api_key);
+      if (resp.ok && resp.data.proof_url) {
+        proofUrl = resp.data.proof_url;
+        subSpinner.succeed(`Proof URL: ${proofUrl}`);
+      } else {
+        subSpinner.warn('Could not fetch submission, will need tweet ID');
+      }
+    } catch {
+      subSpinner.warn('Could not fetch submission');
+    }
+
+    // Extract tweet ID
+    let tweetId = '';
+    if (proofUrl) {
+      const match = proofUrl.match(/status\/(\d+)/);
+      if (match) tweetId = match[1];
+    }
+    if (!tweetId) {
+      console.error(chalk.red('  Could not extract tweet ID from proof URL'));
+      return;
+    }
+
+    // Fetch witness proof via x402
+    const witnessSpinner = ora('Fetching witness proof via x402 ($0.01)...').start();
+    let witnessData: any;
+    try {
+      witnessData = await awalExec([
+        'x402', 'pay', `https://witness.bnbot.ai/x/${tweetId}`,
       ]);
+      witnessSpinner.succeed('Witness proof obtained');
+    } catch (err) {
+      witnessSpinner.fail('Witness fetch failed');
+      console.error(chalk.red((err as Error).message));
+      return;
+    }
 
-      witnessSpinner.succeed('Witness verification paid');
-      console.log(chalk.dim(`  Response: ${JSON.stringify(witnessResult.data)}`));
+    // Parse witness response — awalExec wraps: { success, data: { status, data: { code, data: {...}, proof: {...} } } }
+    const proof = witnessData?.data?.data?.proof || witnessData?.data?.proof || witnessData?.proof;
+    if (!proof) {
+      console.error(chalk.red('  No proof in witness response'));
+      console.log(chalk.dim(`  Raw: ${JSON.stringify(witnessData).slice(0, 200)}`));
+      return;
+    }
 
-      // Submit the witness proof
-      const submitSpinner = ora('Submitting witness proof...').start();
-      const resp = await apiPost(
-        `/api/v1/hire/${taskId}/verify`,
+    // Submit witness verification
+    const vote = options.vote || 'approve';
+    const relevanceScore = parseInt(options.relevance, 10);
+    const qualityScore = parseInt(options.quality, 10);
+    const verifySpinner = ora(`Submitting witness verification (${vote}, R:${relevanceScore} Q:${qualityScore})...`).start();
+    try {
+      const resp = await apiPost<{ id?: string; detail?: string }>(
+        `/api/v1/hire/submissions/${submissionId}/verify`,
         {
-          type: 'witness',
-          tweet_id: tweetId,
-          witness_data: witnessResult.data,
+          vote,
+          relevance_score: relevanceScore,
+          quality_score: qualityScore,
+          tweet_proof: {
+            payload: proof.payload,
+            signature: proof.signature,
+            signer: proof.signer,
+            timestamp: proof.timestamp,
+          },
         },
         config.api_key
       );
 
       if (!resp.ok) {
-        submitSpinner.fail('Witness verification submission failed');
-        console.error(chalk.red(JSON.stringify(resp.data)));
+        verifySpinner.fail('Verification failed');
+        const detail = typeof resp.data === 'object' ? (resp.data.detail || JSON.stringify(resp.data)) : String(resp.data);
+        console.error(chalk.red(`  ${detail}`));
       } else {
-        submitSpinner.succeed('Witness verification submitted');
+        verifySpinner.succeed('Witness verification submitted');
+        if (resp.data.id) {
+          console.log(chalk.dim(`  Verification ID: ${resp.data.id}`));
+        }
       }
     } catch (err) {
-      witnessSpinner.fail('Witness verification failed');
+      verifySpinner.fail('Verification failed');
       console.error(chalk.red((err as Error).message));
     }
   } else {
     // Manual verification
-    console.log(chalk.bold(`  Manual verification for task ${taskId}`));
-    console.log('');
-
-    const approved = await confirm('Approve this submission?', false);
-
-    const spinner = ora('Submitting verification...').start();
+    const vote = options.vote || 'approve';
+    const relevanceScore = parseInt(options.relevance, 10);
+    const qualityScore = parseInt(options.quality, 10);
+    const spinner = ora(`Submitting manual verification (${vote}, R:${relevanceScore} Q:${qualityScore})...`).start();
     try {
-      const resp = await apiPost(
-        `/api/v1/hire/${taskId}/verify`,
+      const resp = await apiPost<{ id?: string; detail?: string }>(
+        `/api/v1/hire/submissions/${submissionId}/verify`,
         {
-          type: 'manual',
-          approved,
+          vote,
+          relevance_score: relevanceScore,
+          quality_score: qualityScore,
+          views: 0,
+          likes: 0,
+          comments: 0,
         },
         config.api_key
       );
 
       if (!resp.ok) {
-        spinner.fail('Verification submission failed');
-        console.error(chalk.red(JSON.stringify(resp.data)));
+        spinner.fail('Verification failed');
+        const detail = typeof resp.data === 'object' ? (resp.data.detail || JSON.stringify(resp.data)) : String(resp.data);
+        console.error(chalk.red(`  ${detail}`));
       } else {
-        spinner.succeed(`Verification submitted: ${approved ? 'APPROVED' : 'REJECTED'}`);
+        spinner.succeed('Manual verification submitted');
+        if (resp.data.id) {
+          console.log(chalk.dim(`  Verification ID: ${resp.data.id}`));
+        }
       }
     } catch (err) {
       spinner.fail('Verification failed');

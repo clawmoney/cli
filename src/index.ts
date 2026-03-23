@@ -55,6 +55,7 @@ hire
   .command('submit <task-id>')
   .description('Submit a proof for a hire task')
   .requiredOption('-u, --url <url>', 'Proof URL (tweet, post, etc.)')
+  .option('-p, --platform <platform>', 'Platform (auto-detected from task)')
   .option('--text <content>', 'Optional text content')
   .action(async (taskId, options) => {
     try {
@@ -66,9 +67,12 @@ hire
   });
 
 hire
-  .command('verify <task-id>')
-  .description('Verify a hire task submission')
-  .option('-w, --witness', 'Use x402 witness verification')
+  .command('verify <submission-id>')
+  .description('Verify a hire submission')
+  .option('-w, --witness', 'Use x402 witness verification ($0.01)')
+  .requiredOption('-r, --relevance <score>', 'Relevance score (1-10)')
+  .requiredOption('-q, --quality <score>', 'Quality score (1-10)')
+  .option('-v, --vote <vote>', 'Vote: approve or reject', 'approve')
   .action(async (taskId, options) => {
     try {
       await hireVerifyCommand(taskId, options);

@@ -137,7 +137,7 @@ export async function browseCommand(options: BrowseOptions): Promise<void> {
     const boostSpinner = ora('Fetching boost tasks...').start();
     try {
       const resp = await apiGet<{ data?: BoostTask[]; count?: number }>(
-        `/api/v1/tasks/?status=${status}&sort=reward&limit=${limit}`,
+        `/api/v1/boost/?status=${status}&limit=${limit}`,
         apiKey
       );
 
