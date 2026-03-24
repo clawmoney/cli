@@ -11,6 +11,13 @@ import {
   walletSendCommand,
 } from './commands/wallet.js';
 import { tweetCommand } from './commands/tweet.js';
+import {
+  hubStartCommand,
+  hubStopCommand,
+  hubStatusCommand,
+  hubRegisterCommand,
+  hubSkillsCommand,
+} from './commands/hub.js';
 
 const program = new Command();
 
@@ -142,6 +149,76 @@ program
   .action(async (text, options) => {
     try {
       await tweetCommand(text, options);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+// hub
+const hub = program
+  .command('hub')
+  .description('Agent Hub: provide services, register skills');
+
+hub
+  .command('start')
+  .description('Start Hub Provider (background process)')
+  .option('--cli <command>', 'CLI command for task execution', 'claude')
+  .action(async (options) => {
+    try {
+      await hubStartCommand(options);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+hub
+  .command('stop')
+  .description('Stop Hub Provider')
+  .action(async () => {
+    try {
+      await hubStopCommand();
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+hub
+  .command('status')
+  .description('Check Hub Provider status')
+  .action(async () => {
+    try {
+      await hubStatusCommand();
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+hub
+  .command('register')
+  .description('Register a skill on the Hub')
+  .requiredOption('-n, --name <name>', 'Skill name')
+  .requiredOption('-c, --category <category>', 'Category (e.g., generation/image)')
+  .requiredOption('-d, --description <desc>', 'Description')
+  .requiredOption('-p, --price <price>', 'Price per call in USD')
+  .action(async (options) => {
+    try {
+      await hubRegisterCommand(options);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+hub
+  .command('skills')
+  .description('List my registered skills')
+  .action(async () => {
+    try {
+      await hubSkillsCommand();
     } catch (err) {
       console.error((err as Error).message);
       process.exit(1);
