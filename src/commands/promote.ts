@@ -17,7 +17,7 @@ interface VerifyOptions {
   vote?: string;
 }
 
-export async function hireSubmitCommand(
+export async function promoteSubmitCommand(
   taskId: string,
   options: SubmitOptions
 ): Promise<void> {
@@ -27,7 +27,7 @@ export async function hireSubmitCommand(
   let platform = options.platform;
   if (!platform) {
     try {
-      const taskResp = await apiGet<{ platform?: string }>(`/api/v1/hire/${taskId}`, config.api_key);
+      const taskResp = await apiGet<{ platform?: string }>(`/api/v1/promote/${taskId}`, config.api_key);
       if (taskResp.ok && taskResp.data.platform) {
         platform = taskResp.data.platform;
       }
@@ -48,7 +48,7 @@ export async function hireSubmitCommand(
     }
 
     const resp = await apiPost<{ id?: string; detail?: string }>(
-      `/api/v1/hire/${taskId}/submit`,
+      `/api/v1/promote/${taskId}/submit`,
       body,
       config.api_key
     );
@@ -71,7 +71,7 @@ export async function hireSubmitCommand(
   console.log('');
 }
 
-export async function hireVerifyCommand(
+export async function promoteVerifyCommand(
   submissionId: string,
   options: VerifyOptions
 ): Promise<void> {
@@ -85,7 +85,7 @@ export async function hireVerifyCommand(
     let proofUrl = '';
     try {
       // Try to get submission details - submissionId might be used directly
-      const resp = await apiGet<{ proof_url?: string }>(`/api/v1/hire/submissions/${submissionId}`, config.api_key);
+      const resp = await apiGet<{ proof_url?: string }>(`/api/v1/promote/submissions/${submissionId}`, config.api_key);
       if (resp.ok && resp.data.proof_url) {
         proofUrl = resp.data.proof_url;
         subSpinner.succeed(`Proof URL: ${proofUrl}`);
@@ -136,7 +136,7 @@ export async function hireVerifyCommand(
     const verifySpinner = ora(`Submitting witness verification (${vote}, R:${relevanceScore} Q:${qualityScore})...`).start();
     try {
       const resp = await apiPost<{ id?: string; detail?: string }>(
-        `/api/v1/hire/submissions/${submissionId}/verify`,
+        `/api/v1/promote/submissions/${submissionId}/verify`,
         {
           vote,
           relevance_score: relevanceScore,
@@ -173,7 +173,7 @@ export async function hireVerifyCommand(
     const spinner = ora(`Submitting manual verification (${vote}, R:${relevanceScore} Q:${qualityScore})...`).start();
     try {
       const resp = await apiPost<{ id?: string; detail?: string }>(
-        `/api/v1/hire/submissions/${submissionId}/verify`,
+        `/api/v1/promote/submissions/${submissionId}/verify`,
         {
           vote,
           relevance_score: relevanceScore,

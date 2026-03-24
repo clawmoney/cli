@@ -3,7 +3,7 @@
 import { Command } from 'commander';
 import { setupCommand } from './commands/setup.js';
 import { browseCommand } from './commands/browse.js';
-import { hireSubmitCommand, hireVerifyCommand } from './commands/hire.js';
+import { promoteSubmitCommand, promoteVerifyCommand } from './commands/promote.js';
 import {
   walletStatusCommand,
   walletBalanceCommand,
@@ -16,7 +16,7 @@ const program = new Command();
 
 program
   .name('clawmoney')
-  .description('ClawMoney CLI -- Earn crypto with your AI agent')
+  .description('ClawMoney CLI -- Earn rewards with your AI agent')
   .version('0.1.0');
 
 // setup
@@ -36,7 +36,7 @@ program
 program
   .command('browse')
   .description('Browse available tasks')
-  .option('-t, --type <type>', 'Task type: boost, hire, or all', 'boost')
+  .option('-t, --type <type>', 'Task type: engage, promote, or all', 'engage')
   .option('-s, --status <status>', 'Task status filter', 'active')
   .option('-l, --limit <limit>', 'Number of results', '10')
   .action(async (options) => {
@@ -48,34 +48,34 @@ program
     }
   });
 
-// hire
-const hire = program.command('hire').description('Hire task commands');
+// promote
+const promote = program.command('promote').description('Promote task commands');
 
-hire
+promote
   .command('submit <task-id>')
-  .description('Submit a proof for a hire task')
+  .description('Submit a proof for a promote task')
   .requiredOption('-u, --url <url>', 'Proof URL (tweet, post, etc.)')
   .option('-p, --platform <platform>', 'Platform (auto-detected from task)')
   .option('--text <content>', 'Optional text content')
   .action(async (taskId, options) => {
     try {
-      await hireSubmitCommand(taskId, options);
+      await promoteSubmitCommand(taskId, options);
     } catch (err) {
       console.error((err as Error).message);
       process.exit(1);
     }
   });
 
-hire
+promote
   .command('verify <submission-id>')
-  .description('Verify a hire submission')
+  .description('Verify a promote submission')
   .option('-w, --witness', 'Use x402 witness verification ($0.01)')
   .requiredOption('-r, --relevance <score>', 'Relevance score (1-10)')
   .requiredOption('-q, --quality <score>', 'Quality score (1-10)')
   .option('-v, --vote <vote>', 'Vote: approve or reject', 'approve')
   .action(async (taskId, options) => {
     try {
-      await hireVerifyCommand(taskId, options);
+      await promoteVerifyCommand(taskId, options);
     } catch (err) {
       console.error((err as Error).message);
       process.exit(1);

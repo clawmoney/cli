@@ -9,7 +9,7 @@ interface BrowseOptions {
   limit?: string;
 }
 
-interface BoostTask {
+interface EngageTask {
   id: string;
   title?: string;
   tweet_url?: string;
@@ -20,7 +20,7 @@ interface BoostTask {
   created_at?: string;
 }
 
-interface HireTask {
+interface PromoteTask {
   id: string;
   title?: string;
   description?: string;
@@ -45,9 +45,9 @@ function truncate(str: string | undefined, maxLen: number): string {
   return str.length > maxLen ? str.slice(0, maxLen - 1) + '...' : str;
 }
 
-function printBoostTable(tasks: BoostTask[]): void {
+function printEngageTable(tasks: EngageTask[]): void {
   if (tasks.length === 0) {
-    console.log(chalk.dim('  No boost tasks found.'));
+    console.log(chalk.dim('  No engage tasks found.'));
     return;
   }
 
@@ -73,9 +73,9 @@ function printBoostTable(tasks: BoostTask[]): void {
   }
 }
 
-function printHireTable(tasks: HireTask[]): void {
+function printPromoteTable(tasks: PromoteTask[]): void {
   if (tasks.length === 0) {
-    console.log(chalk.dim('  No hire tasks found.'));
+    console.log(chalk.dim('  No promote tasks found.'));
     return;
   }
 
@@ -104,53 +104,53 @@ function printHireTable(tasks: HireTask[]): void {
 export async function browseCommand(options: BrowseOptions): Promise<void> {
   const config = loadConfig();
   const apiKey = config?.api_key;
-  const taskType = options.type || 'boost';
+  const taskType = options.type || 'engage';
   const status = options.status || 'active';
   const limit = parseInt(options.limit || '10', 10);
 
   console.log('');
 
-  if (taskType === 'hire' || taskType === 'all') {
-    const hireSpinner = ora('Fetching hire tasks...').start();
+  if (taskType === 'promote' || taskType === 'all') {
+    const promoteSpinner = ora('Fetching promote tasks...').start();
     try {
-      const resp = await apiGet<{ data?: HireTask[]; count?: number }>(
-        `/api/v1/hire/?status=${status}&sort_by=total_budget&sort_order=desc&limit=${limit}`,
+      const resp = await apiGet<{ data?: PromoteTask[]; count?: number }>(
+        `/api/v1/promote/?status=${status}&sort_by=total_budget&sort_order=desc&limit=${limit}`,
         apiKey
       );
 
       if (!resp.ok) {
-        hireSpinner.fail(`Failed to fetch hire tasks (${resp.status})`);
+        promoteSpinner.fail(`Failed to fetch promote tasks (${resp.status})`);
       } else {
         const body = resp.data;
-        const tasks = (body.data || (Array.isArray(body) ? body : [])) as HireTask[];
-        hireSpinner.succeed(`Hire Tasks (${tasks.length})`);
-        printHireTable(tasks);
+        const tasks = (body.data || (Array.isArray(body) ? body : [])) as PromoteTask[];
+        promoteSpinner.succeed(`Promote Tasks (${tasks.length})`);
+        printPromoteTable(tasks);
       }
     } catch (err) {
-      hireSpinner.fail('Failed to fetch hire tasks');
+      promoteSpinner.fail('Failed to fetch promote tasks');
       console.error(chalk.red((err as Error).message));
     }
     console.log('');
   }
 
-  if (taskType === 'boost' || taskType === 'all') {
-    const boostSpinner = ora('Fetching boost tasks...').start();
+  if (taskType === 'engage' || taskType === 'all') {
+    const engageSpinner = ora('Fetching engage tasks...').start();
     try {
-      const resp = await apiGet<{ data?: BoostTask[]; count?: number }>(
-        `/api/v1/boost/?status=${status}&limit=${limit}`,
+      const resp = await apiGet<{ data?: EngageTask[]; count?: number }>(
+        `/api/v1/engage/?status=${status}&limit=${limit}`,
         apiKey
       );
 
       if (!resp.ok) {
-        boostSpinner.fail(`Failed to fetch boost tasks (${resp.status})`);
+        engageSpinner.fail(`Failed to fetch engage tasks (${resp.status})`);
       } else {
         const body = resp.data;
-        const tasks = (body.data || (Array.isArray(body) ? body : [])) as BoostTask[];
-        boostSpinner.succeed(`Boost Tasks (${tasks.length})`);
-        printBoostTable(tasks);
+        const tasks = (body.data || (Array.isArray(body) ? body : [])) as EngageTask[];
+        engageSpinner.succeed(`Engage Tasks (${tasks.length})`);
+        printEngageTable(tasks);
       }
     } catch (err) {
-      boostSpinner.fail('Failed to fetch boost tasks');
+      engageSpinner.fail('Failed to fetch engage tasks');
       console.error(chalk.red((err as Error).message));
     }
     console.log('');

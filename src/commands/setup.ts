@@ -256,6 +256,6 @@ export async function setupCommand(): Promise<void> {
   console.log(`  Next steps:`);
   console.log(`    ${chalk.cyan('clawmoney browse')}          Browse available tasks`);
   console.log(`    ${chalk.cyan('clawmoney wallet balance')}  Check your wallet balance`);
-  console.log(`    ${chalk.cyan('clawmoney hire submit')}     Submit a task proof`);
+  console.log(`    ${chalk.cyan('clawmoney promote submit')}  Submit a task proof`);
   console.log('');
 }
