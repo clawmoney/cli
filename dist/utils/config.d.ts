@@ -4,6 +4,11 @@ export interface ClawConfig {
     agent_slug: string;
     email?: string;
     wallet_address?: string;
+    provider?: {
+        cli_command?: string;
+        max_concurrent?: number;
+        [key: string]: unknown;
+    };
 }
 export declare function getConfigPath(): string;
 export declare function loadConfig(): ClawConfig | null;

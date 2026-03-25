@@ -42,7 +42,7 @@ export async function hubStartCommand(options) {
         if (pid && isPidAlive(pid)) {
             spinner.succeed(chalk.green(`Hub Provider started (PID ${pid})`));
             console.log(chalk.dim(`  Log file: ${LOG_FILE}`));
-            console.log(chalk.dim(`  CLI command: ${options.cli || "claude"}`));
+            console.log(chalk.dim(`  CLI: ${options.cli || config.provider?.cli_command || "openclaw"}`));
             console.log(chalk.dim(`  API key: ${config.api_key.slice(0, 8)}...`));
         }
         else {
@@ -92,6 +92,98 @@ export async function hubStatusCommand() {
     else {
         console.log(chalk.yellow(`Hub Provider PID ${pid} is not alive (stale PID file).`));
         removePid();
+    }
+}
+export async function hubSearchCommand(options) {
+    const spinner = ora("Searching Hub...").start();
+    try {
+        const params = new URLSearchParams();
+        if (options.query)
+            params.set("q", options.query);
+        if (options.category)
+            params.set("category", options.category);
+        if (options.sort)
+            params.set("sort", options.sort);
+        if (options.limit)
+            params.set("limit", options.limit);
+        if (options.maxPrice)
+            params.set("max_price", options.maxPrice);
+        params.set("online_only", "true");
+        const resp = await apiGet(`/api/v1/hub/skills/search?${params}`);
+        if (!resp.ok) {
+            spinner.fail(chalk.red(`Search failed (${resp.status})`));
+            process.exit(1);
+        }
+        const skills = resp.data.data ?? [];
+        const count = resp.data.count ?? skills.length;
+        spinner.succeed(`Found ${count} service(s)`);
+        console.log("");
+        if (skills.length === 0) {
+            console.log(chalk.dim("  No services found. Try broader search terms."));
+            return;
+        }
+        console.log(chalk.bold(`  ${"Agent".padEnd(18)} ${"Skill".padEnd(18)} ${"Category".padEnd(18)} ${"Price".padEnd(8)} ${"Rating".padEnd(8)} ${"Calls".padEnd(7)}`));
+        console.log(chalk.dim("  " + "-".repeat(79)));
+        for (const s of skills) {
+            const agent = (s.agent_name ?? s.agent_slug ?? "-").slice(0, 17);
+            const name = (s.skill_name ?? "-").slice(0, 17);
+            const category = (s.category ?? "-").slice(0, 17);
+            const price = s.price !== undefined ? `$${s.price.toFixed(3)}` : "-";
+            const rating = s.avg_rating != null ? s.avg_rating.toFixed(1) : "-";
+            const calls = String(s.total_calls ?? 0);
+            const online = s.agent_is_online ? chalk.green("●") : chalk.dim("○");
+            console.log(`  ${online} ${chalk.cyan(agent.padEnd(17))} ${name.padEnd(18)} ${category.padEnd(18)} ${chalk.green(price.padEnd(8))} ${rating.padEnd(8)} ${calls.padEnd(7)}`);
+        }
+    }
+    catch (err) {
+        spinner.fail(chalk.red("Search failed"));
+        throw err;
+    }
+}
+export async function hubCallCommand(options) {
+    const config = requireConfig();
+    let inputData = {};
+    if (options.input) {
+        try {
+            inputData = JSON.parse(options.input);
+        }
+        catch {
+            console.error(chalk.red("Invalid JSON for --input. Example: '{\"prompt\":\"hello\"}'"));
+            process.exit(1);
+        }
+    }
+    const timeout = options.timeout ? parseInt(options.timeout, 10) : 60;
+    const spinner = ora(`Calling ${options.agent}/${options.skill}...`).start();
+    try {
+        // gateway/invoke takes agent_id, skill, timeout as query params; input_data as POST body
+        const qs = new URLSearchParams({
+            agent_id: options.agent,
+            skill: options.skill,
+            timeout: String(timeout),
+            payment_method: "ledger",
+        });
+        const resp = await apiPost(`/api/v1/hub/gateway/invoke?${qs}`, inputData, config.api_key);
+        if (!resp.ok) {
+            const raw = resp.data && typeof resp.data === "object" && "detail" in resp.data
+                ? resp.data.detail
+                : resp.data;
+            const detail = typeof raw === "string" ? raw : JSON.stringify(raw);
+            spinner.fail(chalk.red(`Call failed (${resp.status}): ${detail}`));
+            process.exit(1);
+        }
+        const result = resp.data;
+        spinner.succeed(chalk.green("Call completed!"));
+        console.log("");
+        console.log(`  ${chalk.bold("Order:")}    ${result.id ?? "-"}`);
+        console.log(`  ${chalk.bold("Duration:")} ${typeof result.duration === "number" ? result.duration.toFixed(1) + "s" : "-"}`);
+        console.log(`  ${chalk.bold("Cost:")}     $${typeof result.price === "number" ? result.price.toFixed(3) : "-"}`);
+        console.log("");
+        console.log(chalk.bold("  Output:"));
+        console.log(chalk.cyan("  " + JSON.stringify(result.output_data ?? result.output ?? {}, null, 2).replace(/\n/g, "\n  ")));
+    }
+    catch (err) {
+        spinner.fail(chalk.red("Call failed"));
+        throw err;
     }
 }
 export async function hubRegisterCommand(options) {

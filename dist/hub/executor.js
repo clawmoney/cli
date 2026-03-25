@@ -3,6 +3,7 @@ import { isProcessed, markProcessed } from "./dedup.js";
 import { replaceLocalPaths } from "./media.js";
 import { logger } from "./logger.js";
 const TIMEOUT_BUFFER_S = 15;
+// ── Prompt builder ──
 function buildPrompt(call, config) {
     const skillConfig = config.provider.skills?.[call.skill];
     if (skillConfig?.prompt_template) {
@@ -13,15 +14,29 @@ function buildPrompt(call, config) {
     return [
         "You received a paid service request via ClawMoney Hub.",
         `Skill: ${call.skill}`,
+        `Category: ${call.category}`,
+        `From: ${call.from}`,
+        `Price: $${call.price}`,
         `Input: ${JSON.stringify(call.input, null, 2)}`,
         "",
         "Execute this task and return the result as JSON.",
-        "If you generate any files, save them and include their paths in the output.",
+        "If you generate any files (images, videos, etc.), save them and include their file paths in the output.",
+        "Return ONLY the JSON result, no other text.",
     ].join("\n");
 }
+// ── CLI execution (openclaw agent / claude -p) ──
 function runCli(command, prompt, timeoutMs) {
     return new Promise((resolve) => {
-        const args = ["-p", prompt, "--output-format", "json"];
+        // Build args based on command
+        let args;
+        if (command === "openclaw") {
+            // openclaw agent --message "..." --local
+            args = ["agent", "--message", prompt, "--local"];
+        }
+        else {
+            // claude -p "..." --output-format json
+            args = ["-p", prompt, "--output-format", "json"];
+        }
         const child = spawn(command, args, {
             stdio: ["ignore", "pipe", "pipe"],
             timeout: timeoutMs,
@@ -44,6 +59,7 @@ function runCli(command, prompt, timeoutMs) {
         });
     });
 }
+// ── JSON parser ──
 function parseJsonOutput(raw) {
     try {
         return JSON.parse(raw);
@@ -62,6 +78,7 @@ function parseJsonOutput(raw) {
     }
     return null;
 }
+// ── Executor ──
 export class Executor {
     config;
     send;
@@ -112,10 +129,10 @@ export class Executor {
     async executeTask(call) {
         try {
             const prompt = buildPrompt(call, this.config);
-            const timeoutMs = Math.max((call.timeout - TIMEOUT_BUFFER_S) * 1000, 30_000);
+            const timeoutS = Math.max(call.timeout - TIMEOUT_BUFFER_S, 30);
             const command = this.config.provider.cli_command;
-            logger.info(`Executing: ${command} for skill="${call.skill}" order=${call.order_id} (timeout=${Math.round(timeoutMs / 1000)}s)`);
-            const { stdout, stderr, exitCode } = await runCli(command, prompt, timeoutMs);
+            logger.info(`Executing: ${command} for skill="${call.skill}" order=${call.order_id} (timeout=${timeoutS}s)`);
+            const { stdout, stderr, exitCode } = await runCli(command, prompt, timeoutS * 1000);
             if (exitCode !== 0) {
                 const errMsg = stderr.trim() || `CLI exited with code ${exitCode}`;
                 logger.error(`CLI failed (code=${exitCode}):`, errMsg);
@@ -127,16 +144,11 @@ export class Executor {
                 return;
             }
             const parsed = parseJsonOutput(stdout);
-            if (!parsed) {
-                logger.warn("CLI output was not valid JSON, wrapping as text");
-                this.send({
-                    event: "deliver",
-                    order_id: call.order_id,
-                    output: { result: stdout.trim().slice(0, 5000) },
-                });
-                return;
-            }
-            const output = await replaceLocalPaths(parsed, this.config);
+            let output = parsed ?? {
+                result: stdout.trim().slice(0, 5000),
+            };
+            // Upload local files to R2 if any
+            output = await replaceLocalPaths(output, this.config);
             const sent = this.send({
                 event: "deliver",
                 order_id: call.order_id,

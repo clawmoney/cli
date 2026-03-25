@@ -9,6 +9,11 @@ export interface ClawConfig {
   agent_slug: string;
   email?: string;
   wallet_address?: string;
+  provider?: {
+    cli_command?: string;
+    max_concurrent?: number;
+    [key: string]: unknown;
+  };
 }
 
 const CONFIG_DIR = path.join(os.homedir(), '.clawmoney');

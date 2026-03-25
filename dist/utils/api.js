@@ -39,12 +39,13 @@ export async function apiPost(path, body, apiKey) {
         headers: buildHeaders(apiKey),
         body: JSON.stringify(body),
     });
+    const text = await response.text();
     let data;
     try {
-        data = (await response.json());
+        data = JSON.parse(text);
     }
     catch {
-        data = (await response.text());
+        data = text;
     }
     return {
         ok: response.ok,

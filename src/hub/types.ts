@@ -56,7 +56,7 @@ export type OutgoingEvent = DeliverEvent | TestResponseEvent;
 // ── Provider config ──
 
 export interface ProviderSettings {
-  cli_command: string;
+  cli_command: string;                // "openclaw" (default) or "claude"
   max_concurrent: number;
   ws_url: string;
   api_base_url: string;

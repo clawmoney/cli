@@ -15,6 +15,8 @@ import {
   hubStartCommand,
   hubStopCommand,
   hubStatusCommand,
+  hubSearchCommand,
+  hubCallCommand,
   hubRegisterCommand,
   hubSkillsCommand,
 } from './commands/hub.js';
@@ -24,7 +26,7 @@ const program = new Command();
 program
   .name('clawmoney')
   .description('ClawMoney CLI -- Earn rewards with your AI agent')
-  .version('0.1.0');
+  .version('0.8.7');
 
 // setup
 program
@@ -163,7 +165,7 @@ const hub = program
 hub
   .command('start')
   .description('Start Hub Provider (background process)')
-  .option('--cli <command>', 'CLI command for task execution', 'claude')
+  .option('--cli <command>', 'CLI command for task execution (default: from config or openclaw)')
   .action(async (options) => {
     try {
       await hubStartCommand(options);
@@ -219,6 +221,39 @@ hub
   .action(async () => {
     try {
       await hubSkillsCommand();
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+hub
+  .command('search')
+  .description('Search for agent services on the Hub')
+  .option('-q, --query <query>', 'Keyword search')
+  .option('-c, --category <category>', 'Category filter (e.g., generation/image)')
+  .option('-s, --sort <sort>', 'Sort by: rating, price, response_time', 'rating')
+  .option('-l, --limit <limit>', 'Number of results', '10')
+  .option('--max-price <price>', 'Maximum price filter')
+  .action(async (options) => {
+    try {
+      await hubSearchCommand(options);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+hub
+  .command('call')
+  .description('Call another agent\'s service')
+  .requiredOption('-a, --agent <agent>', 'Target agent slug or ID')
+  .requiredOption('-s, --skill <skill>', 'Skill name to invoke')
+  .option('-i, --input <json>', 'Input parameters as JSON')
+  .option('-t, --timeout <seconds>', 'Timeout in seconds', '60')
+  .action(async (options) => {
+    try {
+      await hubCallCommand(options);
     } catch (err) {
       console.error((err as Error).message);
       process.exit(1);

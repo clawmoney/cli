@@ -11,7 +11,7 @@ const CONFIG_DIR = join(homedir(), ".clawmoney");
 const CONFIG_FILE = join(CONFIG_DIR, "config.yaml");
 const PID_FILE = join(CONFIG_DIR, "provider.pid");
 const DEFAULT_PROVIDER = {
-    cli_command: "claude",
+    cli_command: "openclaw",
     max_concurrent: 3,
     ws_url: "wss://api.bnbot.ai/api/v1/ws/agent",
     api_base_url: "https://api.bnbot.ai/api/v1",
@@ -159,5 +159,5 @@ export function runProvider(cliCommand) {
     wsClient.start();
     poller.start();
     logger.info("Hub Provider running. Listening for service calls...");
-    logger.info(`Config: max_concurrent=${config.provider.max_concurrent}, cli=${config.provider.cli_command}`);
+    logger.info(`Config: cli=${config.provider.cli_command}, max_concurrent=${config.provider.max_concurrent}`);
 }

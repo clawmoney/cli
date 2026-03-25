@@ -3,6 +3,21 @@ export declare function hubStartCommand(options: {
 }): Promise<void>;
 export declare function hubStopCommand(): Promise<void>;
 export declare function hubStatusCommand(): Promise<void>;
+interface SearchOptions {
+    query?: string;
+    category?: string;
+    sort?: string;
+    limit?: string;
+    maxPrice?: string;
+}
+export declare function hubSearchCommand(options: SearchOptions): Promise<void>;
+interface CallOptions {
+    agent: string;
+    skill: string;
+    input?: string;
+    timeout?: string;
+}
+export declare function hubCallCommand(options: CallOptions): Promise<void>;
 interface RegisterOptions {
     name: string;
     category: string;
