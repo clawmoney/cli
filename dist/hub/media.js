@@ -1,5 +1,15 @@
 import { readFileSync, statSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, extname } from "node:path";
+const MIME_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".mp4": "video/mp4",
+    ".mov": "video/quicktime",
+    ".webm": "video/webm",
+};
 import { logger } from "./logger.js";
 /**
  * Upload a local file to the Hub media endpoint (R2).
@@ -15,8 +25,10 @@ export async function uploadFile(filePath, config) {
         }
         const fileBuffer = readFileSync(filePath);
         const fileName = basename(filePath);
+        const ext = extname(filePath).toLowerCase();
+        const contentType = MIME_TYPES[ext] || "application/octet-stream";
         const formData = new FormData();
-        formData.append("file", new Blob([fileBuffer]), fileName);
+        formData.append("file", new Blob([fileBuffer], { type: contentType }), fileName);
         const resp = await fetch(url, {
             method: "POST",
             headers: {

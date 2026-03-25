@@ -10,7 +10,7 @@ const program = new Command();
 program
     .name('clawmoney')
     .description('ClawMoney CLI -- Earn rewards with your AI agent')
-    .version('0.8.7');
+    .version('0.8.11');
 // setup
 program
     .command('setup')

@@ -1,5 +1,16 @@
 import { readFileSync, statSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, extname } from "node:path";
+
+const MIME_TYPES: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".mp4": "video/mp4",
+  ".mov": "video/quicktime",
+  ".webm": "video/webm",
+};
 import type { ProviderConfig } from "./types.js";
 import { logger } from "./logger.js";
 
@@ -23,8 +34,11 @@ export async function uploadFile(
     const fileBuffer = readFileSync(filePath);
     const fileName = basename(filePath);
 
+    const ext = extname(filePath).toLowerCase();
+    const contentType = MIME_TYPES[ext] || "application/octet-stream";
+
     const formData = new FormData();
-    formData.append("file", new Blob([fileBuffer]), fileName);
+    formData.append("file", new Blob([fileBuffer], { type: contentType }), fileName);
 
     const resp = await fetch(url, {
       method: "POST",

@@ -7,7 +7,7 @@ import type {
   TestResponseEvent,
 } from "./types.js";
 import { isProcessed, markProcessed } from "./dedup.js";
-import { replaceLocalPaths } from "./media.js";
+import { replaceLocalPaths, uploadFile } from "./media.js";
 import { logger } from "./logger.js";
 
 type SendFn = (event: DeliverEvent | TestResponseEvent) => boolean;
@@ -43,14 +43,16 @@ function buildPrompt(call: ServiceCallEvent, config: ProviderConfig): string {
 function runCli(
   command: string,
   prompt: string,
-  timeoutMs: number
+  timeoutMs: number,
+  orderId?: string
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   return new Promise((resolve) => {
     // Build args based on command
     let args: string[];
     if (command === "openclaw") {
-      // openclaw agent --message "..." --local
-      args = ["agent", "--message", prompt, "--local"];
+      // openclaw agent --message "..." --session-id <order_id> --local --json
+      // session-id doesn't need to be pre-created, openclaw auto-creates it
+      args = ["agent", "--message", prompt, "--session-id", orderId || "hub-task", "--local", "--json"];
     } else {
       // claude -p "..." --output-format json
       args = ["-p", prompt, "--output-format", "json"];
@@ -103,6 +105,62 @@ function parseJsonOutput(raw: string): Record<string, unknown> | null {
   }
 
   return null;
+}
+
+// ── OpenClaw response parser ──
+
+interface OpenClawResponse {
+  result: Record<string, unknown>;
+  files: string[];
+  meta: Record<string, unknown> | null;
+}
+
+function parseOpenClawResponse(raw: Record<string, unknown>): OpenClawResponse {
+  const files: string[] = [];
+  let result: Record<string, unknown> = raw;
+  let meta: Record<string, unknown> | null = null;
+
+  // OpenClaw returns: { payloads: [{ text: "JSON string", mediaUrl }], meta: { ... } }
+  const payloads = raw.payloads as Array<{ text?: string; mediaUrl?: string }> | undefined;
+
+  if (payloads && Array.isArray(payloads) && payloads.length > 0) {
+    const text = payloads[0].text ?? "";
+
+    // Try to parse the text as JSON (OpenClaw wraps the agent's output in payloads[].text)
+    const parsed = parseJsonOutput(text);
+    if (parsed) {
+      result = parsed;
+
+      // Extract file paths from the parsed result
+      const resultFiles = parsed.files as string[] | undefined;
+      if (Array.isArray(resultFiles)) {
+        files.push(...resultFiles.filter((f): f is string => typeof f === "string" && f.startsWith("/")));
+      }
+      // Also check common path keys
+      for (const key of ["image_path", "video_path", "audio_path", "file_path"]) {
+        const val = parsed[key];
+        if (typeof val === "string" && val.startsWith("/")) {
+          files.push(val);
+        }
+      }
+    } else {
+      result = { text: text.trim() };
+    }
+
+    // Extract useful meta (strip systemPromptReport which is huge)
+    const rawMeta = raw.meta as Record<string, unknown> | undefined;
+    if (rawMeta) {
+      const agentMeta = rawMeta.agentMeta as Record<string, unknown> | undefined;
+      meta = {
+        duration_ms: rawMeta.durationMs,
+        model: agentMeta?.model,
+        provider: agentMeta?.provider,
+        usage: agentMeta?.usage,
+      };
+    }
+  }
+
+  return { result, files, meta };
 }
 
 // ── Executor ──
@@ -185,7 +243,8 @@ export class Executor {
       const { stdout, stderr, exitCode } = await runCli(
         command,
         prompt,
-        timeoutS * 1000
+        timeoutS * 1000,
+        call.order_id
       );
 
       if (exitCode !== 0) {
@@ -200,12 +259,42 @@ export class Executor {
       }
 
       const parsed = parseJsonOutput(stdout);
-      let output: Record<string, unknown> = parsed ?? {
-        result: stdout.trim().slice(0, 5000),
-      };
+      let output: Record<string, unknown>;
 
-      // Upload local files to R2 if any
-      output = await replaceLocalPaths(output, this.config);
+      if (command === "openclaw" && parsed) {
+        // Parse OpenClaw's response format: { payloads, meta }
+        const ocResult = parseOpenClawResponse(parsed);
+        output = ocResult.result;
+
+        // Upload local files to R2
+        for (const filePath of ocResult.files) {
+          const cdnUrl = await uploadFile(filePath, this.config);
+          if (cdnUrl) {
+            // Replace local path with CDN URL in output
+            const currentFiles = (output.files as string[]) ?? [];
+            const idx = currentFiles.indexOf(filePath);
+            if (idx >= 0) {
+              currentFiles[idx] = cdnUrl;
+              output.files = currentFiles;
+            }
+            // Also set a convenience url key
+            if (!output.image_url && filePath.match(/\.(png|jpg|jpeg|webp|gif)$/i)) {
+              output.image_url = cdnUrl;
+            } else if (!output.video_url && filePath.match(/\.(mp4|webm|mov)$/i)) {
+              output.video_url = cdnUrl;
+            }
+          }
+        }
+
+        // Attach compact meta
+        if (ocResult.meta) {
+          output._meta = ocResult.meta;
+        }
+      } else {
+        output = parsed ?? { result: stdout.trim().slice(0, 5000) };
+        // Upload local files via generic path replacement
+        output = await replaceLocalPaths(output, this.config);
+      }
 
       const sent = this.send({
         event: "deliver",
