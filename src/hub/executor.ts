@@ -135,31 +135,52 @@ function parseOpenClawResponse(raw: Record<string, unknown>): OpenClawResponse {
   let result: Record<string, unknown> = raw;
   let meta: Record<string, unknown> | null = null;
 
-  // OpenClaw returns: { payloads: [{ text: "JSON string", mediaUrl }], meta: { ... } }
-  const payloads = raw.payloads as Array<{ text?: string; mediaUrl?: string }> | undefined;
+  // OpenClaw returns: { result: { payloads: [...], meta: {...} } } or { payloads: [...], meta: {...} }
+  const resultObj = (raw.result as Record<string, unknown>) ?? raw;
+  const payloads = (resultObj.payloads ?? raw.payloads) as Array<{ text?: string; mediaUrl?: string }> | undefined;
 
   if (payloads && Array.isArray(payloads) && payloads.length > 0) {
-    const text = payloads[0].text ?? "";
+    // Scan ALL payloads for JSON and file paths (not just [0])
+    let parsedJson: Record<string, unknown> | null = null;
+    const allText: string[] = [];
 
-    // Try to parse the text as JSON (OpenClaw wraps the agent's output in payloads[].text)
-    const parsed = parseJsonOutput(text);
-    if (parsed) {
-      result = parsed;
+    for (const p of payloads) {
+      const text = p.text ?? "";
+      allText.push(text);
+
+      // Try to parse as JSON
+      if (!parsedJson) {
+        parsedJson = parseJsonOutput(text);
+      }
+
+      // Extract file paths from text (lines that look like absolute paths)
+      const pathMatch = text.match(/^\/\S+\.(png|jpg|jpeg|webp|gif|mp4|webm|mov|mp3|wav|pdf)$/im);
+      if (pathMatch) {
+        files.push(pathMatch[0]);
+      }
+
+      // MediaUrl
+      if (p.mediaUrl) {
+        files.push(p.mediaUrl);
+      }
+    }
+
+    if (parsedJson) {
+      result = parsedJson;
 
       // Extract file paths from the parsed result
-      const resultFiles = parsed.files as string[] | undefined;
+      const resultFiles = parsedJson.files as string[] | undefined;
       if (Array.isArray(resultFiles)) {
         files.push(...resultFiles.filter((f): f is string => typeof f === "string" && f.startsWith("/")));
       }
-      // Also check common path keys
       for (const key of ["image_path", "video_path", "audio_path", "file_path"]) {
-        const val = parsed[key];
+        const val = parsedJson[key];
         if (typeof val === "string" && val.startsWith("/")) {
           files.push(val);
         }
       }
     } else {
-      result = { text: text.trim() };
+      result = { text: allText.join("\n").trim() };
     }
 
     // Extract useful meta (strip systemPromptReport which is huge)
