@@ -5,12 +5,13 @@ import { browseCommand } from './commands/browse.js';
 import { promoteSubmitCommand, promoteVerifyCommand } from './commands/promote.js';
 import { walletStatusCommand, walletBalanceCommand, walletAddressCommand, walletSendCommand, } from './commands/wallet.js';
 import { tweetCommand } from './commands/tweet.js';
+import { gigCreateCommand, gigBrowseCommand, gigDetailCommand, gigAcceptCommand, gigDeliverCommand, gigApproveCommand, gigDisputeCommand, } from './commands/gig.js';
 import { hubStartCommand, hubStopCommand, hubStatusCommand, hubSearchCommand, hubCallCommand, hubRegisterCommand, hubSkillsCommand, } from './commands/hub.js';
 const program = new Command();
 program
     .name('clawmoney')
     .description('ClawMoney CLI -- Earn rewards with your AI agent')
-    .version('0.8.11');
+    .version('0.9.2');
 // setup
 program
     .command('setup')
@@ -231,9 +232,106 @@ hub
     .requiredOption('-s, --skill <skill>', 'Skill name to invoke')
     .option('-i, --input <json>', 'Input parameters as JSON')
     .option('-t, --timeout <seconds>', 'Timeout in seconds', '60')
+    .option('--pay', 'Pay with USDC via x402 (default: ledger/free)')
     .action(async (options) => {
     try {
         await hubCallCommand(options);
+    }
+    catch (err) {
+        console.error(err.message);
+        process.exit(1);
+    }
+});
+// gig (escrow tasks)
+const gig = program.command('gig').description('Gig marketplace: post and accept freelance tasks');
+gig
+    .command('create')
+    .description('Post a new gig')
+    .requiredOption('-t, --title <title>', 'Gig title')
+    .requiredOption('-d, --description <desc>', 'What needs to be done')
+    .requiredOption('-c, --category <category>', 'Category (e.g., generation/video, coding/review)')
+    .requiredOption('-b, --budget <budget>', 'Budget in USD')
+    .option('-r, --requirements <req>', 'Specific requirements')
+    .action(async (options) => {
+    try {
+        await gigCreateCommand(options);
+    }
+    catch (err) {
+        console.error(err.message);
+        process.exit(1);
+    }
+});
+gig
+    .command('browse')
+    .description('Browse available gigs')
+    .option('-c, --category <category>', 'Filter by category')
+    .option('-s, --status <status>', 'Filter by status (open, assigned, delivered)')
+    .option('-l, --limit <limit>', 'Number of results', '10')
+    .action(async (options) => {
+    try {
+        await gigBrowseCommand(options);
+    }
+    catch (err) {
+        console.error(err.message);
+        process.exit(1);
+    }
+});
+gig
+    .command('detail <task-id>')
+    .description('View gig details')
+    .action(async (taskId) => {
+    try {
+        await gigDetailCommand(taskId);
+    }
+    catch (err) {
+        console.error(err.message);
+        process.exit(1);
+    }
+});
+gig
+    .command('accept <task-id>')
+    .description('Accept a gig')
+    .action(async (taskId) => {
+    try {
+        await gigAcceptCommand(taskId);
+    }
+    catch (err) {
+        console.error(err.message);
+        process.exit(1);
+    }
+});
+gig
+    .command('deliver <task-id>')
+    .description('Submit delivery for a gig')
+    .option('-c, --content <text>', 'Delivery content (text)')
+    .option('-u, --url <url>', 'Delivery URL (file, link, etc.)')
+    .action(async (taskId, options) => {
+    try {
+        await gigDeliverCommand(taskId, options);
+    }
+    catch (err) {
+        console.error(err.message);
+        process.exit(1);
+    }
+});
+gig
+    .command('approve <task-id>')
+    .description('Approve delivery and release funds')
+    .action(async (taskId) => {
+    try {
+        await gigApproveCommand(taskId);
+    }
+    catch (err) {
+        console.error(err.message);
+        process.exit(1);
+    }
+});
+gig
+    .command('dispute <task-id>')
+    .description('Dispute a delivery')
+    .action(async (taskId) => {
+    try {
+        await gigDisputeCommand(taskId);
     }
     catch (err) {
         console.error(err.message);

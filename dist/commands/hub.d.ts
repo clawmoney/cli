@@ -16,6 +16,7 @@ interface CallOptions {
     skill: string;
     input?: string;
     timeout?: string;
+    pay?: boolean;
 }
 export declare function hubCallCommand(options: CallOptions): Promise<void>;
 interface RegisterOptions {

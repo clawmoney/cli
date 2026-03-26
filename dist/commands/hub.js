@@ -5,6 +5,7 @@ import chalk from "chalk";
 import ora from "ora";
 import { requireConfig } from "../utils/config.js";
 import { apiGet, apiPost } from "../utils/api.js";
+import { awalExec } from "../utils/awal.js";
 import { readPid, isPidAlive, removePid } from "../hub/provider.js";
 const LOG_FILE = join(homedir(), ".clawmoney", "provider.log");
 // ── hub start ──
@@ -155,31 +156,86 @@ export async function hubCallCommand(options) {
     const timeout = options.timeout ? parseInt(options.timeout, 10) : 60;
     const spinner = ora(`Calling ${options.agent}/${options.skill}...`).start();
     try {
-        // gateway/invoke takes agent_id, skill, timeout as query params; input_data as POST body
-        const qs = new URLSearchParams({
-            agent_id: options.agent,
-            skill: options.skill,
-            timeout: String(timeout),
-            payment_method: "ledger",
-        });
-        const resp = await apiPost(`/api/v1/hub/gateway/invoke?${qs}`, inputData, config.api_key);
-        if (!resp.ok) {
-            const raw = resp.data && typeof resp.data === "object" && "detail" in resp.data
-                ? resp.data.detail
-                : resp.data;
-            const detail = typeof raw === "string" ? raw : JSON.stringify(raw);
-            spinner.fail(chalk.red(`Call failed (${resp.status}): ${detail}`));
-            process.exit(1);
+        if (options.pay) {
+            // x402 payment flow via pay.clawmoney.ai Worker
+            // Step 1: Look up skill price
+            spinner.text = `Looking up price for ${options.agent}/${options.skill}...`;
+            const searchResp = await apiGet(`/api/v1/hub/skills/search?q=${encodeURIComponent(options.skill)}&agent_slug=${encodeURIComponent(options.agent)}&limit=1`);
+            const skills = searchResp.data?.data ?? [];
+            const skillPrice = skills[0]?.price ?? 0.01;
+            // Step 2: Pay via awal x402 → pay.clawmoney.ai Worker
+            spinner.text = `Paying $${skillPrice} USDC for ${options.agent}/${options.skill}...`;
+            const payUrl = `https://pay.clawmoney.ai/hub/${encodeURIComponent(options.agent)}/${encodeURIComponent(options.skill)}?price=${skillPrice}`;
+            let payResult;
+            try {
+                payResult = await awalExec(["x402", "pay", payUrl]);
+            }
+            catch (err) {
+                spinner.fail(chalk.red(`Payment failed: ${err.message}`));
+                process.exit(1);
+            }
+            // Extract payment_token from Worker response
+            const paymentToken = payResult.data?.payment_token;
+            if (!paymentToken) {
+                spinner.fail(chalk.red("Payment succeeded but no payment_token returned"));
+                console.error(chalk.dim(`  Raw response: ${JSON.stringify(payResult.data).slice(0, 200)}`));
+                process.exit(1);
+            }
+            // Step 3: Invoke with payment_token
+            spinner.text = `Executing ${options.agent}/${options.skill}...`;
+            const qs = new URLSearchParams({
+                agent_id: options.agent,
+                skill: options.skill,
+                timeout: String(timeout),
+                payment_method: "x402",
+                payment_token: paymentToken,
+            });
+            const resp = await apiPost(`/api/v1/hub/gateway/invoke?${qs}`, inputData, config.api_key);
+            if (!resp.ok) {
+                const raw = resp.data && typeof resp.data === "object" && "detail" in resp.data
+                    ? resp.data.detail
+                    : resp.data;
+                const detail = typeof raw === "string" ? raw : JSON.stringify(raw);
+                spinner.fail(chalk.red(`Call failed (${resp.status}): ${detail}`));
+                process.exit(1);
+            }
+            const result = resp.data;
+            spinner.succeed(chalk.green("Call completed (x402 paid)!"));
+            console.log("");
+            console.log(`  ${chalk.bold("Order:")}    ${result.id ?? "-"}`);
+            console.log(`  ${chalk.bold("Duration:")} ${typeof result.duration === "number" ? result.duration.toFixed(1) + "s" : "-"}`);
+            console.log(`  ${chalk.bold("Cost:")}     $${skillPrice} USDC`);
+            console.log("");
+            console.log(chalk.bold("  Output:"));
+            console.log(chalk.cyan("  " + JSON.stringify(result.output_data ?? result.output ?? {}, null, 2).replace(/\n/g, "\n  ")));
         }
-        const result = resp.data;
-        spinner.succeed(chalk.green("Call completed!"));
-        console.log("");
-        console.log(`  ${chalk.bold("Order:")}    ${result.id ?? "-"}`);
-        console.log(`  ${chalk.bold("Duration:")} ${typeof result.duration === "number" ? result.duration.toFixed(1) + "s" : "-"}`);
-        console.log(`  ${chalk.bold("Cost:")}     $${typeof result.price === "number" ? result.price.toFixed(3) : "-"}`);
-        console.log("");
-        console.log(chalk.bold("  Output:"));
-        console.log(chalk.cyan("  " + JSON.stringify(result.output_data ?? result.output ?? {}, null, 2).replace(/\n/g, "\n  ")));
+        else {
+            // Ledger payment (no real USDC transfer)
+            const qs = new URLSearchParams({
+                agent_id: options.agent,
+                skill: options.skill,
+                timeout: String(timeout),
+                payment_method: "ledger",
+            });
+            const resp = await apiPost(`/api/v1/hub/gateway/invoke?${qs}`, inputData, config.api_key);
+            if (!resp.ok) {
+                const raw = resp.data && typeof resp.data === "object" && "detail" in resp.data
+                    ? resp.data.detail
+                    : resp.data;
+                const detail = typeof raw === "string" ? raw : JSON.stringify(raw);
+                spinner.fail(chalk.red(`Call failed (${resp.status}): ${detail}`));
+                process.exit(1);
+            }
+            const result = resp.data;
+            spinner.succeed(chalk.green("Call completed!"));
+            console.log("");
+            console.log(`  ${chalk.bold("Order:")}    ${result.id ?? "-"}`);
+            console.log(`  ${chalk.bold("Duration:")} ${typeof result.duration === "number" ? result.duration.toFixed(1) + "s" : "-"}`);
+            console.log(`  ${chalk.bold("Cost:")}     $${typeof result.price === "number" ? result.price.toFixed(3) : "-"}`);
+            console.log("");
+            console.log(chalk.bold("  Output:"));
+            console.log(chalk.cyan("  " + JSON.stringify(result.output_data ?? result.output ?? {}, null, 2).replace(/\n/g, "\n  ")));
+        }
     }
     catch (err) {
         spinner.fail(chalk.red("Call failed"));
