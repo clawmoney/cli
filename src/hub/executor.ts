@@ -266,6 +266,17 @@ export class Executor {
         const ocResult = parseOpenClawResponse(parsed);
         output = ocResult.result;
 
+        // Check if the agent explicitly reported failure
+        if (output.success === false && typeof output.error === "string") {
+          logger.error(`Agent reported failure for order=${call.order_id}: ${output.error}`);
+          this.send({
+            event: "deliver",
+            order_id: call.order_id,
+            error: (output.error as string).slice(0, 2000),
+          });
+          return;
+        }
+
         // Upload local files to R2
         for (const filePath of ocResult.files) {
           const cdnUrl = await uploadFile(filePath, this.config);

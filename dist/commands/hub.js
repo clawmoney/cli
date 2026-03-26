@@ -175,7 +175,10 @@ export async function hubCallCommand(options) {
                 process.exit(1);
             }
             // Extract payment_token from Worker response
-            const paymentToken = payResult.data?.payment_token;
+            // awal returns {status, statusText, data: {payment_token, ...}, headers}
+            const payData = payResult.data;
+            const innerData = payData.data ?? payData;
+            const paymentToken = innerData.payment_token ?? payData.payment_token;
             if (!paymentToken) {
                 spinner.fail(chalk.red("Payment succeeded but no payment_token returned"));
                 console.error(chalk.dim(`  Raw response: ${JSON.stringify(payResult.data).slice(0, 200)}`));
