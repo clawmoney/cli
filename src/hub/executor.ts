@@ -65,9 +65,9 @@ function runCli(
     // Build args based on command
     let args: string[];
     if (command === "openclaw") {
-      // openclaw agent --message "..." --session-id <order_id> --local --json
-      // session-id doesn't need to be pre-created, openclaw auto-creates it
-      args = ["agent", "--message", prompt, "--session-id", orderId || "hub-task", "--local", "--json"];
+      // openclaw agent --message "..." --session-id <order_id> --json
+      // Route through Gateway (not --local) so skills like nano-banana-pro are available
+      args = ["agent", "--message", prompt, "--session-id", orderId || "hub-task", "--json"];
     } else {
       // claude -p "..." --output-format json
       args = ["-p", prompt, "--output-format", "json"];
