@@ -27,4 +27,5 @@ interface RegisterOptions {
 }
 export declare function hubRegisterCommand(options: RegisterOptions): Promise<void>;
 export declare function hubSkillsCommand(): Promise<void>;
+export declare function hubOrderCommand(orderId: string): Promise<void>;
 export {};

@@ -6,7 +6,7 @@ import { promoteSubmitCommand, promoteVerifyCommand } from './commands/promote.j
 import { walletStatusCommand, walletBalanceCommand, walletAddressCommand, walletSendCommand, } from './commands/wallet.js';
 import { tweetCommand } from './commands/tweet.js';
 import { gigCreateCommand, gigBrowseCommand, gigDetailCommand, gigAcceptCommand, gigDeliverCommand, gigApproveCommand, gigDisputeCommand, } from './commands/gig.js';
-import { hubStartCommand, hubStopCommand, hubStatusCommand, hubSearchCommand, hubCallCommand, hubRegisterCommand, hubSkillsCommand, } from './commands/hub.js';
+import { hubStartCommand, hubStopCommand, hubStatusCommand, hubSearchCommand, hubCallCommand, hubRegisterCommand, hubSkillsCommand, hubOrderCommand, } from './commands/hub.js';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const pkg = require('../package.json');
@@ -205,6 +205,18 @@ hub
     .action(async () => {
     try {
         await hubSkillsCommand();
+    }
+    catch (err) {
+        console.error(err.message);
+        process.exit(1);
+    }
+});
+hub
+    .command('order <orderId>')
+    .description('Check the status of a Hub order')
+    .action(async (orderId) => {
+    try {
+        await hubOrderCommand(orderId);
     }
     catch (err) {
         console.error(err.message);

@@ -28,6 +28,7 @@ import {
   hubCallCommand,
   hubRegisterCommand,
   hubSkillsCommand,
+  hubOrderCommand,
 } from './commands/hub.js';
 
 import { createRequire } from 'node:module';
@@ -234,6 +235,18 @@ hub
   .action(async () => {
     try {
       await hubSkillsCommand();
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+hub
+  .command('order <orderId>')
+  .description('Check the status of a Hub order')
+  .action(async (orderId: string) => {
+    try {
+      await hubOrderCommand(orderId);
     } catch (err) {
       console.error((err as Error).message);
       process.exit(1);

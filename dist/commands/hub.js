@@ -142,9 +142,16 @@ export async function hubSearchCommand(options) {
     }
 }
 // ── poll order result ──
+function getPollInterval(elapsedMs) {
+    if (elapsedMs < 30_000)
+        return 3_000; // first 30s: every 3s
+    if (elapsedMs < 120_000)
+        return 10_000; // 30s-2min: every 10s
+    return 30_000; // 2min+: every 30s
+}
 async function pollOrderResult(orderId, apiKey, timeoutS, spinner) {
-    const POLL_INTERVAL = 3000;
-    const deadline = Date.now() + timeoutS * 1000;
+    const startTime = Date.now();
+    const deadline = startTime + timeoutS * 1000;
     while (Date.now() < deadline) {
         const resp = await apiGet(`/api/v1/hub/orders/${orderId}`, apiKey);
         if (!resp.ok) {
@@ -158,10 +165,13 @@ async function pollOrderResult(orderId, apiKey, timeoutS, spinner) {
         if (status === "failed" || status === "timeout") {
             throw new Error(order.error_message || `Order ${status}`);
         }
-        spinner.text = `Waiting for result... (${Math.round((deadline - Date.now()) / 1000)}s left)`;
-        await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+        const remaining = Math.round((deadline - Date.now()) / 1000);
+        spinner.text = `Waiting for result... (${remaining}s left)`;
+        const interval = getPollInterval(Date.now() - startTime);
+        await new Promise((r) => setTimeout(r, interval));
     }
-    throw new Error("Timed out waiting for result");
+    // Don't throw — task may still be running, tell user to check later
+    return { id: orderId, status: "pending", _timeout: true };
 }
 export async function hubCallCommand(options) {
     const config = requireConfig();
@@ -229,14 +239,21 @@ export async function hubCallCommand(options) {
             spinner.text = `Order ${orderId?.slice(0, 8)}... submitted, waiting for result...`;
             // Poll for completion
             const result = await pollOrderResult(orderId, config.api_key, timeout, spinner);
-            spinner.succeed(chalk.green("Call completed (x402 paid)!"));
-            console.log("");
-            console.log(`  ${chalk.bold("Order:")}    ${result.id ?? "-"}`);
-            console.log(`  ${chalk.bold("Duration:")} ${typeof result.duration === "number" ? result.duration.toFixed(1) + "s" : "-"}`);
-            console.log(`  ${chalk.bold("Cost:")}     $${skillPrice} USDC`);
-            console.log("");
-            console.log(chalk.bold("  Output:"));
-            console.log(chalk.cyan("  " + JSON.stringify(result.output_data ?? result.output ?? {}, null, 2).replace(/\n/g, "\n  ")));
+            if (result._timeout) {
+                spinner.warn(chalk.yellow("Still processing..."));
+                console.log(`  ${chalk.bold("Order:")} ${orderId}`);
+                console.log(chalk.dim(`  Check later: npx clawmoney hub order ${orderId}`));
+            }
+            else {
+                spinner.succeed(chalk.green("Call completed (x402 paid)!"));
+                console.log("");
+                console.log(`  ${chalk.bold("Order:")}    ${result.id ?? "-"}`);
+                console.log(`  ${chalk.bold("Duration:")} ${typeof result.duration === "number" ? result.duration.toFixed(1) + "s" : "-"}`);
+                console.log(`  ${chalk.bold("Cost:")}     $${skillPrice} USDC`);
+                console.log("");
+                console.log(chalk.bold("  Output:"));
+                console.log(chalk.cyan("  " + JSON.stringify(result.output_data ?? result.output ?? {}, null, 2).replace(/\n/g, "\n  ")));
+            }
         }
         else {
             // Ledger payment (no real USDC transfer)
@@ -260,14 +277,21 @@ export async function hubCallCommand(options) {
             spinner.text = `Order ${orderId?.slice(0, 8)}... submitted, waiting for result...`;
             // Poll for completion
             const result = await pollOrderResult(orderId, config.api_key, timeout, spinner);
-            spinner.succeed(chalk.green("Call completed!"));
-            console.log("");
-            console.log(`  ${chalk.bold("Order:")}    ${result.id ?? "-"}`);
-            console.log(`  ${chalk.bold("Duration:")} ${typeof result.duration === "number" ? result.duration.toFixed(1) + "s" : "-"}`);
-            console.log(`  ${chalk.bold("Cost:")}     $${typeof result.price === "number" ? result.price.toFixed(3) : "-"}`);
-            console.log("");
-            console.log(chalk.bold("  Output:"));
-            console.log(chalk.cyan("  " + JSON.stringify(result.output_data ?? result.output ?? {}, null, 2).replace(/\n/g, "\n  ")));
+            if (result._timeout) {
+                spinner.warn(chalk.yellow("Still processing..."));
+                console.log(`  ${chalk.bold("Order:")} ${orderId}`);
+                console.log(chalk.dim(`  Check later: npx clawmoney hub order ${orderId}`));
+            }
+            else {
+                spinner.succeed(chalk.green("Call completed!"));
+                console.log("");
+                console.log(`  ${chalk.bold("Order:")}    ${result.id ?? "-"}`);
+                console.log(`  ${chalk.bold("Duration:")} ${typeof result.duration === "number" ? result.duration.toFixed(1) + "s" : "-"}`);
+                console.log(`  ${chalk.bold("Cost:")}     $${typeof result.price === "number" ? result.price.toFixed(3) : "-"}`);
+                console.log("");
+                console.log(chalk.bold("  Output:"));
+                console.log(chalk.cyan("  " + JSON.stringify(result.output_data ?? result.output ?? {}, null, 2).replace(/\n/g, "\n  ")));
+            }
         }
     }
     catch (err) {
@@ -342,6 +366,46 @@ export async function hubSkillsCommand() {
     }
     catch (err) {
         spinner.fail(chalk.red("Failed to fetch skills"));
+        throw err;
+    }
+}
+// ── hub order ──
+export async function hubOrderCommand(orderId) {
+    const config = requireConfig();
+    const spinner = ora("Fetching order...").start();
+    try {
+        const resp = await apiGet(`/api/v1/hub/orders/${orderId}`, config.api_key);
+        if (!resp.ok) {
+            spinner.fail(chalk.red(`Order not found (${resp.status})`));
+            process.exit(1);
+        }
+        const order = resp.data;
+        const status = order.status;
+        if (status === "completed") {
+            spinner.succeed(chalk.green("Order completed"));
+        }
+        else if (status === "pending") {
+            spinner.info(chalk.yellow("Order still processing..."));
+        }
+        else {
+            spinner.fail(chalk.red(`Order ${status}`));
+        }
+        console.log("");
+        console.log(`  ${chalk.bold("Order:")}    ${order.id ?? "-"}`);
+        console.log(`  ${chalk.bold("Status:")}   ${status}`);
+        console.log(`  ${chalk.bold("Duration:")} ${typeof order.duration === "number" ? order.duration.toFixed(1) + "s" : "-"}`);
+        console.log(`  ${chalk.bold("Price:")}    $${typeof order.price === "number" ? order.price.toFixed(3) : "-"}`);
+        if (order.error_message) {
+            console.log(`  ${chalk.bold("Error:")}    ${chalk.red(order.error_message)}`);
+        }
+        if (status === "completed" && order.output_data) {
+            console.log("");
+            console.log(chalk.bold("  Output:"));
+            console.log(chalk.cyan("  " + JSON.stringify(order.output_data, null, 2).replace(/\n/g, "\n  ")));
+        }
+    }
+    catch (err) {
+        spinner.fail(chalk.red("Failed to fetch order"));
         throw err;
     }
 }
