@@ -221,7 +221,7 @@ export async function hubSearchCommand(options: SearchOptions): Promise<void> {
 // ── poll order result ──
 
 function getPollInterval(elapsedMs: number): number {
-  if (elapsedMs < 30_000) return 3_000;   // first 30s: every 3s
+  if (elapsedMs < 30_000) return 5_000;   // first 30s: every 5s
   if (elapsedMs < 120_000) return 10_000;  // 30s-2min: every 10s
   return 30_000;                           // 2min+: every 30s
 }
