@@ -22,7 +22,7 @@ function buildPrompt(call, config) {
     ];
     // Category-specific instructions
     if (call.category?.startsWith("generation/image")) {
-        lines.push("IMPORTANT: You MUST use an image generation tool (e.g. Gemini/Nano Banana image generation) to create a real image file.", "Do NOT write SVG, HTML, or any code to fake an image. If you do not have an image generation tool available, return {\"success\": false, \"error\": \"No image generation tool available\"}.", "Save the generated image and include the file path in your output.");
+        lines.push("IMPORTANT: Use the nano-banana-pro skill (or any image generation tool) to generate a real PNG/JPG image.", "Do NOT write SVG, HTML, or any code to fake an image.", "If no image generation tool is available, return {\"success\": false, \"error\": \"No image generation tool available\"}.", "Save the generated image and include the file path in your output.");
     }
     lines.push("Execute this task and return the result as JSON.", "If you generate any files (images, videos, etc.), save them and include their file paths in the output.", "Return ONLY the JSON result, no other text.");
     return lines.join("\n");
