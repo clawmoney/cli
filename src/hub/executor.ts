@@ -24,7 +24,7 @@ function buildPrompt(call: ServiceCallEvent, config: ProviderConfig): string {
       .replace("{{input}}", JSON.stringify(call.input, null, 2));
   }
 
-  return [
+  const lines = [
     "You received a paid service request via ClawMoney Hub.",
     `Skill: ${call.skill}`,
     `Category: ${call.category}`,
@@ -32,10 +32,24 @@ function buildPrompt(call: ServiceCallEvent, config: ProviderConfig): string {
     `Price: $${call.price}`,
     `Input: ${JSON.stringify(call.input, null, 2)}`,
     "",
+  ];
+
+  // Category-specific instructions
+  if (call.category?.startsWith("generation/image")) {
+    lines.push(
+      "IMPORTANT: You MUST use an image generation tool (e.g. Gemini/Nano Banana image generation) to create a real image file.",
+      "Do NOT write SVG, HTML, or any code to fake an image. If you do not have an image generation tool available, return {\"success\": false, \"error\": \"No image generation tool available\"}.",
+      "Save the generated image and include the file path in your output.",
+    );
+  }
+
+  lines.push(
     "Execute this task and return the result as JSON.",
     "If you generate any files (images, videos, etc.), save them and include their file paths in the output.",
     "Return ONLY the JSON result, no other text.",
-  ].join("\n");
+  );
+
+  return lines.join("\n");
 }
 
 // ── CLI execution (openclaw agent / claude -p) ──
@@ -277,23 +291,63 @@ export class Executor {
           return;
         }
 
+        // Also extract file paths from nested result.files / result.primary_file
+        const allFiles = [...ocResult.files];
+        const nested = output.result as Record<string, unknown> | undefined;
+        if (nested && typeof nested === "object") {
+          const nestedFiles = (nested as Record<string, unknown>).files as string[] | undefined;
+          if (Array.isArray(nestedFiles)) {
+            for (const f of nestedFiles) {
+              if (typeof f === "string" && f.startsWith("/") && !allFiles.includes(f)) {
+                allFiles.push(f);
+              }
+            }
+          }
+          for (const key of ["primary_file", "image_path", "file_path"]) {
+            const val = (nested as Record<string, unknown>)[key];
+            if (typeof val === "string" && val.startsWith("/") && !allFiles.includes(val)) {
+              allFiles.push(val);
+            }
+          }
+        }
+
         // Upload local files to R2
-        for (const filePath of ocResult.files) {
+        for (const filePath of allFiles) {
           const cdnUrl = await uploadFile(filePath, this.config);
           if (cdnUrl) {
-            // Replace local path with CDN URL in output
-            const currentFiles = (output.files as string[]) ?? [];
-            const idx = currentFiles.indexOf(filePath);
-            if (idx >= 0) {
-              currentFiles[idx] = cdnUrl;
-              output.files = currentFiles;
+            // Replace local path with CDN URL in output (top-level and nested)
+            const replaceInArray = (arr: string[]) => {
+              const idx = arr.indexOf(filePath);
+              if (idx >= 0) arr[idx] = cdnUrl;
+            };
+            if (Array.isArray(output.files)) replaceInArray(output.files as string[]);
+            if (nested && Array.isArray((nested as Record<string, unknown>).files)) {
+              replaceInArray((nested as Record<string, unknown>).files as string[]);
             }
-            // Also set a convenience url key
+            if (nested && (nested as Record<string, unknown>).primary_file === filePath) {
+              (nested as Record<string, unknown>).primary_file = cdnUrl;
+            }
+            // Set convenience url key
             if (!output.image_url && filePath.match(/\.(png|jpg|jpeg|webp|gif)$/i)) {
               output.image_url = cdnUrl;
             } else if (!output.video_url && filePath.match(/\.(mp4|webm|mov)$/i)) {
               output.video_url = cdnUrl;
             }
+          }
+        }
+
+        // Validate: generation/image must produce real image files, not SVG/code
+        if (call.category?.startsWith("generation/image")) {
+          const hasRealImage = allFiles.some((f) => /\.(png|jpg|jpeg|webp|gif)$/i.test(f));
+          if (!hasRealImage) {
+            const errMsg = "No real image generated. Image generation tool may not be available.";
+            logger.error(`Validation failed for order=${call.order_id}: ${errMsg}`);
+            this.send({
+              event: "deliver",
+              order_id: call.order_id,
+              error: errMsg,
+            });
+            return;
           }
         }
 
