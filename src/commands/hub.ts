@@ -152,6 +152,7 @@ interface SearchSkill {
   description?: string;
   category?: string;
   price?: number;
+  skill_type?: string;  // "instant" or "escrow"
   avg_rating?: number;
   total_calls?: number;
   avg_response_time?: number;
@@ -292,15 +293,62 @@ export async function hubCallCommand(options: CallOptions): Promise<void> {
   const spinner = ora(`Calling ${options.agent}/${options.skill}...`).start();
 
   try {
+    // Look up skill info (price + type)
+    spinner.text = `Looking up ${options.agent}/${options.skill}...`;
+    const searchResp = await apiGet<{ data?: SearchSkill[] }>(
+      `/api/v1/hub/skills/search?q=${encodeURIComponent(options.skill)}&agent_slug=${encodeURIComponent(options.agent)}&limit=1`
+    );
+    const skills = (searchResp.data as { data?: SearchSkill[] })?.data ?? [];
+    const skillInfo = skills[0];
+    const skillType = skillInfo?.skill_type || "instant";
+
+    // Escrow-type skill → auto-create gig instead of invoke
+    if (skillType === "escrow") {
+      spinner.text = `Creating escrow task for ${options.agent}/${options.skill}...`;
+      const budget = skillInfo?.price ?? 0.01;
+      const gigResp = await apiPost<Record<string, unknown>>(
+        "/api/v1/hub/escrow",
+        {
+          title: `${options.skill} — ${options.agent}`,
+          description: JSON.stringify(inputData),
+          category: skillInfo?.category || options.skill,
+          budget,
+        },
+        config.api_key
+      );
+      if (!gigResp.ok) {
+        const detail = (gigResp.data as Record<string, unknown>)?.detail ?? gigResp.data;
+        spinner.fail(chalk.red(`Failed to create task: ${JSON.stringify(detail)}`));
+        process.exit(1);
+      }
+      const task = gigResp.data as Record<string, unknown>;
+      const taskId = task.id as string;
+
+      // Auto-fund if --pay
+      if (options.pay) {
+        spinner.text = `Funding task $${budget} USDC via x402...`;
+        try {
+          await awalExec(["x402", "pay", `https://pay.clawmoney.ai/hub/escrow/${taskId}?price=${budget}`]);
+        } catch (err) {
+          spinner.fail(chalk.red(`Funding failed: ${(err as Error).message}`));
+          process.exit(1);
+        }
+      }
+
+      spinner.succeed(chalk.green("Escrow task created" + (options.pay ? " & funded!" : "!")));
+      console.log("");
+      console.log(`  ${chalk.bold("Task:")}     ${taskId}`);
+      console.log(`  ${chalk.bold("Budget:")}   $${budget} USDC`);
+      console.log(`  ${chalk.bold("Funded:")}   ${options.pay ? "Yes" : "No — pay to fund: npx clawmoney gig fund " + taskId}`);
+      console.log(`  ${chalk.bold("Status:")}   ${task.status}`);
+      console.log(chalk.dim(`  Check later: npx clawmoney gig detail ${taskId}`));
+      return;
+    }
+
+    // Instant-type skill → invoke flow
     if (options.pay) {
       // x402 payment flow via pay.clawmoney.ai Worker
-      // Step 1: Look up skill price
-      spinner.text = `Looking up price for ${options.agent}/${options.skill}...`;
-      const searchResp = await apiGet<{ data?: SearchSkill[] }>(
-        `/api/v1/hub/skills/search?q=${encodeURIComponent(options.skill)}&agent_slug=${encodeURIComponent(options.agent)}&limit=1`
-      );
-      const skills = (searchResp.data as { data?: SearchSkill[] })?.data ?? [];
-      const skillPrice = skills[0]?.price ?? 0.01;
+      const skillPrice = skillInfo?.price ?? 0.01;
 
       // Step 2: Pay via awal x402 → pay.clawmoney.ai Worker
       spinner.text = `Paying $${skillPrice} USDC for ${options.agent}/${options.skill}...`;
