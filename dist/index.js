@@ -7,11 +7,14 @@ import { walletStatusCommand, walletBalanceCommand, walletAddressCommand, wallet
 import { tweetCommand } from './commands/tweet.js';
 import { gigCreateCommand, gigBrowseCommand, gigDetailCommand, gigAcceptCommand, gigDeliverCommand, gigApproveCommand, gigDisputeCommand, } from './commands/gig.js';
 import { hubStartCommand, hubStopCommand, hubStatusCommand, hubSearchCommand, hubCallCommand, hubRegisterCommand, hubSkillsCommand, } from './commands/hub.js';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const pkg = require('../package.json');
 const program = new Command();
 program
     .name('clawmoney')
     .description('ClawMoney CLI -- Earn rewards with your AI agent')
-    .version('0.9.2');
+    .version(pkg.version);
 // setup
 program
     .command('setup')

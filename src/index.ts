@@ -30,12 +30,16 @@ import {
   hubSkillsCommand,
 } from './commands/hub.js';
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const pkg = require('../package.json') as { version: string };
+
 const program = new Command();
 
 program
   .name('clawmoney')
   .description('ClawMoney CLI -- Earn rewards with your AI agent')
-  .version('0.9.2');
+  .version(pkg.version);
 
 // setup
 program

@@ -218,6 +218,44 @@ export async function hubSearchCommand(options: SearchOptions): Promise<void> {
   }
 }
 
+// ── poll order result ──
+
+async function pollOrderResult(
+  orderId: string,
+  apiKey: string,
+  timeoutS: number,
+  spinner: ReturnType<typeof ora>,
+): Promise<Record<string, unknown>> {
+  const POLL_INTERVAL = 3000;
+  const deadline = Date.now() + timeoutS * 1000;
+
+  while (Date.now() < deadline) {
+    const resp = await apiGet<Record<string, unknown>>(
+      `/api/v1/hub/orders/${orderId}`,
+      apiKey
+    );
+    if (!resp.ok) {
+      throw new Error(`Failed to poll order: ${resp.status}`);
+    }
+    const order = resp.data as Record<string, unknown>;
+    const status = order.status as string;
+
+    if (status === "completed") {
+      return order;
+    }
+    if (status === "failed" || status === "timeout") {
+      throw new Error(
+        (order.error_message as string) || `Order ${status}`
+      );
+    }
+
+    spinner.text = `Waiting for result... (${Math.round((deadline - Date.now()) / 1000)}s left)`;
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+  }
+
+  throw new Error("Timed out waiting for result");
+}
+
 // ── hub call ──
 
 interface CallOptions {
@@ -302,11 +340,16 @@ export async function hubCallCommand(options: CallOptions): Promise<void> {
         process.exit(1);
       }
 
-      const result = resp.data as Record<string, unknown>;
+      const invokeResult = resp.data as Record<string, unknown>;
+      const orderId = invokeResult.id as string;
+      spinner.text = `Order ${orderId?.slice(0, 8)}... submitted, waiting for result...`;
+
+      // Poll for completion
+      const result = await pollOrderResult(orderId, config.api_key, timeout, spinner);
       spinner.succeed(chalk.green("Call completed (x402 paid)!"));
       console.log("");
       console.log(`  ${chalk.bold("Order:")}    ${result.id ?? "-"}`);
-      console.log(`  ${chalk.bold("Duration:")} ${typeof result.duration === "number" ? result.duration.toFixed(1) + "s" : "-"}`);
+      console.log(`  ${chalk.bold("Duration:")} ${typeof result.duration === "number" ? (result.duration as number).toFixed(1) + "s" : "-"}`);
       console.log(`  ${chalk.bold("Cost:")}     $${skillPrice} USDC`);
       console.log("");
       console.log(chalk.bold("  Output:"));
@@ -334,12 +377,17 @@ export async function hubCallCommand(options: CallOptions): Promise<void> {
         process.exit(1);
       }
 
-      const result = resp.data as Record<string, unknown>;
+      const invokeResult = resp.data as Record<string, unknown>;
+      const orderId = invokeResult.id as string;
+      spinner.text = `Order ${orderId?.slice(0, 8)}... submitted, waiting for result...`;
+
+      // Poll for completion
+      const result = await pollOrderResult(orderId, config.api_key, timeout, spinner);
       spinner.succeed(chalk.green("Call completed!"));
       console.log("");
       console.log(`  ${chalk.bold("Order:")}    ${result.id ?? "-"}`);
-      console.log(`  ${chalk.bold("Duration:")} ${typeof result.duration === "number" ? result.duration.toFixed(1) + "s" : "-"}`);
-      console.log(`  ${chalk.bold("Cost:")}     $${typeof result.price === "number" ? result.price.toFixed(3) : "-"}`);
+      console.log(`  ${chalk.bold("Duration:")} ${typeof result.duration === "number" ? (result.duration as number).toFixed(1) + "s" : "-"}`);
+      console.log(`  ${chalk.bold("Cost:")}     $${typeof result.price === "number" ? (result.price as number).toFixed(3) : "-"}`);
       console.log("");
       console.log(chalk.bold("  Output:"));
       console.log(chalk.cyan("  " + JSON.stringify(result.output_data ?? result.output ?? {}, null, 2).replace(/\n/g, "\n  ")));

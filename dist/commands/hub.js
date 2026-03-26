@@ -141,6 +141,28 @@ export async function hubSearchCommand(options) {
         throw err;
     }
 }
+// ── poll order result ──
+async function pollOrderResult(orderId, apiKey, timeoutS, spinner) {
+    const POLL_INTERVAL = 3000;
+    const deadline = Date.now() + timeoutS * 1000;
+    while (Date.now() < deadline) {
+        const resp = await apiGet(`/api/v1/hub/orders/${orderId}`, apiKey);
+        if (!resp.ok) {
+            throw new Error(`Failed to poll order: ${resp.status}`);
+        }
+        const order = resp.data;
+        const status = order.status;
+        if (status === "completed") {
+            return order;
+        }
+        if (status === "failed" || status === "timeout") {
+            throw new Error(order.error_message || `Order ${status}`);
+        }
+        spinner.text = `Waiting for result... (${Math.round((deadline - Date.now()) / 1000)}s left)`;
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+    }
+    throw new Error("Timed out waiting for result");
+}
 export async function hubCallCommand(options) {
     const config = requireConfig();
     let inputData = {};
@@ -202,7 +224,11 @@ export async function hubCallCommand(options) {
                 spinner.fail(chalk.red(`Call failed (${resp.status}): ${detail}`));
                 process.exit(1);
             }
-            const result = resp.data;
+            const invokeResult = resp.data;
+            const orderId = invokeResult.id;
+            spinner.text = `Order ${orderId?.slice(0, 8)}... submitted, waiting for result...`;
+            // Poll for completion
+            const result = await pollOrderResult(orderId, config.api_key, timeout, spinner);
             spinner.succeed(chalk.green("Call completed (x402 paid)!"));
             console.log("");
             console.log(`  ${chalk.bold("Order:")}    ${result.id ?? "-"}`);
@@ -229,7 +255,11 @@ export async function hubCallCommand(options) {
                 spinner.fail(chalk.red(`Call failed (${resp.status}): ${detail}`));
                 process.exit(1);
             }
-            const result = resp.data;
+            const invokeResult = resp.data;
+            const orderId = invokeResult.id;
+            spinner.text = `Order ${orderId?.slice(0, 8)}... submitted, waiting for result...`;
+            // Poll for completion
+            const result = await pollOrderResult(orderId, config.api_key, timeout, spinner);
             spinner.succeed(chalk.green("Call completed!"));
             console.log("");
             console.log(`  ${chalk.bold("Order:")}    ${result.id ?? "-"}`);
