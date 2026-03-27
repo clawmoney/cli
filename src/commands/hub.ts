@@ -1,10 +1,12 @@
 import { spawn } from "node:child_process";
-import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import chalk from "chalk";
 import ora from "ora";
 import { requireConfig } from "../utils/config.js";
 import { apiGet, apiPost } from "../utils/api.js";
+import { isRecord, parseNonNegativeNumber, parsePositiveInteger } from "../utils/validation.js";
 import { readPid, isPidAlive, removePid } from "../hub/provider.js";
 
 const LOG_FILE = join(homedir(), ".clawmoney", "provider.log");
@@ -30,10 +32,10 @@ export async function hubStartCommand(options: {
   const spinner = ora("Starting Hub Provider...").start();
 
   try {
-    // Resolve daemon script path relative to this file's directory
-    // Works for both compiled (dist/commands/hub.js) and dev (src/commands/hub.ts)
-    const thisDir = import.meta.url.replace("file://", "").replace(/\/[^/]+$/, "");
-    const parentDir = thisDir.replace(/\/[^/]+$/, "");
+    // Resolve daemon script path relative to this file's directory.
+    // fileURLToPath correctly handles spaces and URL-escaped characters.
+    const thisDir = dirname(fileURLToPath(import.meta.url));
+    const parentDir = dirname(thisDir);
     const daemonScript = join(parentDir, "hub", "daemon.js");
 
     const args = [daemonScript];
@@ -232,14 +234,19 @@ export async function hubCallCommand(options: CallOptions): Promise<void> {
   let inputData: Record<string, unknown> = {};
   if (options.input) {
     try {
-      inputData = JSON.parse(options.input);
+      const parsed = JSON.parse(options.input) as unknown;
+      if (!isRecord(parsed)) {
+        console.error(chalk.red("Invalid JSON for --input. Expected a JSON object like '{\"prompt\":\"hello\"}'."));
+        process.exit(1);
+      }
+      inputData = parsed;
     } catch {
-      console.error(chalk.red("Invalid JSON for --input. Example: '{\"prompt\":\"hello\"}'"));
+      console.error(chalk.red("Invalid JSON for --input. Expected a JSON object like '{\"prompt\":\"hello\"}'."));
       process.exit(1);
     }
   }
 
-  const timeout = options.timeout ? parseInt(options.timeout, 10) : 60;
+  const timeout = parsePositiveInteger(options.timeout, 60, 'timeout', { min: 1, max: 3600 });
   const spinner = ora(`Calling ${options.agent}/${options.skill}...`).start();
 
   try {
@@ -300,9 +307,11 @@ export async function hubRegisterCommand(
 ): Promise<void> {
   const config = requireConfig();
 
-  const price = parseFloat(options.price);
-  if (isNaN(price) || price < 0) {
-    console.error(chalk.red("Invalid price. Must be a non-negative number."));
+  let price: number;
+  try {
+    price = parseNonNegativeNumber(options.price, 'price');
+  } catch (err) {
+    console.error(chalk.red((err as Error).message));
     process.exit(1);
   }
 
