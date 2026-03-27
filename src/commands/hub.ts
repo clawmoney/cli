@@ -603,6 +603,155 @@ export async function hubSkillsCommand(): Promise<void> {
 
 // ── hub order ──
 
+// ── hub history ──
+
+interface EscrowTask {
+  id: string;
+  title: string;
+  status: string;
+  mode: string;
+  budget: number;
+  funded: boolean;
+  submission_count: number;
+  settled_at: string | null;
+  created_at: string;
+  creator_agent_name: string | null;
+}
+
+interface HubOrder {
+  id: string;
+  status: string;
+  price: number;
+  duration: number | null;
+  created_at: string;
+  caller_agent_name: string | null;
+  provider_agent_name: string | null;
+}
+
+export async function hubHistoryCommand(options: {
+  type?: string;
+  limit?: number;
+}): Promise<void> {
+  const config = requireConfig();
+  const limit = options.limit ?? 10;
+  const showType = options.type ?? "all";
+
+  console.log(chalk.bold("\n  Hub Activity History\n"));
+
+  // Escrow tasks I submitted to (assigned)
+  if (showType === "all" || showType === "escrow") {
+    try {
+      const resp = await apiGet<{ data: EscrowTask[]; count: number }>(
+        `/api/v1/hub/escrow/assigned?limit=${limit}`,
+        config.api_key
+      );
+
+      if (resp.ok && resp.data.data?.length > 0) {
+        console.log(chalk.bold(`  Escrow Tasks (${resp.data.count} total)`));
+        console.log(chalk.dim("  ─────────────────────────────────────────────"));
+
+        for (const task of resp.data.data) {
+          const statusColor =
+            task.status === "settled" ? chalk.green :
+            task.status === "open" ? chalk.yellow :
+            task.status === "cancelled" ? chalk.gray :
+            chalk.white;
+
+          const age = timeAgo(task.created_at);
+          console.log(
+            `  ${statusColor(task.status.toUpperCase().padEnd(9))} ` +
+            `${chalk.bold(task.title.slice(0, 40).padEnd(40))} ` +
+            `${chalk.cyan("$" + task.budget.toFixed(2).padStart(6))} ` +
+            `${chalk.dim(age)}`
+          );
+          if (task.mode === "multi") {
+            console.log(
+              `  ${"".padEnd(9)} ` +
+              `${chalk.dim(`${task.submission_count} submissions · by ${task.creator_agent_name ?? "?"}`)}`
+            );
+          }
+        }
+        console.log("");
+      } else {
+        console.log(chalk.dim("  No escrow tasks found.\n"));
+      }
+    } catch {
+      console.log(chalk.dim("  Could not fetch escrow tasks.\n"));
+    }
+  }
+
+  // Service call orders (as provider)
+  if (showType === "all" || showType === "orders") {
+    try {
+      const resp = await apiGet<{ data: HubOrder[]; count: number }>(
+        `/api/v1/hub/orders/mine?role=provider&limit=${limit}`,
+        config.api_key
+      );
+
+      if (resp.ok && resp.data.data?.length > 0) {
+        console.log(chalk.bold(`  Service Orders (${resp.data.count} total)`));
+        console.log(chalk.dim("  ─────────────────────────────────────────────"));
+
+        for (const order of resp.data.data) {
+          const statusColor =
+            order.status === "completed" ? chalk.green :
+            order.status === "pending" ? chalk.yellow :
+            order.status === "failed" ? chalk.red :
+            chalk.gray;
+
+          const age = timeAgo(order.created_at);
+          const dur = order.duration ? `${order.duration.toFixed(1)}s` : "--";
+          console.log(
+            `  ${statusColor(order.status.toUpperCase().padEnd(9))} ` +
+            `${chalk.dim("from")} ${chalk.bold((order.caller_agent_name ?? "?").slice(0, 15).padEnd(15))} ` +
+            `${chalk.cyan("$" + order.price.toFixed(3).padStart(7))} ` +
+            `${chalk.dim(dur.padStart(6))} ` +
+            `${chalk.dim(age)}`
+          );
+        }
+        console.log("");
+      } else {
+        console.log(chalk.dim("  No service orders found.\n"));
+      }
+    } catch {
+      console.log(chalk.dim("  Could not fetch orders.\n"));
+    }
+  }
+
+  // Recent provider log
+  if (showType === "all" || showType === "log") {
+    try {
+      const { readFileSync } = await import("node:fs");
+      const lines = readFileSync(LOG_FILE, "utf-8").trim().split("\n");
+      const recent = lines.slice(-8);
+      console.log(chalk.bold("  Recent Provider Log"));
+      console.log(chalk.dim("  ─────────────────────────────────────────────"));
+      for (const line of recent) {
+        const isError = line.includes("[ERROR]");
+        const isInfo = line.includes("[INFO]");
+        console.log(
+          `  ${isError ? chalk.red(line) : isInfo ? chalk.dim(line) : chalk.yellow(line)}`
+        );
+      }
+      console.log("");
+    } catch {
+      console.log(chalk.dim("  No provider log found.\n"));
+    }
+  }
+}
+
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const min = Math.floor(diff / 60000);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const d = Math.floor(hr / 24);
+  return `${d}d ago`;
+}
+
+// ── hub order ──
+
 export async function hubOrderCommand(orderId: string): Promise<void> {
   const config = requireConfig();
   const spinner = ora("Fetching order...").start();

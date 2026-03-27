@@ -6,7 +6,7 @@ import { promoteSubmitCommand, promoteVerifyCommand } from './commands/promote.j
 import { walletStatusCommand, walletBalanceCommand, walletAddressCommand, walletSendCommand, } from './commands/wallet.js';
 import { tweetCommand } from './commands/tweet.js';
 import { gigCreateCommand, gigBrowseCommand, gigDetailCommand, gigAcceptCommand, gigDeliverCommand, gigApproveCommand, gigDisputeCommand, } from './commands/gig.js';
-import { hubStartCommand, hubStopCommand, hubStatusCommand, hubSearchCommand, hubCallCommand, hubRegisterCommand, hubSkillsCommand, hubOrderCommand, } from './commands/hub.js';
+import { hubStartCommand, hubStopCommand, hubStatusCommand, hubSearchCommand, hubCallCommand, hubRegisterCommand, hubSkillsCommand, hubOrderCommand, hubHistoryCommand, } from './commands/hub.js';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const pkg = require('../package.json');
@@ -217,6 +217,20 @@ hub
     .action(async (orderId) => {
     try {
         await hubOrderCommand(orderId);
+    }
+    catch (err) {
+        console.error(err.message);
+        process.exit(1);
+    }
+});
+hub
+    .command('history')
+    .description('View Hub activity: escrow tasks, orders, and provider log')
+    .option('-t, --type <type>', 'Filter: all, escrow, orders, log', 'all')
+    .option('-l, --limit <n>', 'Number of items to show', '10')
+    .action(async (options) => {
+    try {
+        await hubHistoryCommand({ type: options.type, limit: parseInt(options.limit ?? '10', 10) });
     }
     catch (err) {
         console.error(err.message);

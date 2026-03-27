@@ -29,6 +29,7 @@ import {
   hubRegisterCommand,
   hubSkillsCommand,
   hubOrderCommand,
+  hubHistoryCommand,
 } from './commands/hub.js';
 
 import { createRequire } from 'node:module';
@@ -247,6 +248,20 @@ hub
   .action(async (orderId: string) => {
     try {
       await hubOrderCommand(orderId);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+hub
+  .command('history')
+  .description('View Hub activity: escrow tasks, orders, and provider log')
+  .option('-t, --type <type>', 'Filter: all, escrow, orders, log', 'all')
+  .option('-l, --limit <n>', 'Number of items to show', '10')
+  .action(async (options: { type?: string; limit?: string }) => {
+    try {
+      await hubHistoryCommand({ type: options.type, limit: parseInt(options.limit ?? '10', 10) });
     } catch (err) {
       console.error((err as Error).message);
       process.exit(1);
