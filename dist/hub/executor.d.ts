@@ -1,4 +1,4 @@
-import type { ProviderConfig, ServiceCallEvent, TestCallEvent, DeliverEvent, TestResponseEvent } from "./types.js";
+import type { ProviderConfig, ServiceCallEvent, TestCallEvent, EscrowTaskEvent, DeliverEvent, TestResponseEvent } from "./types.js";
 type SendFn = (event: DeliverEvent | TestResponseEvent) => boolean;
 export declare class Executor {
     private config;
@@ -7,6 +7,8 @@ export declare class Executor {
     constructor(config: ProviderConfig, send: SendFn);
     get activeCount(): number;
     handleServiceCall(call: ServiceCallEvent): void;
+    handleEscrowTask(task: EscrowTaskEvent): void;
+    private executeEscrowTask;
     handleTestCall(call: TestCallEvent): void;
     private executeTask;
 }

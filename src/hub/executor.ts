@@ -273,16 +273,32 @@ export class Executor {
     const dedupKey = `escrow:${task.id}`;
     try {
       // Build prompt for openclaw/claude
-      const prompt = [
-        "You received a multi-submission task via ClawMoney Hub.",
+      const lines = [
+        "You received a paid task via ClawMoney Hub Marketplace.",
         `Title: ${task.title}`,
         `Category: ${task.category}`,
         `Budget: $${task.budget} USDC`,
         `Description: ${task.description}`,
         task.requirements ? `Requirements: ${task.requirements}` : "",
         "",
-        "Execute this task thoroughly. Return the result as JSON with a 'result' field containing your work.",
-      ].filter(Boolean).join("\n");
+        "Execute this task thoroughly.",
+      ];
+
+      // For code review tasks, instruct to create a GitHub Issue
+      if (task.category?.startsWith("coding/")) {
+        lines.push(
+          "",
+          "If the task references a GitHub repo, create a GitHub Issue with your findings using `gh issue create`.",
+          "Include the Issue URL in your JSON output as 'issue_url'.",
+        );
+      }
+
+      lines.push(
+        "",
+        "Return the result as JSON with a 'result' field containing your work.",
+      );
+
+      const prompt = lines.filter(Boolean).join("\n");
 
       const command = this.config.provider.cli_command;
       logger.info(`Executing multi task via ${command} (timeout=300s)`);
@@ -294,9 +310,10 @@ export class Executor {
         return;
       }
 
-      // Extract text result
+      // Extract text result and optional URL
       const parsed = parseJsonOutput(stdout);
       let content: string;
+      let url: string | null = null;
       if (command === "openclaw" && parsed) {
         const ocResult = parseOpenClawResponse(parsed);
         content = typeof ocResult.result.text === "string"
@@ -304,13 +321,21 @@ export class Executor {
           : typeof ocResult.result.result === "string"
             ? ocResult.result.result
             : JSON.stringify(ocResult.result, null, 2);
+        // Extract issue_url or pr_url from result
+        url = (ocResult.result.issue_url ?? ocResult.result.pr_url ?? null) as string | null;
       } else {
         content = parsed
           ? JSON.stringify(parsed, null, 2)
           : stdout.trim().slice(0, 10000);
+        if (parsed) {
+          url = (parsed.issue_url ?? parsed.pr_url ?? null) as string | null;
+        }
       }
 
       // Submit to marketplace
+      const body: Record<string, string> = { content };
+      if (url) body.url = url;
+
       const resp = await fetch(
         `${this.config.provider.api_base_url}/hub/escrow/${task.id}/submit`,
         {
@@ -319,7 +344,7 @@ export class Executor {
             Authorization: `Bearer ${this.config.api_key}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ content }),
+          body: JSON.stringify(body),
         }
       );
 

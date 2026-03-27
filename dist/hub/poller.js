@@ -2,12 +2,14 @@ import { logger } from "./logger.js";
 export class Poller {
     config;
     onServiceCall;
+    onEscrowTask;
     isWsConnected;
     timer = null;
     stopping = false;
-    constructor(config, onServiceCall, isWsConnected) {
+    constructor(config, onServiceCall, onEscrowTask, isWsConnected) {
         this.config = config;
         this.onServiceCall = onServiceCall;
+        this.onEscrowTask = onEscrowTask;
         this.isWsConnected = isWsConnected;
     }
     start() {
@@ -51,12 +53,21 @@ export class Poller {
                 return;
             }
             const data = (await resp.json());
-            const tasks = data.tasks ?? [];
-            if (tasks.length > 0) {
-                logger.info(`Poll: received ${tasks.length} pending task(s)`);
+            // Instant service calls
+            const serviceCalls = data.service_calls ?? [];
+            if (serviceCalls.length > 0) {
+                logger.info(`Poll: ${serviceCalls.length} pending service call(s)`);
+                for (const call of serviceCalls) {
+                    this.onServiceCall(call);
+                }
             }
-            for (const task of tasks) {
-                this.onServiceCall(task);
+            // Escrow tasks (multi-submission mode, funded)
+            const escrowTasks = (data.escrow_tasks ?? []).filter((t) => t.mode === "multi" && t.funded);
+            if (escrowTasks.length > 0) {
+                logger.info(`Poll: ${escrowTasks.length} open escrow task(s)`);
+                for (const task of escrowTasks) {
+                    this.onEscrowTask(task);
+                }
             }
         }
         catch (err) {

@@ -175,6 +175,97 @@ export class Executor {
             logger.error(`Unhandled error in executeTask for ${call.order_id}:`, err);
         });
     }
+    handleEscrowTask(task) {
+        const dedupKey = `escrow:${task.id}`;
+        if (isProcessed(dedupKey))
+            return;
+        if (this.activeTasks.size >= this.config.provider.max_concurrent) {
+            logger.warn(`Skipping multi task ${task.id.slice(0, 8)}: at max concurrency`);
+            return;
+        }
+        markProcessed(dedupKey);
+        this.activeTasks.add(dedupKey);
+        logger.info(`Processing multi task=${task.id.slice(0, 8)} "${task.title}" ($${task.budget})`);
+        this.executeEscrowTask(task).catch((err) => {
+            logger.error(`Escrow error for ${task.id}:`, err);
+            this.activeTasks.delete(dedupKey);
+        });
+    }
+    async executeEscrowTask(task) {
+        const dedupKey = `escrow:${task.id}`;
+        try {
+            // Build prompt for openclaw/claude
+            const lines = [
+                "You received a paid task via ClawMoney Hub Marketplace.",
+                `Title: ${task.title}`,
+                `Category: ${task.category}`,
+                `Budget: $${task.budget} USDC`,
+                `Description: ${task.description}`,
+                task.requirements ? `Requirements: ${task.requirements}` : "",
+                "",
+                "Execute this task thoroughly.",
+            ];
+            // For code review tasks, instruct to create a GitHub Issue
+            if (task.category?.startsWith("coding/")) {
+                lines.push("", "If the task references a GitHub repo, create a GitHub Issue with your findings using `gh issue create`.", "Include the Issue URL in your JSON output as 'issue_url'.");
+            }
+            lines.push("", "Return the result as JSON with a 'result' field containing your work.");
+            const prompt = lines.filter(Boolean).join("\n");
+            const command = this.config.provider.cli_command;
+            logger.info(`Executing multi task via ${command} (timeout=300s)`);
+            const { stdout, stderr, exitCode } = await runCli(command, prompt, 300_000, task.id);
+            if (exitCode !== 0) {
+                logger.error(`Escrow CLI failed (code=${exitCode}): ${stderr.slice(0, 500)}`);
+                return;
+            }
+            // Extract text result and optional URL
+            const parsed = parseJsonOutput(stdout);
+            let content;
+            let url = null;
+            if (command === "openclaw" && parsed) {
+                const ocResult = parseOpenClawResponse(parsed);
+                content = typeof ocResult.result.text === "string"
+                    ? ocResult.result.text
+                    : typeof ocResult.result.result === "string"
+                        ? ocResult.result.result
+                        : JSON.stringify(ocResult.result, null, 2);
+                // Extract issue_url or pr_url from result
+                url = (ocResult.result.issue_url ?? ocResult.result.pr_url ?? null);
+            }
+            else {
+                content = parsed
+                    ? JSON.stringify(parsed, null, 2)
+                    : stdout.trim().slice(0, 10000);
+                if (parsed) {
+                    url = (parsed.issue_url ?? parsed.pr_url ?? null);
+                }
+            }
+            // Submit to marketplace
+            const body = { content };
+            if (url)
+                body.url = url;
+            const resp = await fetch(`${this.config.provider.api_base_url}/hub/escrow/${task.id}/submit`, {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${this.config.api_key}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(body),
+            });
+            if (resp.ok) {
+                logger.info(`Escrow ${task.id.slice(0, 8)} submitted successfully`);
+            }
+            else if (resp.status === 409) {
+                logger.info(`Escrow ${task.id.slice(0, 8)} already submitted`);
+            }
+            else {
+                logger.error(`Escrow submit failed (${resp.status}): ${await resp.text()}`);
+            }
+        }
+        finally {
+            this.activeTasks.delete(dedupKey);
+        }
+    }
     handleTestCall(call) {
         logger.info(`Test call received: order=${call.order_id}`);
         const response = {

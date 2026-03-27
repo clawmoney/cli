@@ -135,8 +135,10 @@ export function runProvider(cliCommand) {
         }
     }
     // Create poller
-    const poller = new Poller(config, (task) => {
-        handleEvent(task);
+    const poller = new Poller(config, (call) => {
+        handleEvent(call);
+    }, (task) => {
+        executor.handleEscrowTask(task);
     }, () => wsClient.connected);
     // Graceful shutdown
     let shuttingDown = false;
