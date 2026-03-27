@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { apiGet } from '../utils/api.js';
 import { loadConfig } from '../utils/config.js';
+import { isRecord, parsePositiveInteger } from '../utils/validation.js';
 
 interface BrowseOptions {
   type?: string;
@@ -106,7 +107,7 @@ export async function browseCommand(options: BrowseOptions): Promise<void> {
   const apiKey = config?.api_key;
   const taskType = options.type || 'engage';
   const status = options.status || 'active';
-  const limit = parseInt(options.limit || '10', 10);
+  const limit = parsePositiveInteger(options.limit, 10, 'limit', { min: 1, max: 100 });
 
   console.log('');
 
@@ -122,7 +123,11 @@ export async function browseCommand(options: BrowseOptions): Promise<void> {
         promoteSpinner.fail(`Failed to fetch promote tasks (${resp.status})`);
       } else {
         const body = resp.data;
-        const tasks = (body.data || (Array.isArray(body) ? body : [])) as PromoteTask[];
+        const tasks = Array.isArray(body)
+          ? body
+          : isRecord(body) && Array.isArray(body.data)
+            ? body.data
+            : [];
         promoteSpinner.succeed(`Promote Tasks (${tasks.length})`);
         printPromoteTable(tasks);
       }
@@ -145,7 +150,11 @@ export async function browseCommand(options: BrowseOptions): Promise<void> {
         engageSpinner.fail(`Failed to fetch engage tasks (${resp.status})`);
       } else {
         const body = resp.data;
-        const tasks = (body.data || (Array.isArray(body) ? body : [])) as EngageTask[];
+        const tasks = Array.isArray(body)
+          ? body
+          : isRecord(body) && Array.isArray(body.data)
+            ? body.data
+            : [];
         engageSpinner.succeed(`Engage Tasks (${tasks.length})`);
         printEngageTable(tasks);
       }

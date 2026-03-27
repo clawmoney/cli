@@ -35,6 +35,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/clawmoney/clawmoney"
-  }
+    "url": "https://github.com/clawmoney/cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/clawmoney/cli/issues"
+  },
+  "homepage": "https://github.com/clawmoney/cli#readme"
 }

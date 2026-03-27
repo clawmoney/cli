@@ -31,6 +31,10 @@ function cleanup(): void {
 }
 
 export function startDedup(): void {
+  if (cleanupTimer) {
+    return;
+  }
+
   cleanupTimer = setInterval(cleanup, CLEANUP_INTERVAL_MS);
   cleanupTimer.unref();
 }

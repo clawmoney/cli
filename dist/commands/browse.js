@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { apiGet } from '../utils/api.js';
 import { loadConfig } from '../utils/config.js';
+import { isRecord, parsePositiveInteger } from '../utils/validation.js';
 function formatUsd(amount, decimals = 6) {
     if (amount === undefined || amount === null)
         return '-';
@@ -57,7 +58,7 @@ export async function browseCommand(options) {
     const apiKey = config?.api_key;
     const taskType = options.type || 'engage';
     const status = options.status || 'active';
-    const limit = parseInt(options.limit || '10', 10);
+    const limit = parsePositiveInteger(options.limit, 10, 'limit', { min: 1, max: 100 });
     console.log('');
     if (taskType === 'promote' || taskType === 'all') {
         const promoteSpinner = ora('Fetching promote tasks...').start();
@@ -68,7 +69,11 @@ export async function browseCommand(options) {
             }
             else {
                 const body = resp.data;
-                const tasks = (body.data || (Array.isArray(body) ? body : []));
+                const tasks = Array.isArray(body)
+                    ? body
+                    : isRecord(body) && Array.isArray(body.data)
+                        ? body.data
+                        : [];
                 promoteSpinner.succeed(`Promote Tasks (${tasks.length})`);
                 printPromoteTable(tasks);
             }
@@ -88,7 +93,11 @@ export async function browseCommand(options) {
             }
             else {
                 const body = resp.data;
-                const tasks = (body.data || (Array.isArray(body) ? body : []));
+                const tasks = Array.isArray(body)
+                    ? body
+                    : isRecord(body) && Array.isArray(body.data)
+                        ? body.data
+                        : [];
                 engageSpinner.succeed(`Engage Tasks (${tasks.length})`);
                 printEngageTable(tasks);
             }

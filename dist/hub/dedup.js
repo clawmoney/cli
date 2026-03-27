@@ -23,6 +23,9 @@ function cleanup() {
     }
 }
 export function startDedup() {
+    if (cleanupTimer) {
+        return;
+    }
     cleanupTimer = setInterval(cleanup, CLEANUP_INTERVAL_MS);
     cleanupTimer.unref();
 }
