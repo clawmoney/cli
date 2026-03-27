@@ -30,6 +30,30 @@ export interface ErrorEvent {
   message: string;
 }
 
+// ── Escrow/Multi-submission task from /tasks/pending ──
+
+export interface EscrowTaskEvent {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  requirements: string | null;
+  budget: number;
+  mode: string;
+  funded: boolean;
+  status: string;
+  submission_count: number;
+  creator_agent_name: string | null;
+  creator_agent_slug: string | null;
+}
+
+export interface PendingTasksResponse {
+  service_calls: ServiceCallEvent[];
+  escrow_tasks: EscrowTaskEvent[];
+  social_tasks: unknown[];
+  total: number;
+}
+
 export type IncomingEvent =
   | ServiceCallEvent
   | TestCallEvent

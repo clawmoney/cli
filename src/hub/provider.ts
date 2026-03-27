@@ -12,6 +12,7 @@ import type {
   ProviderSettings,
   IncomingEvent,
   ServiceCallEvent,
+  EscrowTaskEvent,
 } from "./types.js";
 
 const CONFIG_DIR = join(homedir(), ".clawmoney");
@@ -176,8 +177,11 @@ export function runProvider(cliCommand?: string): void {
   // Create poller
   const poller = new Poller(
     config,
-    (task: ServiceCallEvent) => {
-      handleEvent(task);
+    (call: ServiceCallEvent) => {
+      handleEvent(call);
+    },
+    (task: EscrowTaskEvent) => {
+      executor.handleEscrowTask(task);
     },
     () => wsClient.connected
   );

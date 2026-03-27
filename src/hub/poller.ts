@@ -1,22 +1,31 @@
-import type { ProviderConfig, ServiceCallEvent } from "./types.js";
+import type {
+  ProviderConfig,
+  ServiceCallEvent,
+  EscrowTaskEvent,
+  PendingTasksResponse,
+} from "./types.js";
 import { logger } from "./logger.js";
 
-export type PollCallback = (event: ServiceCallEvent) => void;
+export type ServiceCallCallback = (event: ServiceCallEvent) => void;
+export type EscrowTaskCallback = (task: EscrowTaskEvent) => void;
 
 export class Poller {
   private config: ProviderConfig;
-  private onServiceCall: PollCallback;
+  private onServiceCall: ServiceCallCallback;
+  private onEscrowTask: EscrowTaskCallback;
   private isWsConnected: () => boolean;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private stopping = false;
 
   constructor(
     config: ProviderConfig,
-    onServiceCall: PollCallback,
+    onServiceCall: ServiceCallCallback,
+    onEscrowTask: EscrowTaskCallback,
     isWsConnected: () => boolean
   ) {
     this.config = config;
     this.onServiceCall = onServiceCall;
+    this.onEscrowTask = onEscrowTask;
     this.isWsConnected = isWsConnected;
   }
 
@@ -67,15 +76,24 @@ export class Poller {
         return;
       }
 
-      const data = (await resp.json()) as { tasks?: ServiceCallEvent[] };
-      const tasks = data.tasks ?? [];
+      const data = (await resp.json()) as PendingTasksResponse;
 
-      if (tasks.length > 0) {
-        logger.info(`Poll: received ${tasks.length} pending task(s)`);
+      // Instant service calls
+      const serviceCalls = data.service_calls ?? [];
+      if (serviceCalls.length > 0) {
+        logger.info(`Poll: ${serviceCalls.length} pending service call(s)`);
+        for (const call of serviceCalls) {
+          this.onServiceCall(call);
+        }
       }
 
-      for (const task of tasks) {
-        this.onServiceCall(task);
+      // Escrow tasks (multi-submission mode, funded)
+      const escrowTasks = (data.escrow_tasks ?? []).filter((t) => t.mode === "multi" && t.funded);
+      if (escrowTasks.length > 0) {
+        logger.info(`Poll: ${escrowTasks.length} open escrow task(s)`);
+        for (const task of escrowTasks) {
+          this.onEscrowTask(task);
+        }
       }
     } catch (err) {
       logger.error("Poll error:", err);
