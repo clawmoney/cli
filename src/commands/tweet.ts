@@ -13,7 +13,7 @@ export async function tweetCommand(
   text: string,
   options: TweetOptions
 ): Promise<void> {
-  const args = ['bnbot', 'tweet', text];
+  const args = ['bnbot', 'x', 'post', text];
   if (options.draft) args.push('--draft');
   if (options.media) args.push('--media', options.media);
 
@@ -29,7 +29,7 @@ export async function tweetCommand(
     if (code !== 0) process.exit(code);
   } catch (err) {
     console.error(chalk.red((err as Error).message));
-    console.log(chalk.dim('  Make sure bnbot-cli is installed: npm install -g bnbot-cli'));
+    console.log(chalk.dim('  Make sure @bnbot/cli is installed: npm install -g @bnbot/cli'));
     process.exit(1);
   }
 }

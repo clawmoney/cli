@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
  * Post a tweet by delegating to bnbot-cli.
  */
 export async function tweetCommand(text, options) {
-    const args = ['bnbot', 'tweet', text];
+    const args = ['bnbot', 'x', 'post', text];
     if (options.draft)
         args.push('--draft');
     if (options.media)
@@ -23,7 +23,7 @@ export async function tweetCommand(text, options) {
     }
     catch (err) {
         console.error(chalk.red(err.message));
-        console.log(chalk.dim('  Make sure bnbot-cli is installed: npm install -g bnbot-cli'));
+        console.log(chalk.dim('  Make sure @bnbot/cli is installed: npm install -g @bnbot/cli'));
         process.exit(1);
     }
 }
