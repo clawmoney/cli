@@ -1,17 +1,17 @@
 import chalk from 'chalk';
 import { spawn } from 'node:child_process';
 /**
- * Post a tweet by delegating to bnbot-cli.
+ * Post a tweet by delegating to @bnbot/cli.
  */
 export async function tweetCommand(text, options) {
-    const args = ['bnbot', 'x', 'post', text];
+    const args = ['x', 'post', text];
     if (options.draft)
         args.push('--draft');
     if (options.media)
         args.push('--media', options.media);
     try {
         const code = await new Promise((resolve, reject) => {
-            const child = spawn('npx', args, {
+            const child = spawn('bnbot', args, {
                 stdio: 'inherit',
                 shell: true,
             });

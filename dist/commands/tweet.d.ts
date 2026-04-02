@@ -3,7 +3,7 @@ interface TweetOptions {
     draft?: boolean;
 }
 /**
- * Post a tweet by delegating to bnbot-cli.
+ * Post a tweet by delegating to @bnbot/cli.
  */
 export declare function tweetCommand(text: string, options: TweetOptions): Promise<void>;
 export {};

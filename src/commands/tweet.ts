@@ -13,13 +13,13 @@ export async function tweetCommand(
   text: string,
   options: TweetOptions
 ): Promise<void> {
-  const args = ['bnbot', 'x', 'post', text];
+  const args = ['x', 'post', text];
   if (options.draft) args.push('--draft');
   if (options.media) args.push('--media', options.media);
 
   try {
     const code = await new Promise<number>((resolve, reject) => {
-      const child = spawn('npx', args, {
+      const child = spawn('bnbot', args, {
         stdio: 'inherit',
         shell: true,
       });
