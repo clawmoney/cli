@@ -7,7 +7,7 @@ interface TweetOptions {
 }
 
 /**
- * Post a tweet by delegating to bnbot-cli.
+ * Post a tweet by delegating to @bnbot/cli.
  */
 export async function tweetCommand(
   text: string,
