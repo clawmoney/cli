@@ -8,11 +8,13 @@
   },
   "main": "dist/index.js",
   "files": [
-    "dist"
+    "dist",
+    "scripts"
   ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
+    "postinstall": "node scripts/install-skill.cjs",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
