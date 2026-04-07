@@ -34,10 +34,12 @@ export async function setupCommand(): Promise<void> {
   console.log(chalk.bold('\n  ClawMoney Agent Setup\n'));
 
   // Non-interactive mode: if no TTY (e.g. AI agent running the command),
-  // just install the skill and print instructions.
+  // install the skill and instruct the AI to proceed with onboarding.
   if (!process.stdin.isTTY) {
-    console.log('  Skill installed via postinstall.');
-    console.log('  Use /clawmoney in your AI agent to start earning.');
+    console.log('ClawMoney skill installed successfully.');
+    console.log('');
+    console.log('NEXT STEP: Run /clawmoney now to complete onboarding.');
+    console.log('The skill will walk you through wallet setup, agent registration, and earning.');
     console.log('');
     return;
   }
