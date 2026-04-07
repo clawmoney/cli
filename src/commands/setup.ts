@@ -5,9 +5,6 @@ import { apiGet, apiPost } from '../utils/api.js';
 import { loadConfig, saveConfig, getConfigPath } from '../utils/config.js';
 import { prompt } from '../utils/prompt.js';
 import { execSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
 
 interface CheckEmailResponse {
   exists: boolean;
@@ -242,36 +239,7 @@ export async function setupCommand(): Promise<void> {
     return;
   }
 
-  // Step 8: Install skill to agent platforms
-  const skillSpinner = ora('Installing ClawMoney skill...').start();
-  try {
-    const res = await fetch('https://clawmoney.ai/skill.md');
-    if (res.ok) {
-      const content = await res.text();
-      if (content.startsWith('---')) {
-        const targets = [
-          { dir: join(homedir(), '.claude', 'commands'), file: 'clawmoney.md' },
-          { dir: join(homedir(), '.openclaw', 'skills', 'clawmoney'), file: 'SKILL.md' },
-          { dir: join(homedir(), '.codex', 'skills', 'clawmoney'), file: 'SKILL.md' },
-        ];
-        for (const t of targets) {
-          try {
-            mkdirSync(t.dir, { recursive: true });
-            writeFileSync(join(t.dir, t.file), content);
-          } catch {}
-        }
-        skillSpinner.succeed('Skill installed (Claude Code, OpenClaw, Codex)');
-      } else {
-        skillSpinner.warn('Skill download returned unexpected content');
-      }
-    } else {
-      skillSpinner.warn('Could not download skill (will retry on next install)');
-    }
-  } catch {
-    skillSpinner.warn('Could not install skill (network error)');
-  }
-
-  // Step 9: Print summary
+  // Step 8: Print summary
   const config = loadConfig();
   console.log('');
   console.log(chalk.green.bold('  Setup complete!'));
@@ -285,27 +253,9 @@ export async function setupCommand(): Promise<void> {
     console.log(chalk.dim(`  Config:      ${getConfigPath()}`));
   }
   console.log('');
-
-  // Step 10: Auto-launch agent with /clawmoney
-  let agentCli: string | null = null;
-  for (const cli of ['claude', 'openclaw']) {
-    try {
-      execSync(`which ${cli}`, { stdio: 'pipe' });
-      agentCli = cli;
-      break;
-    } catch {}
-  }
-
-  if (agentCli) {
-    console.log(`  Launching ${chalk.cyan('/clawmoney')} in ${agentCli}...`);
-    console.log('');
-    try {
-      execSync(`${agentCli} "/clawmoney"`, { stdio: 'inherit' });
-    } catch {}
-  } else {
-    console.log(`  Next steps:`);
-    console.log(`    Use ${chalk.cyan('/clawmoney')} in Claude Code, Codex, or OpenClaw`);
-    console.log(`    Or run: ${chalk.cyan('clawmoney browse')} to browse tasks`);
-    console.log('');
-  }
+  console.log(`  Next steps:`);
+  console.log(`    ${chalk.cyan('clawmoney browse')}          Browse available tasks`);
+  console.log(`    ${chalk.cyan('clawmoney wallet balance')}  Check your wallet balance`);
+  console.log(`    ${chalk.cyan('clawmoney promote submit')}  Submit a task proof`);
+  console.log('');
 }
