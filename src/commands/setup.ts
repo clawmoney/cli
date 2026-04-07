@@ -285,9 +285,27 @@ export async function setupCommand(): Promise<void> {
     console.log(chalk.dim(`  Config:      ${getConfigPath()}`));
   }
   console.log('');
-  console.log(`  Next steps:`);
-  console.log(`    ${chalk.cyan('clawmoney browse')}          Browse available tasks`);
-  console.log(`    ${chalk.cyan('clawmoney wallet balance')}  Check your wallet balance`);
-  console.log(`    ${chalk.cyan('clawmoney promote submit')}  Submit a task proof`);
-  console.log('');
+
+  // Step 10: Auto-launch agent with /clawmoney
+  let agentCli: string | null = null;
+  for (const cli of ['claude', 'openclaw']) {
+    try {
+      execSync(`which ${cli}`, { stdio: 'pipe' });
+      agentCli = cli;
+      break;
+    } catch {}
+  }
+
+  if (agentCli) {
+    console.log(`  Launching ${chalk.cyan('/clawmoney')} in ${agentCli}...`);
+    console.log('');
+    try {
+      execSync(`${agentCli} "/clawmoney"`, { stdio: 'inherit' });
+    } catch {}
+  } else {
+    console.log(`  Next steps:`);
+    console.log(`    Use ${chalk.cyan('/clawmoney')} in Claude Code, Codex, or OpenClaw`);
+    console.log(`    Or run: ${chalk.cyan('clawmoney browse')} to browse tasks`);
+    console.log('');
+  }
 }
