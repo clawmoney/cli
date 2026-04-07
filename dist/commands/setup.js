@@ -5,6 +5,9 @@ import { apiGet, apiPost } from '../utils/api.js';
 import { loadConfig, saveConfig, getConfigPath } from '../utils/config.js';
 import { prompt } from '../utils/prompt.js';
 import { execSync } from 'node:child_process';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 export async function setupCommand() {
     console.log(chalk.bold('\n  ClawMoney Agent Setup\n'));
     // Step 1: Check and install dependencies
@@ -186,7 +189,39 @@ export async function setupCommand() {
         console.error(chalk.red(err.message));
         return;
     }
-    // Step 8: Print summary
+    // Step 8: Install skill to agent platforms
+    const skillSpinner = ora('Installing ClawMoney skill...').start();
+    try {
+        const res = await fetch('https://clawmoney.ai/skill.md');
+        if (res.ok) {
+            const content = await res.text();
+            if (content.startsWith('---')) {
+                const targets = [
+                    { dir: join(homedir(), '.claude', 'commands'), file: 'clawmoney.md' },
+                    { dir: join(homedir(), '.openclaw', 'skills', 'clawmoney'), file: 'SKILL.md' },
+                    { dir: join(homedir(), '.codex', 'skills', 'clawmoney'), file: 'SKILL.md' },
+                ];
+                for (const t of targets) {
+                    try {
+                        mkdirSync(t.dir, { recursive: true });
+                        writeFileSync(join(t.dir, t.file), content);
+                    }
+                    catch { }
+                }
+                skillSpinner.succeed('Skill installed (Claude Code, OpenClaw, Codex)');
+            }
+            else {
+                skillSpinner.warn('Skill download returned unexpected content');
+            }
+        }
+        else {
+            skillSpinner.warn('Could not download skill (will retry on next install)');
+        }
+    }
+    catch {
+        skillSpinner.warn('Could not install skill (network error)');
+    }
+    // Step 9: Print summary
     const config = loadConfig();
     console.log('');
     console.log(chalk.green.bold('  Setup complete!'));
