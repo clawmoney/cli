@@ -33,6 +33,15 @@ interface LoginVerifyResponse {
 export async function setupCommand(): Promise<void> {
   console.log(chalk.bold('\n  ClawMoney Agent Setup\n'));
 
+  // Non-interactive mode: if no TTY (e.g. AI agent running the command),
+  // just install the skill and print instructions.
+  if (!process.stdin.isTTY) {
+    console.log('  Skill installed via postinstall.');
+    console.log('  Use /clawmoney in your AI agent to start earning.');
+    console.log('');
+    return;
+  }
+
   // Step 1: Check and install dependencies
   const depSpinner = ora('Checking dependencies...').start();
   try {
