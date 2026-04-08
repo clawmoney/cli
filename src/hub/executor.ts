@@ -293,9 +293,20 @@ export class Executor {
         );
       }
 
+      // For image generation tasks, instruct to save files
+      if (task.category?.startsWith("generation/image")) {
+        lines.push(
+          "",
+          "IMPORTANT: Generate a real image file (PNG/JPG). Save it to a local path.",
+          "Include the file path in your JSON output as 'image_path'.",
+          "Do NOT generate SVG, HTML, or code to fake an image.",
+        );
+      }
+
       lines.push(
         "",
         "Return the result as JSON with a 'result' field containing your work.",
+        "If you generate any files (images, videos, etc.), include their absolute file paths in the output.",
       );
 
       const prompt = lines.filter(Boolean).join("\n");
@@ -310,10 +321,12 @@ export class Executor {
         return;
       }
 
-      // Extract text result and optional URL
+      // Extract text result, optional URL, and file paths
       const parsed = parseJsonOutput(stdout);
       let content: string;
       let url: string | null = null;
+      const localFiles: string[] = [];
+
       if (command === "openclaw" && parsed) {
         const ocResult = parseOpenClawResponse(parsed);
         content = typeof ocResult.result.text === "string"
@@ -323,12 +336,43 @@ export class Executor {
             : JSON.stringify(ocResult.result, null, 2);
         // Extract issue_url or pr_url from result
         url = (ocResult.result.issue_url ?? ocResult.result.pr_url ?? null) as string | null;
+        localFiles.push(...ocResult.files);
       } else {
         content = parsed
           ? JSON.stringify(parsed, null, 2)
           : stdout.trim().slice(0, 10000);
         if (parsed) {
           url = (parsed.issue_url ?? parsed.pr_url ?? null) as string | null;
+          // Extract file paths from parsed JSON
+          for (const key of ["image_path", "video_path", "audio_path", "file_path", "primary_file"]) {
+            const val = parsed[key];
+            if (typeof val === "string" && val.startsWith("/")) localFiles.push(val);
+          }
+          const files = parsed.files as string[] | undefined;
+          if (Array.isArray(files)) {
+            localFiles.push(...files.filter((f): f is string => typeof f === "string" && f.startsWith("/")));
+          }
+        }
+        // Also scan raw stdout for file paths (claude may output paths as plain text)
+        const pathMatches = stdout.match(/\/\S+\.(png|jpg|jpeg|webp|gif|mp4|webm|mov|mp3|wav|pdf)/gim);
+        if (pathMatches) {
+          for (const p of pathMatches) {
+            if (!localFiles.includes(p)) localFiles.push(p);
+          }
+        }
+      }
+
+      // Upload local files to R2 CDN
+      for (const filePath of localFiles) {
+        const cdnUrl = await uploadFile(filePath, this.config);
+        if (cdnUrl) {
+          logger.info(`Escrow ${task.id.slice(0, 8)}: uploaded ${filePath} -> ${cdnUrl}`);
+          // Use the first uploaded file as the submission URL
+          if (!url) {
+            url = cdnUrl;
+          }
+          // Replace local path in content with CDN URL
+          content = content.replace(filePath, cdnUrl);
         }
       }
 
