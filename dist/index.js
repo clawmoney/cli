@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { setupCommand } from './commands/setup.js';
 import { browseCommand } from './commands/browse.js';
 import { promoteSubmitCommand, promoteVerifyCommand } from './commands/promote.js';
+import { startAutoVerify } from './promote/auto-verify.js';
 import { walletStatusCommand, walletBalanceCommand, walletAddressCommand, walletSendCommand, } from './commands/wallet.js';
 import { tweetCommand } from './commands/tweet.js';
 import { gigCreateCommand, gigBrowseCommand, gigDetailCommand, gigAcceptCommand, gigDeliverCommand, gigApproveCommand, gigDisputeCommand, } from './commands/gig.js';
@@ -71,6 +72,18 @@ promote
     .action(async (taskId, options) => {
     try {
         await promoteVerifyCommand(taskId, options);
+    }
+    catch (err) {
+        console.error(err.message);
+        process.exit(1);
+    }
+});
+promote
+    .command('auto-verify')
+    .description('Start auto-verifier daemon (witness mode, $0.01/verification)')
+    .action(async () => {
+    try {
+        await startAutoVerify();
     }
     catch (err) {
         console.error(err.message);
