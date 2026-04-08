@@ -23,13 +23,13 @@ export async function hubStartCommand(options: {
   if (existingPid && isPidAlive(existingPid)) {
     console.log(
       chalk.yellow(
-        `Hub Provider is already running (PID ${existingPid}). Use "clawmoney hub stop" first.`
+        `Market Provider is already running (PID ${existingPid}). Use "clawmoney market stop" first.`
       )
     );
     return;
   }
 
-  const spinner = ora("Starting Hub Provider...").start();
+  const spinner = ora("Starting Market Provider...").start();
 
   try {
     // Resolve daemon script path relative to this file's directory
@@ -63,7 +63,7 @@ export async function hubStartCommand(options: {
     const pid = readPid();
     if (pid && isPidAlive(pid)) {
       spinner.succeed(
-        chalk.green(`Hub Provider started (PID ${pid})`)
+        chalk.green(`Market Provider started (PID ${pid})`)
       );
       console.log(chalk.dim(`  Log file: ${LOG_FILE}`));
       console.log(chalk.dim(`  CLI: ${options.cli || config.provider?.cli_command || "openclaw"}`));
@@ -72,13 +72,13 @@ export async function hubStartCommand(options: {
     } else {
       spinner.fail(
         chalk.red(
-          "Failed to start Hub Provider. Check logs at: " + LOG_FILE
+          "Failed to start Market Provider. Check logs at: " + LOG_FILE
         )
       );
       process.exit(1);
     }
   } catch (err) {
-    spinner.fail(chalk.red("Failed to start Hub Provider"));
+    spinner.fail(chalk.red("Failed to start Market Provider"));
     throw err;
   }
 }
@@ -89,14 +89,14 @@ export async function hubStopCommand(): Promise<void> {
   const pid = readPid();
 
   if (!pid) {
-    console.log(chalk.dim("Hub Provider is not running (no PID file)."));
+    console.log(chalk.dim("Market Provider is not running (no PID file)."));
     return;
   }
 
   if (!isPidAlive(pid)) {
     console.log(
       chalk.dim(
-        `Hub Provider PID ${pid} is not alive. Cleaning up PID file.`
+        `Market Provider PID ${pid} is not alive. Cleaning up PID file.`
       )
     );
     removePid();
@@ -105,7 +105,7 @@ export async function hubStopCommand(): Promise<void> {
 
   try {
     process.kill(pid, "SIGTERM");
-    console.log(chalk.green(`Hub Provider stopped (PID ${pid}).`));
+    console.log(chalk.green(`Market Provider stopped (PID ${pid}).`));
   } catch (err) {
     console.error(
       chalk.red(`Failed to stop process ${pid}:`),
@@ -124,17 +124,17 @@ export async function hubStatusCommand(): Promise<void> {
   const pid = readPid();
 
   if (!pid) {
-    console.log(chalk.dim("Hub Provider is not running."));
+    console.log(chalk.dim("Market Provider is not running."));
     return;
   }
 
   if (isPidAlive(pid)) {
-    console.log(chalk.green(`Hub Provider is running (PID ${pid}).`));
+    console.log(chalk.green(`Market Provider is running (PID ${pid}).`));
     console.log(chalk.dim(`  Log file: ${LOG_FILE}`));
   } else {
     console.log(
       chalk.yellow(
-        `Hub Provider PID ${pid} is not alive (stale PID file).`
+        `Market Provider PID ${pid} is not alive (stale PID file).`
       )
     );
     removePid();
@@ -167,7 +167,7 @@ interface SearchSkill {
 }
 
 export async function hubSearchCommand(options: SearchOptions): Promise<void> {
-  const spinner = ora("Searching Hub...").start();
+  const spinner = ora("Searching Market...").start();
 
   try {
     const params = new URLSearchParams();
@@ -411,7 +411,7 @@ export async function hubCallCommand(options: CallOptions): Promise<void> {
       if ((result as Record<string, unknown>)._timeout) {
         spinner.warn(chalk.yellow("Still processing..."));
         console.log(`  ${chalk.bold("Order:")} ${orderId}`);
-        console.log(chalk.dim(`  Check later: npx clawmoney hub order ${orderId}`));
+        console.log(chalk.dim(`  Check later: npx clawmoney market order ${orderId}`));
       } else {
         spinner.succeed(chalk.green("Call completed (x402 paid)!"));
         console.log("");
@@ -454,7 +454,7 @@ export async function hubCallCommand(options: CallOptions): Promise<void> {
       if ((result as Record<string, unknown>)._timeout) {
         spinner.warn(chalk.yellow("Still processing..."));
         console.log(`  ${chalk.bold("Order:")} ${orderId}`);
-        console.log(chalk.dim(`  Check later: npx clawmoney hub order ${orderId}`));
+        console.log(chalk.dim(`  Check later: npx clawmoney market order ${orderId}`));
       } else {
         spinner.succeed(chalk.green("Call completed!"));
         console.log("");
@@ -574,7 +574,7 @@ export async function hubSkillsCommand(): Promise<void> {
     if (skills.length === 0) {
       console.log(
         chalk.dim(
-          '  No skills registered. Use "clawmoney hub register" to add one.'
+          '  No skills registered. Use "clawmoney market register" to add one.'
         )
       );
       return;
@@ -641,7 +641,7 @@ export async function hubHistoryCommand(options: {
   const limit = options.limit ?? 10;
   const showType = options.type ?? "all";
 
-  console.log(chalk.bold("\n  Hub Activity History\n"));
+  console.log(chalk.bold("\n  Market Activity History\n"));
 
   // Escrow tasks I submitted to (assigned)
   if (showType === "all" || showType === "escrow") {

@@ -14,10 +14,10 @@ export async function hubStartCommand(options) {
     // Check if already running
     const existingPid = readPid();
     if (existingPid && isPidAlive(existingPid)) {
-        console.log(chalk.yellow(`Hub Provider is already running (PID ${existingPid}). Use "clawmoney hub stop" first.`));
+        console.log(chalk.yellow(`Market Provider is already running (PID ${existingPid}). Use "clawmoney market stop" first.`));
         return;
     }
-    const spinner = ora("Starting Hub Provider...").start();
+    const spinner = ora("Starting Market Provider...").start();
     try {
         // Resolve daemon script path relative to this file's directory
         // Works for both compiled (dist/commands/hub.js) and dev (src/commands/hub.ts)
@@ -44,19 +44,19 @@ export async function hubStartCommand(options) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
         const pid = readPid();
         if (pid && isPidAlive(pid)) {
-            spinner.succeed(chalk.green(`Hub Provider started (PID ${pid})`));
+            spinner.succeed(chalk.green(`Market Provider started (PID ${pid})`));
             console.log(chalk.dim(`  Log file: ${LOG_FILE}`));
             console.log(chalk.dim(`  CLI: ${options.cli || config.provider?.cli_command || "openclaw"}`));
             console.log(chalk.dim(`  Auto-accept: ${options.autoAccept || config.provider?.auto_accept ? "on" : "off"}`));
             console.log(chalk.dim(`  API key: ${config.api_key.slice(0, 8)}...`));
         }
         else {
-            spinner.fail(chalk.red("Failed to start Hub Provider. Check logs at: " + LOG_FILE));
+            spinner.fail(chalk.red("Failed to start Market Provider. Check logs at: " + LOG_FILE));
             process.exit(1);
         }
     }
     catch (err) {
-        spinner.fail(chalk.red("Failed to start Hub Provider"));
+        spinner.fail(chalk.red("Failed to start Market Provider"));
         throw err;
     }
 }
@@ -64,17 +64,17 @@ export async function hubStartCommand(options) {
 export async function hubStopCommand() {
     const pid = readPid();
     if (!pid) {
-        console.log(chalk.dim("Hub Provider is not running (no PID file)."));
+        console.log(chalk.dim("Market Provider is not running (no PID file)."));
         return;
     }
     if (!isPidAlive(pid)) {
-        console.log(chalk.dim(`Hub Provider PID ${pid} is not alive. Cleaning up PID file.`));
+        console.log(chalk.dim(`Market Provider PID ${pid} is not alive. Cleaning up PID file.`));
         removePid();
         return;
     }
     try {
         process.kill(pid, "SIGTERM");
-        console.log(chalk.green(`Hub Provider stopped (PID ${pid}).`));
+        console.log(chalk.green(`Market Provider stopped (PID ${pid}).`));
     }
     catch (err) {
         console.error(chalk.red(`Failed to stop process ${pid}:`), err.message);
@@ -87,20 +87,20 @@ export async function hubStopCommand() {
 export async function hubStatusCommand() {
     const pid = readPid();
     if (!pid) {
-        console.log(chalk.dim("Hub Provider is not running."));
+        console.log(chalk.dim("Market Provider is not running."));
         return;
     }
     if (isPidAlive(pid)) {
-        console.log(chalk.green(`Hub Provider is running (PID ${pid}).`));
+        console.log(chalk.green(`Market Provider is running (PID ${pid}).`));
         console.log(chalk.dim(`  Log file: ${LOG_FILE}`));
     }
     else {
-        console.log(chalk.yellow(`Hub Provider PID ${pid} is not alive (stale PID file).`));
+        console.log(chalk.yellow(`Market Provider PID ${pid} is not alive (stale PID file).`));
         removePid();
     }
 }
 export async function hubSearchCommand(options) {
-    const spinner = ora("Searching Hub...").start();
+    const spinner = ora("Searching Market...").start();
     try {
         const params = new URLSearchParams();
         if (options.query)
@@ -286,7 +286,7 @@ export async function hubCallCommand(options) {
             if (result._timeout) {
                 spinner.warn(chalk.yellow("Still processing..."));
                 console.log(`  ${chalk.bold("Order:")} ${orderId}`);
-                console.log(chalk.dim(`  Check later: npx clawmoney hub order ${orderId}`));
+                console.log(chalk.dim(`  Check later: npx clawmoney market order ${orderId}`));
             }
             else {
                 spinner.succeed(chalk.green("Call completed (x402 paid)!"));
@@ -324,7 +324,7 @@ export async function hubCallCommand(options) {
             if (result._timeout) {
                 spinner.warn(chalk.yellow("Still processing..."));
                 console.log(`  ${chalk.bold("Order:")} ${orderId}`);
-                console.log(chalk.dim(`  Check later: npx clawmoney hub order ${orderId}`));
+                console.log(chalk.dim(`  Check later: npx clawmoney market order ${orderId}`));
             }
             else {
                 spinner.succeed(chalk.green("Call completed!"));
@@ -392,7 +392,7 @@ export async function hubSkillsCommand() {
         spinner.succeed(`My Skills (${skills.length})`);
         console.log("");
         if (skills.length === 0) {
-            console.log(chalk.dim('  No skills registered. Use "clawmoney hub register" to add one.'));
+            console.log(chalk.dim('  No skills registered. Use "clawmoney market register" to add one.'));
             return;
         }
         // Table header
@@ -417,7 +417,7 @@ export async function hubHistoryCommand(options) {
     const config = requireConfig();
     const limit = options.limit ?? 10;
     const showType = options.type ?? "all";
-    console.log(chalk.bold("\n  Hub Activity History\n"));
+    console.log(chalk.bold("\n  Market Activity History\n"));
     // Escrow tasks I submitted to (assigned)
     if (showType === "all" || showType === "escrow") {
         try {

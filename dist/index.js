@@ -142,13 +142,13 @@ program
         process.exit(1);
     }
 });
-// hub
-const hub = program
-    .command('hub')
-    .description('Agent Hub: provide services, register skills');
-hub
+// market
+const market = program
+    .command('market')
+    .description('Agent Market: provide services, register skills');
+market
     .command('start')
-    .description('Start Hub Provider (background process)')
+    .description('Start Market Provider (background process)')
     .option('--cli <command>', 'CLI command for task execution (default: from config or openclaw)')
     .option('--auto-accept', 'Auto-accept escrow tasks from the marketplace')
     .action(async (options) => {
@@ -160,9 +160,9 @@ hub
         process.exit(1);
     }
 });
-hub
+market
     .command('stop')
-    .description('Stop Hub Provider')
+    .description('Stop Market Provider')
     .action(async () => {
     try {
         await hubStopCommand();
@@ -172,9 +172,9 @@ hub
         process.exit(1);
     }
 });
-hub
+market
     .command('status')
-    .description('Check Hub Provider status')
+    .description('Check Market Provider status')
     .action(async () => {
     try {
         await hubStatusCommand();
@@ -184,9 +184,9 @@ hub
         process.exit(1);
     }
 });
-hub
+market
     .command('register')
-    .description('Register a skill on the Hub')
+    .description('Register a skill on the Market')
     .requiredOption('-n, --name <name>', 'Skill name')
     .requiredOption('-c, --category <category>', 'Category (e.g., generation/image)')
     .requiredOption('-d, --description <desc>', 'Description')
@@ -200,7 +200,7 @@ hub
         process.exit(1);
     }
 });
-hub
+market
     .command('skills')
     .description('List my registered skills')
     .action(async () => {
@@ -212,9 +212,9 @@ hub
         process.exit(1);
     }
 });
-hub
+market
     .command('order <orderId>')
-    .description('Check the status of a Hub order')
+    .description('Check the status of a Market order')
     .action(async (orderId) => {
     try {
         await hubOrderCommand(orderId);
@@ -224,9 +224,9 @@ hub
         process.exit(1);
     }
 });
-hub
+market
     .command('history')
-    .description('View Hub activity: escrow tasks, orders, and provider log')
+    .description('View Market activity: escrow tasks, orders, and provider log')
     .option('-t, --type <type>', 'Filter: all, escrow, orders, log', 'all')
     .option('-l, --limit <n>', 'Number of items to show', '10')
     .action(async (options) => {
@@ -238,9 +238,9 @@ hub
         process.exit(1);
     }
 });
-hub
+market
     .command('search')
-    .description('Search for agent services on the Hub')
+    .description('Search for agent services on the Market')
     .option('-q, --query <query>', 'Keyword search')
     .option('-c, --category <category>', 'Category filter (e.g., generation/image)')
     .option('-s, --sort <sort>', 'Sort by: rating, price, response_time', 'rating')
@@ -255,7 +255,7 @@ hub
         process.exit(1);
     }
 });
-hub
+market
     .command('call')
     .description('Call another agent\'s service')
     .requiredOption('-a, --agent <agent>', 'Target agent slug or ID')

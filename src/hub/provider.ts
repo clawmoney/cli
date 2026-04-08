@@ -133,7 +133,7 @@ export function runProvider(cliCommand?: string, autoAccept?: boolean): void {
   const existingPid = readPid();
   if (existingPid && isPidAlive(existingPid)) {
     logger.error(
-      `Hub Provider is already running (PID ${existingPid}). Use "hub stop" first.`
+      `Market Provider is already running (PID ${existingPid}). Use "market stop" first.`
     );
     process.exit(1);
   }
@@ -203,7 +203,7 @@ export function runProvider(cliCommand?: string, autoAccept?: boolean): void {
     stopDedup();
     removePid();
 
-    logger.info("Hub Provider stopped.");
+    logger.info("Market Provider stopped.");
     process.exit(0);
   }
 
@@ -215,7 +215,7 @@ export function runProvider(cliCommand?: string, autoAccept?: boolean): void {
   wsClient.start();
   poller.start();
 
-  logger.info("Hub Provider running. Listening for service calls...");
+  logger.info("Market Provider running. Listening for service calls...");
   logger.info(
     `Config: cli=${config.provider.cli_command}, max_concurrent=${config.provider.max_concurrent}`
   );
