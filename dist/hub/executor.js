@@ -292,9 +292,6 @@ export class Executor {
             if (resp.ok) {
                 logger.info(`Escrow ${task.id.slice(0, 8)} submitted successfully`);
             }
-            else if (resp.status === 409) {
-                logger.info(`Escrow ${task.id.slice(0, 8)} already submitted`);
-            }
             else {
                 logger.error(`Escrow submit failed (${resp.status}): ${await resp.text()}`);
             }
