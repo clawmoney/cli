@@ -1,5 +1,6 @@
 export declare function hubStartCommand(options: {
     cli?: string;
+    autoAccept?: boolean;
 }): Promise<void>;
 export declare function hubStopCommand(): Promise<void>;
 export declare function hubStatusCommand(): Promise<void>;

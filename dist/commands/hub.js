@@ -28,6 +28,9 @@ export async function hubStartCommand(options) {
         if (options.cli) {
             args.push("--cli", options.cli);
         }
+        if (options.autoAccept) {
+            args.push("--auto-accept");
+        }
         const child = spawn(process.execPath, args, {
             stdio: "ignore",
             detached: true,
@@ -44,6 +47,7 @@ export async function hubStartCommand(options) {
             spinner.succeed(chalk.green(`Hub Provider started (PID ${pid})`));
             console.log(chalk.dim(`  Log file: ${LOG_FILE}`));
             console.log(chalk.dim(`  CLI: ${options.cli || config.provider?.cli_command || "openclaw"}`));
+            console.log(chalk.dim(`  Auto-accept: ${options.autoAccept || config.provider?.auto_accept ? "on" : "off"}`));
             console.log(chalk.dim(`  API key: ${config.api_key.slice(0, 8)}...`));
         }
         else {

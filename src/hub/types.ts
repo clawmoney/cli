@@ -82,6 +82,7 @@ export type OutgoingEvent = DeliverEvent | TestResponseEvent;
 export interface ProviderSettings {
   cli_command: string;                // "openclaw" (default) or "claude"
   max_concurrent: number;
+  auto_accept: boolean;              // auto-accept escrow tasks (default: false)
   ws_url: string;
   api_base_url: string;
   polling: {

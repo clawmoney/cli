@@ -161,6 +161,7 @@ export async function gigDeliverCommand(taskId, options) {
             provider: {
                 cli_command: "openclaw",
                 max_concurrent: 3,
+                auto_accept: false,
                 ws_url: "",
                 api_base_url: process.env.CLAWMONEY_API_BASE || "https://api.bnbot.ai/api/v1",
                 polling: { connected_interval: 120, disconnected_interval: 15 },

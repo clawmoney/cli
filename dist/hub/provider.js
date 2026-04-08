@@ -13,6 +13,7 @@ const PID_FILE = join(CONFIG_DIR, "provider.pid");
 const DEFAULT_PROVIDER = {
     cli_command: "openclaw",
     max_concurrent: 3,
+    auto_accept: false,
     ws_url: "wss://api.bnbot.ai/api/v1/ws/agent",
     api_base_url: "https://api.bnbot.ai/api/v1",
     polling: {
@@ -57,7 +58,7 @@ export function removePid() {
     }
 }
 // ── Config loading ──
-function loadProviderConfig(cliCommand) {
+function loadProviderConfig(cliCommand, autoAccept) {
     let raw;
     try {
         const content = readFileSync(CONFIG_FILE, "utf-8");
@@ -75,6 +76,7 @@ function loadProviderConfig(cliCommand) {
     const provider = {
         cli_command: cliCommand ?? userProvider.cli_command ?? DEFAULT_PROVIDER.cli_command,
         max_concurrent: userProvider.max_concurrent ?? DEFAULT_PROVIDER.max_concurrent,
+        auto_accept: autoAccept ?? userProvider.auto_accept ?? DEFAULT_PROVIDER.auto_accept,
         ws_url: userProvider.ws_url ?? DEFAULT_PROVIDER.ws_url,
         api_base_url: userProvider.api_base_url ?? DEFAULT_PROVIDER.api_base_url,
         polling: {
@@ -99,14 +101,14 @@ function loadProviderConfig(cliCommand) {
     };
 }
 // ── Main daemon entry point ──
-export function runProvider(cliCommand) {
+export function runProvider(cliCommand, autoAccept) {
     // Check for existing process
     const existingPid = readPid();
     if (existingPid && isPidAlive(existingPid)) {
         logger.error(`Hub Provider is already running (PID ${existingPid}). Use "hub stop" first.`);
         process.exit(1);
     }
-    const config = loadProviderConfig(cliCommand);
+    const config = loadProviderConfig(cliCommand, autoAccept);
     // Initialize dedup
     startDedup();
     // Create WS client

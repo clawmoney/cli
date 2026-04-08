@@ -38,8 +38,8 @@ function runCli(command, prompt, timeoutMs, orderId) {
             args = ["agent", "--message", prompt, "--session-id", orderId || "hub-task", "--json"];
         }
         else {
-            // claude -p "..." --output-format json
-            args = ["-p", prompt, "--output-format", "json"];
+            // claude -p "..." --output-format json --dangerously-skip-permissions
+            args = ["-p", prompt, "--output-format", "json", "--dangerously-skip-permissions"];
         }
         const child = spawn(command, args, {
             stdio: ["ignore", "pipe", "pipe"],

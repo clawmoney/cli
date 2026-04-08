@@ -60,6 +60,7 @@ export type OutgoingEvent = DeliverEvent | TestResponseEvent;
 export interface ProviderSettings {
     cli_command: string;
     max_concurrent: number;
+    auto_accept: boolean;
     ws_url: string;
     api_base_url: string;
     polling: {

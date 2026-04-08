@@ -150,6 +150,7 @@ hub
     .command('start')
     .description('Start Hub Provider (background process)')
     .option('--cli <command>', 'CLI command for task execution (default: from config or openclaw)')
+    .option('--auto-accept', 'Auto-accept escrow tasks from the marketplace')
     .action(async (options) => {
     try {
         await hubStartCommand(options);

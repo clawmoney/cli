@@ -14,6 +14,7 @@ const LOG_FILE = join(homedir(), ".clawmoney", "provider.log");
 
 export async function hubStartCommand(options: {
   cli?: string;
+  autoAccept?: boolean;
 }): Promise<void> {
   const config = requireConfig();
 
@@ -41,6 +42,9 @@ export async function hubStartCommand(options: {
     if (options.cli) {
       args.push("--cli", options.cli);
     }
+    if (options.autoAccept) {
+      args.push("--auto-accept");
+    }
 
     const child = spawn(process.execPath, args, {
       stdio: "ignore",
@@ -63,6 +67,7 @@ export async function hubStartCommand(options: {
       );
       console.log(chalk.dim(`  Log file: ${LOG_FILE}`));
       console.log(chalk.dim(`  CLI: ${options.cli || config.provider?.cli_command || "openclaw"}`));
+      console.log(chalk.dim(`  Auto-accept: ${options.autoAccept || config.provider?.auto_accept ? "on" : "off"}`));
       console.log(chalk.dim(`  API key: ${config.api_key.slice(0, 8)}...`));
     } else {
       spinner.fail(

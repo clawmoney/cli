@@ -34,7 +34,6 @@ export class Poller {
             await this.poll();
             this.scheduleNext();
         }, interval * 1000);
-        this.timer.unref();
     }
     async poll() {
         const url = `${this.config.provider.api_base_url}/hub/tasks/pending`;
@@ -61,12 +60,17 @@ export class Poller {
                     this.onServiceCall(call);
                 }
             }
-            // Escrow tasks (multi-submission mode, funded)
+            // Escrow tasks (multi-submission mode, funded) — only if auto_accept is enabled
             const escrowTasks = (data.escrow_tasks ?? []).filter((t) => t.mode === "multi" && t.funded);
             if (escrowTasks.length > 0) {
-                logger.info(`Poll: ${escrowTasks.length} open escrow task(s)`);
-                for (const task of escrowTasks) {
-                    this.onEscrowTask(task);
+                if (this.config.provider.auto_accept) {
+                    logger.info(`Auto-accepting ${escrowTasks.length} escrow task(s)`);
+                    for (const task of escrowTasks) {
+                        this.onEscrowTask(task);
+                    }
+                }
+                else {
+                    logger.info(`Poll: ${escrowTasks.length} open escrow task(s) (auto_accept off, skipping)`);
                 }
             }
         }

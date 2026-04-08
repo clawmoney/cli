@@ -22,6 +22,7 @@ const PID_FILE = join(CONFIG_DIR, "provider.pid");
 const DEFAULT_PROVIDER: ProviderSettings = {
   cli_command: "openclaw",
   max_concurrent: 3,
+  auto_accept: false,
   ws_url: "wss://api.bnbot.ai/api/v1/ws/agent",
   api_base_url: "https://api.bnbot.ai/api/v1",
   polling: {
@@ -70,7 +71,7 @@ export function removePid(): void {
 
 // ── Config loading ──
 
-function loadProviderConfig(cliCommand?: string): ProviderConfig {
+function loadProviderConfig(cliCommand?: string, autoAccept?: boolean): ProviderConfig {
   let raw: Record<string, unknown>;
 
   try {
@@ -93,6 +94,8 @@ function loadProviderConfig(cliCommand?: string): ProviderConfig {
       cliCommand ?? userProvider.cli_command ?? DEFAULT_PROVIDER.cli_command,
     max_concurrent:
       userProvider.max_concurrent ?? DEFAULT_PROVIDER.max_concurrent,
+    auto_accept:
+      autoAccept ?? userProvider.auto_accept ?? DEFAULT_PROVIDER.auto_accept,
     ws_url: userProvider.ws_url ?? DEFAULT_PROVIDER.ws_url,
     api_base_url:
       userProvider.api_base_url ?? DEFAULT_PROVIDER.api_base_url,
@@ -125,7 +128,7 @@ function loadProviderConfig(cliCommand?: string): ProviderConfig {
 
 // ── Main daemon entry point ──
 
-export function runProvider(cliCommand?: string): void {
+export function runProvider(cliCommand?: string, autoAccept?: boolean): void {
   // Check for existing process
   const existingPid = readPid();
   if (existingPid && isPidAlive(existingPid)) {
@@ -135,7 +138,7 @@ export function runProvider(cliCommand?: string): void {
     process.exit(1);
   }
 
-  const config = loadProviderConfig(cliCommand);
+  const config = loadProviderConfig(cliCommand, autoAccept);
 
   // Initialize dedup
   startDedup();

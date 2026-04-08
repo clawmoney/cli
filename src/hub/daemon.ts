@@ -10,14 +10,17 @@ import { runProvider } from "./provider.js";
 
 // Parse CLI args passed from the parent
 let cliCommand: string | undefined;
+let autoAccept: boolean | undefined;
 
 const args = process.argv.slice(2);
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--cli" && args[i + 1]) {
     cliCommand = args[i + 1];
     i++;
+  } else if (args[i] === "--auto-accept") {
+    autoAccept = true;
   }
 }
 
 // Run the provider (this blocks until shutdown signal)
-runProvider(cliCommand);
+runProvider(cliCommand, autoAccept);

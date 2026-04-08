@@ -70,8 +70,8 @@ function runCli(
       // Route through Gateway (not --local) so skills like nano-banana-pro are available
       args = ["agent", "--message", prompt, "--session-id", orderId || "hub-task", "--json"];
     } else {
-      // claude -p "..." --output-format json
-      args = ["-p", prompt, "--output-format", "json"];
+      // claude -p "..." --output-format json --dangerously-skip-permissions
+      args = ["-p", prompt, "--output-format", "json", "--dangerously-skip-permissions"];
     }
 
     const child = spawn(command, args, {
