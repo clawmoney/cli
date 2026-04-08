@@ -179,7 +179,7 @@ export async function hubSearchCommand(options: SearchOptions): Promise<void> {
     params.set("online_only", "true");
 
     const resp = await apiGet<{ data?: SearchSkill[]; count?: number }>(
-      `/api/v1/hub/skills/search?${params}`
+      `/api/v1/market/skills/search?${params}`
     );
 
     if (!resp.ok) {
@@ -243,7 +243,7 @@ async function pollOrderResult(
 
   while (Date.now() < deadline) {
     const resp = await apiGet<Record<string, unknown>>(
-      `/api/v1/hub/orders/${orderId}`,
+      `/api/v1/market/orders/${orderId}`,
       apiKey
     );
     if (!resp.ok) {
@@ -301,7 +301,7 @@ export async function hubCallCommand(options: CallOptions): Promise<void> {
     // Look up skill info (price + type)
     spinner.text = `Looking up ${options.agent}/${options.skill}...`;
     const searchResp = await apiGet<{ data?: SearchSkill[] }>(
-      `/api/v1/hub/skills/search?q=${encodeURIComponent(options.skill)}&agent_slug=${encodeURIComponent(options.agent)}&limit=1`
+      `/api/v1/market/skills/search?q=${encodeURIComponent(options.skill)}&agent_slug=${encodeURIComponent(options.agent)}&limit=1`
     );
     const skills = (searchResp.data as { data?: SearchSkill[] })?.data ?? [];
     const skillInfo = skills[0];
@@ -312,7 +312,7 @@ export async function hubCallCommand(options: CallOptions): Promise<void> {
       spinner.text = `Creating escrow task for ${options.agent}/${options.skill}...`;
       const budget = skillInfo?.price ?? 0.01;
       const gigResp = await apiPost<Record<string, unknown>>(
-        "/api/v1/hub/escrow",
+        "/api/v1/market/escrow",
         {
           title: `${options.skill} — ${options.agent}`,
           description: JSON.stringify(inputData),
@@ -333,7 +333,7 @@ export async function hubCallCommand(options: CallOptions): Promise<void> {
       if (options.pay) {
         spinner.text = `Funding task $${budget} USDC via x402...`;
         try {
-          await awalExec(["x402", "pay", `https://pay.clawmoney.ai/hub/escrow/${taskId}?price=${budget}`]);
+          await awalExec(["x402", "pay", `https://pay.clawmoney.ai/market/escrow/${taskId}?price=${budget}`]);
         } catch (err) {
           spinner.fail(chalk.red(`Funding failed: ${(err as Error).message}`));
           process.exit(1);
@@ -357,7 +357,7 @@ export async function hubCallCommand(options: CallOptions): Promise<void> {
 
       // Step 2: Pay via awal x402 → pay.clawmoney.ai Worker
       spinner.text = `Paying $${skillPrice} USDC for ${options.agent}/${options.skill}...`;
-      const payUrl = `https://pay.clawmoney.ai/hub/${encodeURIComponent(options.agent)}/${encodeURIComponent(options.skill)}?price=${skillPrice}`;
+      const payUrl = `https://pay.clawmoney.ai/market/${encodeURIComponent(options.agent)}/${encodeURIComponent(options.skill)}?price=${skillPrice}`;
 
       let payResult;
       try {
@@ -388,7 +388,7 @@ export async function hubCallCommand(options: CallOptions): Promise<void> {
         payment_token: paymentToken,
       });
       const resp = await apiPost<Record<string, unknown>>(
-        `/api/v1/hub/gateway/invoke?${qs}`,
+        `/api/v1/market/gateway/invoke?${qs}`,
         inputData,
         config.api_key
       );
@@ -431,7 +431,7 @@ export async function hubCallCommand(options: CallOptions): Promise<void> {
         payment_method: "ledger",
       });
       const resp = await apiPost<Record<string, unknown>>(
-        `/api/v1/hub/gateway/invoke?${qs}`,
+        `/api/v1/market/gateway/invoke?${qs}`,
         inputData,
         config.api_key
       );
@@ -502,7 +502,7 @@ export async function hubRegisterCommand(
 
   try {
     const resp = await apiPost<SkillResponse>(
-      "/api/v1/hub/skills",
+      "/api/v1/market/skills",
       {
         skill_name: options.name,
         category: options.category,
@@ -555,7 +555,7 @@ export async function hubSkillsCommand(): Promise<void> {
 
   try {
     const resp = await apiGet<{ data?: Skill[] } | Skill[]>(
-      "/api/v1/hub/skills/mine",
+      "/api/v1/market/skills/mine",
       config.api_key
     );
 
@@ -647,7 +647,7 @@ export async function hubHistoryCommand(options: {
   if (showType === "all" || showType === "escrow") {
     try {
       const resp = await apiGet<{ data: EscrowTask[]; count: number }>(
-        `/api/v1/hub/escrow/assigned?limit=${limit}`,
+        `/api/v1/market/escrow/assigned?limit=${limit}`,
         config.api_key
       );
 
@@ -689,7 +689,7 @@ export async function hubHistoryCommand(options: {
   if (showType === "all" || showType === "orders") {
     try {
       const resp = await apiGet<{ data: HubOrder[]; count: number }>(
-        `/api/v1/hub/orders/mine?role=provider&limit=${limit}`,
+        `/api/v1/market/orders/mine?role=provider&limit=${limit}`,
         config.api_key
       );
 
@@ -763,7 +763,7 @@ export async function hubOrderCommand(orderId: string): Promise<void> {
 
   try {
     const resp = await apiGet<Record<string, unknown>>(
-      `/api/v1/hub/orders/${orderId}`,
+      `/api/v1/market/orders/${orderId}`,
       config.api_key
     );
 

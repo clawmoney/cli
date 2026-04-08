@@ -281,7 +281,7 @@ export class Executor {
             const body = { content };
             if (url)
                 body.url = url;
-            const resp = await fetch(`${this.config.provider.api_base_url}/hub/escrow/${task.id}/submit`, {
+            const resp = await fetch(`${this.config.provider.api_base_url}/market/escrow/${task.id}/submit`, {
                 method: "POST",
                 headers: {
                     Authorization: `Bearer ${this.config.api_key}`,

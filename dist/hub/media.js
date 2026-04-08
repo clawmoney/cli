@@ -16,7 +16,7 @@ import { logger } from "./logger.js";
  * Returns the public CDN URL on success, or null on failure.
  */
 export async function uploadFile(filePath, config) {
-    const url = `${config.provider.api_base_url}/hub/media/upload`;
+    const url = `${config.provider.api_base_url}/market/media/upload`;
     try {
         const stat = statSync(filePath);
         if (!stat.isFile()) {

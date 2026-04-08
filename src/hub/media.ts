@@ -22,7 +22,7 @@ export async function uploadFile(
   filePath: string,
   config: ProviderConfig
 ): Promise<string | null> {
-  const url = `${config.provider.api_base_url}/hub/media/upload`;
+  const url = `${config.provider.api_base_url}/market/media/upload`;
 
   try {
     const stat = statSync(filePath);

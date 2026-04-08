@@ -114,7 +114,7 @@ export async function hubSearchCommand(options) {
         if (options.maxPrice)
             params.set("max_price", options.maxPrice);
         params.set("online_only", "true");
-        const resp = await apiGet(`/api/v1/hub/skills/search?${params}`);
+        const resp = await apiGet(`/api/v1/market/skills/search?${params}`);
         if (!resp.ok) {
             spinner.fail(chalk.red(`Search failed (${resp.status})`));
             process.exit(1);
@@ -157,7 +157,7 @@ async function pollOrderResult(orderId, apiKey, timeoutS, spinner) {
     const startTime = Date.now();
     const deadline = startTime + timeoutS * 1000;
     while (Date.now() < deadline) {
-        const resp = await apiGet(`/api/v1/hub/orders/${orderId}`, apiKey);
+        const resp = await apiGet(`/api/v1/market/orders/${orderId}`, apiKey);
         if (!resp.ok) {
             throw new Error(`Failed to poll order: ${resp.status}`);
         }
@@ -194,7 +194,7 @@ export async function hubCallCommand(options) {
     try {
         // Look up skill info (price + type)
         spinner.text = `Looking up ${options.agent}/${options.skill}...`;
-        const searchResp = await apiGet(`/api/v1/hub/skills/search?q=${encodeURIComponent(options.skill)}&agent_slug=${encodeURIComponent(options.agent)}&limit=1`);
+        const searchResp = await apiGet(`/api/v1/market/skills/search?q=${encodeURIComponent(options.skill)}&agent_slug=${encodeURIComponent(options.agent)}&limit=1`);
         const skills = searchResp.data?.data ?? [];
         const skillInfo = skills[0];
         const skillType = skillInfo?.skill_type || "instant";
@@ -202,7 +202,7 @@ export async function hubCallCommand(options) {
         if (skillType === "escrow") {
             spinner.text = `Creating escrow task for ${options.agent}/${options.skill}...`;
             const budget = skillInfo?.price ?? 0.01;
-            const gigResp = await apiPost("/api/v1/hub/escrow", {
+            const gigResp = await apiPost("/api/v1/market/escrow", {
                 title: `${options.skill} — ${options.agent}`,
                 description: JSON.stringify(inputData),
                 category: skillInfo?.category || options.skill,
@@ -219,7 +219,7 @@ export async function hubCallCommand(options) {
             if (options.pay) {
                 spinner.text = `Funding task $${budget} USDC via x402...`;
                 try {
-                    await awalExec(["x402", "pay", `https://pay.clawmoney.ai/hub/escrow/${taskId}?price=${budget}`]);
+                    await awalExec(["x402", "pay", `https://pay.clawmoney.ai/market/escrow/${taskId}?price=${budget}`]);
                 }
                 catch (err) {
                     spinner.fail(chalk.red(`Funding failed: ${err.message}`));
@@ -241,7 +241,7 @@ export async function hubCallCommand(options) {
             const skillPrice = skillInfo?.price ?? 0.01;
             // Step 2: Pay via awal x402 → pay.clawmoney.ai Worker
             spinner.text = `Paying $${skillPrice} USDC for ${options.agent}/${options.skill}...`;
-            const payUrl = `https://pay.clawmoney.ai/hub/${encodeURIComponent(options.agent)}/${encodeURIComponent(options.skill)}?price=${skillPrice}`;
+            const payUrl = `https://pay.clawmoney.ai/market/${encodeURIComponent(options.agent)}/${encodeURIComponent(options.skill)}?price=${skillPrice}`;
             let payResult;
             try {
                 payResult = await awalExec(["x402", "pay", payUrl]);
@@ -269,7 +269,7 @@ export async function hubCallCommand(options) {
                 payment_method: "x402",
                 payment_token: paymentToken,
             });
-            const resp = await apiPost(`/api/v1/hub/gateway/invoke?${qs}`, inputData, config.api_key);
+            const resp = await apiPost(`/api/v1/market/gateway/invoke?${qs}`, inputData, config.api_key);
             if (!resp.ok) {
                 const raw = resp.data && typeof resp.data === "object" && "detail" in resp.data
                     ? resp.data.detail
@@ -307,7 +307,7 @@ export async function hubCallCommand(options) {
                 timeout: String(timeout),
                 payment_method: "ledger",
             });
-            const resp = await apiPost(`/api/v1/hub/gateway/invoke?${qs}`, inputData, config.api_key);
+            const resp = await apiPost(`/api/v1/market/gateway/invoke?${qs}`, inputData, config.api_key);
             if (!resp.ok) {
                 const raw = resp.data && typeof resp.data === "object" && "detail" in resp.data
                     ? resp.data.detail
@@ -352,7 +352,7 @@ export async function hubRegisterCommand(options) {
     }
     const spinner = ora("Registering skill...").start();
     try {
-        const resp = await apiPost("/api/v1/hub/skills", {
+        const resp = await apiPost("/api/v1/market/skills", {
             skill_name: options.name,
             category: options.category,
             description: options.description,
@@ -381,7 +381,7 @@ export async function hubSkillsCommand() {
     const config = requireConfig();
     const spinner = ora("Fetching skills...").start();
     try {
-        const resp = await apiGet("/api/v1/hub/skills/mine", config.api_key);
+        const resp = await apiGet("/api/v1/market/skills/mine", config.api_key);
         if (!resp.ok) {
             spinner.fail(chalk.red(`Failed to fetch skills (${resp.status})`));
             process.exit(1);
@@ -421,7 +421,7 @@ export async function hubHistoryCommand(options) {
     // Escrow tasks I submitted to (assigned)
     if (showType === "all" || showType === "escrow") {
         try {
-            const resp = await apiGet(`/api/v1/hub/escrow/assigned?limit=${limit}`, config.api_key);
+            const resp = await apiGet(`/api/v1/market/escrow/assigned?limit=${limit}`, config.api_key);
             if (resp.ok && resp.data.data?.length > 0) {
                 console.log(chalk.bold(`  Escrow Tasks (${resp.data.count} total)`));
                 console.log(chalk.dim("  ─────────────────────────────────────────────"));
@@ -453,7 +453,7 @@ export async function hubHistoryCommand(options) {
     // Service call orders (as provider)
     if (showType === "all" || showType === "orders") {
         try {
-            const resp = await apiGet(`/api/v1/hub/orders/mine?role=provider&limit=${limit}`, config.api_key);
+            const resp = await apiGet(`/api/v1/market/orders/mine?role=provider&limit=${limit}`, config.api_key);
             if (resp.ok && resp.data.data?.length > 0) {
                 console.log(chalk.bold(`  Service Orders (${resp.data.count} total)`));
                 console.log(chalk.dim("  ─────────────────────────────────────────────"));
@@ -516,7 +516,7 @@ export async function hubOrderCommand(orderId) {
     const config = requireConfig();
     const spinner = ora("Fetching order...").start();
     try {
-        const resp = await apiGet(`/api/v1/hub/orders/${orderId}`, config.api_key);
+        const resp = await apiGet(`/api/v1/market/orders/${orderId}`, config.api_key);
         if (!resp.ok) {
             spinner.fail(chalk.red(`Order not found (${resp.status})`));
             process.exit(1);

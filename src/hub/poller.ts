@@ -57,7 +57,7 @@ export class Poller {
   }
 
   private async poll(): Promise<void> {
-    const url = `${this.config.provider.api_base_url}/hub/tasks/pending`;
+    const url = `${this.config.provider.api_base_url}/market/tasks/pending`;
 
     try {
       const resp = await fetch(url, {

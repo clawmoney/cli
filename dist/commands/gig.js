@@ -22,7 +22,7 @@ export async function gigCreateCommand(options) {
         if (options.requirements) {
             body.requirements = options.requirements;
         }
-        const resp = await apiPost("/api/v1/hub/escrow", body, config.api_key);
+        const resp = await apiPost("/api/v1/market/escrow", body, config.api_key);
         if (!resp.ok) {
             const raw = resp.data && typeof resp.data === "object" && "detail" in resp.data
                 ? resp.data.detail
@@ -55,7 +55,7 @@ export async function gigBrowseCommand(options) {
             params.set("status", options.status);
         if (options.limit)
             params.set("limit", options.limit);
-        const resp = await apiGet(`/api/v1/hub/escrow?${params}`);
+        const resp = await apiGet(`/api/v1/market/escrow?${params}`);
         if (!resp.ok) {
             spinner.fail(chalk.red(`Failed to browse gigs (${resp.status})`));
             process.exit(1);
@@ -88,7 +88,7 @@ export async function gigBrowseCommand(options) {
 export async function gigDetailCommand(taskId) {
     const spinner = ora("Fetching gig details...").start();
     try {
-        const resp = await apiGet(`/api/v1/hub/escrow/${taskId}`);
+        const resp = await apiGet(`/api/v1/market/escrow/${taskId}`);
         if (!resp.ok) {
             const raw = resp.data && typeof resp.data === "object" && "detail" in resp.data
                 ? resp.data.detail
@@ -128,7 +128,7 @@ export async function gigAcceptCommand(taskId) {
     const config = requireConfig();
     const spinner = ora("Accepting gig...").start();
     try {
-        const resp = await apiPost(`/api/v1/hub/escrow/${taskId}/accept`, {}, config.api_key);
+        const resp = await apiPost(`/api/v1/market/escrow/${taskId}/accept`, {}, config.api_key);
         if (!resp.ok) {
             const raw = resp.data && typeof resp.data === "object" && "detail" in resp.data
                 ? resp.data.detail
@@ -184,7 +184,7 @@ export async function gigDeliverCommand(taskId, options) {
             body.content = options.content;
         if (deliveryUrl)
             body.url = deliveryUrl;
-        const resp = await apiPost(`/api/v1/hub/escrow/${taskId}/deliver`, body, config.api_key);
+        const resp = await apiPost(`/api/v1/market/escrow/${taskId}/deliver`, body, config.api_key);
         if (!resp.ok) {
             const raw = resp.data && typeof resp.data === "object" && "detail" in resp.data
                 ? resp.data.detail
@@ -206,7 +206,7 @@ export async function gigApproveCommand(taskId) {
     const config = requireConfig();
     const spinner = ora("Approving delivery...").start();
     try {
-        const resp = await apiPost(`/api/v1/hub/escrow/${taskId}/approve`, {}, config.api_key);
+        const resp = await apiPost(`/api/v1/market/escrow/${taskId}/approve`, {}, config.api_key);
         if (!resp.ok) {
             const raw = resp.data && typeof resp.data === "object" && "detail" in resp.data
                 ? resp.data.detail
@@ -227,7 +227,7 @@ export async function gigDisputeCommand(taskId) {
     const config = requireConfig();
     const spinner = ora("Raising dispute...").start();
     try {
-        const resp = await apiPost(`/api/v1/hub/escrow/${taskId}/dispute`, {}, config.api_key);
+        const resp = await apiPost(`/api/v1/market/escrow/${taskId}/dispute`, {}, config.api_key);
         if (!resp.ok) {
             const raw = resp.data && typeof resp.data === "object" && "detail" in resp.data
                 ? resp.data.detail

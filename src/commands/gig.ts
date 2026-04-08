@@ -61,7 +61,7 @@ export async function gigCreateCommand(options: CreateOptions): Promise<void> {
     }
 
     const resp = await apiPost<EscrowTask>(
-      "/api/v1/hub/escrow",
+      "/api/v1/market/escrow",
       body,
       config.api_key
     );
@@ -107,7 +107,7 @@ export async function gigBrowseCommand(options: BrowseOptions): Promise<void> {
     if (options.limit) params.set("limit", options.limit);
 
     const resp = await apiGet<{ data?: EscrowTask[]; count?: number }>(
-      `/api/v1/hub/escrow?${params}`
+      `/api/v1/market/escrow?${params}`
     );
 
     if (!resp.ok) {
@@ -156,7 +156,7 @@ export async function gigDetailCommand(taskId: string): Promise<void> {
   const spinner = ora("Fetching gig details...").start();
 
   try {
-    const resp = await apiGet<EscrowTask>(`/api/v1/hub/escrow/${taskId}`);
+    const resp = await apiGet<EscrowTask>(`/api/v1/market/escrow/${taskId}`);
 
     if (!resp.ok) {
       const raw = resp.data && typeof resp.data === "object" && "detail" in resp.data
@@ -201,7 +201,7 @@ export async function gigAcceptCommand(taskId: string): Promise<void> {
 
   try {
     const resp = await apiPost<EscrowTask>(
-      `/api/v1/hub/escrow/${taskId}/accept`,
+      `/api/v1/market/escrow/${taskId}/accept`,
       {},
       config.api_key
     );
@@ -273,7 +273,7 @@ export async function gigDeliverCommand(taskId: string, options: DeliverOptions)
     if (deliveryUrl) body.url = deliveryUrl;
 
     const resp = await apiPost<EscrowTask>(
-      `/api/v1/hub/escrow/${taskId}/deliver`,
+      `/api/v1/market/escrow/${taskId}/deliver`,
       body,
       config.api_key
     );
@@ -303,7 +303,7 @@ export async function gigApproveCommand(taskId: string): Promise<void> {
 
   try {
     const resp = await apiPost<EscrowTask>(
-      `/api/v1/hub/escrow/${taskId}/approve`,
+      `/api/v1/market/escrow/${taskId}/approve`,
       {},
       config.api_key
     );
@@ -332,7 +332,7 @@ export async function gigDisputeCommand(taskId: string): Promise<void> {
 
   try {
     const resp = await apiPost<EscrowTask>(
-      `/api/v1/hub/escrow/${taskId}/dispute`,
+      `/api/v1/market/escrow/${taskId}/dispute`,
       {},
       config.api_key
     );
