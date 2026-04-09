@@ -34,8 +34,15 @@ function runCli(command, prompt, timeoutMs, orderId) {
         let args;
         if (command === "openclaw") {
             // openclaw agent --message "..." --session-id <order_id> --json
-            // Route through Gateway (not --local) so skills like nano-banana-pro are available
             args = ["agent", "--message", prompt, "--session-id", orderId || "hub-task", "--json"];
+        }
+        else if (command === "codex") {
+            // codex exec "..." --json
+            args = ["exec", prompt, "--json"];
+        }
+        else if (command === "gemini") {
+            // gemini -p "..." -o json --yolo
+            args = ["-p", prompt, "-o", "json", "--yolo"];
         }
         else {
             // claude -p "..." --output-format json --dangerously-skip-permissions
@@ -81,6 +88,28 @@ function parseJsonOutput(raw) {
         }
     }
     return null;
+}
+// ── Codex JSONL parser ──
+function parseCodexOutput(raw) {
+    // Codex --json outputs JSONL. Extract text from item.completed events.
+    const texts = [];
+    for (const line of raw.split("\n")) {
+        if (!line.trim())
+            continue;
+        try {
+            const event = JSON.parse(line);
+            if (event.type === "item.completed") {
+                const item = event.item;
+                if (item?.text && typeof item.text === "string") {
+                    texts.push(item.text);
+                }
+            }
+        }
+        catch {
+            // skip non-JSON lines
+        }
+    }
+    return texts.join("\n");
 }
 function parseOpenClawResponse(raw) {
     const files = [];
@@ -237,6 +266,17 @@ export class Executor {
                 // Extract issue_url or pr_url from result
                 url = (ocResult.result.issue_url ?? ocResult.result.pr_url ?? null);
                 localFiles.push(...ocResult.files);
+            }
+            else if (command === "codex") {
+                // Parse Codex JSONL output
+                const codexText = parseCodexOutput(stdout);
+                const codexParsed = parseJsonOutput(codexText);
+                content = codexParsed
+                    ? JSON.stringify(codexParsed, null, 2)
+                    : codexText.slice(0, 10000);
+                if (codexParsed) {
+                    url = (codexParsed.issue_url ?? codexParsed.pr_url ?? null);
+                }
             }
             else {
                 content = parsed
@@ -411,6 +451,13 @@ export class Executor {
                 if (ocResult.meta) {
                     output._meta = ocResult.meta;
                 }
+            }
+            else if (command === "codex") {
+                // Parse Codex JSONL output
+                const codexText = parseCodexOutput(stdout);
+                const codexParsed = parseJsonOutput(codexText);
+                output = codexParsed ?? { result: codexText.slice(0, 5000) };
+                output = await replaceLocalPaths(output, this.config);
             }
             else {
                 output = parsed ?? { result: stdout.trim().slice(0, 5000) };
