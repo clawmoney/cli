@@ -111,6 +111,20 @@ function parseCodexOutput(raw) {
     }
     return texts.join("\n");
 }
+// ── Gemini JSON parser ──
+function parseGeminiOutput(raw) {
+    // Gemini -o json wraps result in { session_id, response, stats }
+    try {
+        const obj = JSON.parse(raw);
+        if (typeof obj.response === "string") {
+            return obj.response;
+        }
+    }
+    catch {
+        // not a single JSON object — return raw
+    }
+    return raw;
+}
 function parseOpenClawResponse(raw) {
     const files = [];
     let result = raw;
@@ -276,6 +290,17 @@ export class Executor {
                     : codexText.slice(0, 10000);
                 if (codexParsed) {
                     url = (codexParsed.issue_url ?? codexParsed.pr_url ?? null);
+                }
+            }
+            else if (command === "gemini") {
+                // Parse Gemini JSON wrapper
+                const geminiText = parseGeminiOutput(stdout);
+                const geminiParsed = parseJsonOutput(geminiText);
+                content = geminiParsed
+                    ? JSON.stringify(geminiParsed, null, 2)
+                    : geminiText.slice(0, 10000);
+                if (geminiParsed) {
+                    url = (geminiParsed.issue_url ?? geminiParsed.pr_url ?? null);
                 }
             }
             else {
@@ -457,6 +482,13 @@ export class Executor {
                 const codexText = parseCodexOutput(stdout);
                 const codexParsed = parseJsonOutput(codexText);
                 output = codexParsed ?? { result: codexText.slice(0, 5000) };
+                output = await replaceLocalPaths(output, this.config);
+            }
+            else if (command === "gemini") {
+                // Parse Gemini JSON wrapper: { session_id, response, stats }
+                const geminiText = parseGeminiOutput(stdout);
+                const geminiParsed = parseJsonOutput(geminiText);
+                output = geminiParsed ?? { result: geminiText.slice(0, 5000) };
                 output = await replaceLocalPaths(output, this.config);
             }
             else {
