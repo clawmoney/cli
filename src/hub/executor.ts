@@ -438,6 +438,12 @@ export class Executor {
         }
       }
 
+      // Fallback: if content is empty, use raw stdout
+      if (!content || !content.trim()) {
+        content = stdout.trim().slice(0, 10000) || "Task completed (no text output)";
+        logger.warn(`Escrow ${task.id.slice(0, 8)}: empty content, using raw stdout fallback`);
+      }
+
       // Submit to marketplace
       const body: Record<string, string> = { content };
       if (url) body.url = url;
