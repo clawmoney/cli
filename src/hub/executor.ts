@@ -69,8 +69,8 @@ function runCli(
       // openclaw agent --message "..." --session-id <order_id> --json
       args = ["agent", "--message", prompt, "--session-id", orderId || "hub-task", "--json"];
     } else if (command === "codex") {
-      // codex exec "..." --json
-      args = ["exec", prompt, "--json"];
+      // codex exec "..." --json --skip-git-repo-check
+      args = ["exec", prompt, "--json", "--skip-git-repo-check"];
     } else if (command === "gemini") {
       // gemini -p "..." -o json --yolo
       args = ["-p", prompt, "-o", "json", "--yolo"];

@@ -37,8 +37,8 @@ function runCli(command, prompt, timeoutMs, orderId) {
             args = ["agent", "--message", prompt, "--session-id", orderId || "hub-task", "--json"];
         }
         else if (command === "codex") {
-            // codex exec "..." --json
-            args = ["exec", prompt, "--json"];
+            // codex exec "..." --json --skip-git-repo-check
+            args = ["exec", prompt, "--json", "--skip-git-repo-check"];
         }
         else if (command === "gemini") {
             // gemini -p "..." -o json --yolo
