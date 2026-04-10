@@ -397,6 +397,18 @@ async function doCallClaudeApi(opts) {
             {
                 type: "text",
                 text: `${CLAUDE_CODE_SYSTEM_PROMPT_LEAD}\n\n${RELAY_INSTRUCTIONS}`,
+                // Mark the last system block for prompt caching. Real Claude Code
+                // *always* attaches cache_control: {type: "ephemeral"} to its system
+                // blocks — Anthropic uses the presence of this marker as part of its
+                // "is this really Claude Code?" fingerprint check, so sending a bare
+                // string-typed or unmarked array-typed system is a detectability
+                // signal that can trip 403 "Request not allowed". Our system is too
+                // short (<1024 tokens) to actually hit the cache, so the marker's
+                // immediate effect is zero — it exists purely for fingerprint fidelity.
+                // When we later bloat system to >=1024 tokens (e.g. for high-traffic
+                // cost savings), this same marker will automatically start
+                // materializing real cache reads.
+                cache_control: { type: "ephemeral" },
             },
         ],
         messages: [
