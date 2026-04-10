@@ -13,8 +13,13 @@ export declare const API_PRICES: Record<string, ModelPricing>;
 export declare const RELAY_DISCOUNT = 0.3;
 export declare const PLATFORM_FEE = 0.05;
 export declare function getModelPricing(model: string): ModelPricing;
-export declare function calculateCost(model: string, inputTokens: number, outputTokens: number): {
+export interface CostBreakdown {
+    inputCost: number;
+    cacheCreationCost: number;
+    cacheReadCost: number;
+    outputCost: number;
     apiCost: number;
     relayCost: number;
     providerEarn: number;
-};
+}
+export declare function calculateCost(model: string, inputTokens: number, outputTokens: number, cacheCreationTokens?: number, cacheReadTokens?: number): CostBreakdown;

@@ -119,15 +119,14 @@ async function executeRelayRequest(request, config) {
         const elapsedMs = Date.now() - startMs;
         const parsed = parseCliOutput(cliType, raw);
         const answer = parsed.text.replace(/\n/g, " ").slice(0, 80);
-        const inT = parsed.usage.input_tokens;
-        const outT = parsed.usage.output_tokens;
-        const cachedT = parsed.usage.cached_tokens ?? 0;
-        const { apiCost, relayCost, providerEarn } = calculateCost(model, inT, outT);
+        const { input_tokens: inT, output_tokens: outT, cache_creation_tokens: cacheWriteT, cache_read_tokens: cacheReadT } = parsed.usage;
+        const cost = calculateCost(model, inT, outT, cacheWriteT, cacheReadT);
         const elapsedSec = (elapsedMs / 1000).toFixed(1);
         logger.info(`  │ Answer: ${answer}`);
-        logger.info(`  │ Tokens: ${inT} in (${cachedT} cached) / ${outT} out`);
+        logger.info(`  │ Tokens: input=${inT} cache_write=${cacheWriteT} cache_read=${cacheReadT} output=${outT}`);
         logger.info(`  │ Time:   ${elapsedSec}s`);
-        logger.info(`  │ Cost:   API $${apiCost.toFixed(4)} → Relay $${relayCost.toFixed(4)} → Earn $${providerEarn.toFixed(4)}`);
+        logger.info(`  │ Cost:   input=$${cost.inputCost.toFixed(4)} cache_w=$${cost.cacheCreationCost.toFixed(4)} cache_r=$${cost.cacheReadCost.toFixed(4)} output=$${cost.outputCost.toFixed(4)}`);
+        logger.info(`  │ Total:  API $${cost.apiCost.toFixed(4)} → Relay $${cost.relayCost.toFixed(4)} → Earn $${cost.providerEarn.toFixed(4)}`);
         logger.info(`  └─ Done`);
         return {
             event: "relay_response",

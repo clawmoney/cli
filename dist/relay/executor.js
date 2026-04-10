@@ -100,24 +100,23 @@ export function parseClaudeOutput(raw) {
         // modelUsage is a dict: { "model-name": { inputTokens, outputTokens, cacheReadInputTokens, ... } }
         let inputTokens = 0;
         let outputTokens = 0;
-        let cachedTokens = 0;
+        let cacheCreationTokens = 0;
+        let cacheReadTokens = 0;
         let model = "";
         const modelUsage = obj.modelUsage;
         if (modelUsage) {
             for (const [modelName, usage] of Object.entries(modelUsage)) {
                 model = modelName;
-                // Total input = base + cache_creation + cache_read
-                inputTokens += (usage.inputTokens ?? 0)
-                    + (usage.cacheCreationInputTokens ?? 0)
-                    + (usage.cacheReadInputTokens ?? 0);
+                inputTokens += usage.inputTokens ?? 0;
                 outputTokens += usage.outputTokens ?? 0;
-                cachedTokens += usage.cacheReadInputTokens ?? 0;
+                cacheCreationTokens += usage.cacheCreationInputTokens ?? 0;
+                cacheReadTokens += usage.cacheReadInputTokens ?? 0;
             }
         }
         return {
             text,
             sessionId,
-            usage: { input_tokens: inputTokens, output_tokens: outputTokens, cached_tokens: cachedTokens || undefined },
+            usage: { input_tokens: inputTokens, output_tokens: outputTokens, cache_creation_tokens: cacheCreationTokens, cache_read_tokens: cacheReadTokens },
             model,
             costUsd,
         };
@@ -126,7 +125,7 @@ export function parseClaudeOutput(raw) {
         return {
             text: raw.trim().slice(0, 5000),
             sessionId: "",
-            usage: { input_tokens: 0, output_tokens: 0 },
+            usage: { input_tokens: 0, output_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0 },
             model: "",
             costUsd: 0,
         };
@@ -173,7 +172,7 @@ export function parseCodexOutput(raw) {
     return {
         text: text || raw.trim().slice(0, 5000),
         sessionId: threadId,
-        usage: { input_tokens: inputTokens, output_tokens: outputTokens },
+        usage: { input_tokens: inputTokens, output_tokens: outputTokens, cache_creation_tokens: 0, cache_read_tokens: 0 },
         model,
         costUsd: 0,
     };
@@ -193,6 +192,7 @@ export function parseGeminiOutput(raw) {
         const sessionId = obj.session_id ?? "";
         let inputTokens = 0;
         let outputTokens = 0;
+        let cachedTokens = 0;
         let model = "";
         const stats = obj.stats;
         const models = stats?.models;
@@ -203,13 +203,14 @@ export function parseGeminiOutput(raw) {
                 if (tokens) {
                     inputTokens += tokens.input ?? tokens.prompt ?? 0;
                     outputTokens += tokens.candidates ?? tokens.output ?? 0;
+                    cachedTokens += tokens.cached ?? 0;
                 }
             }
         }
         return {
             text,
             sessionId,
-            usage: { input_tokens: inputTokens, output_tokens: outputTokens },
+            usage: { input_tokens: inputTokens - cachedTokens, output_tokens: outputTokens, cache_creation_tokens: 0, cache_read_tokens: cachedTokens },
             model,
             costUsd: 0,
         };
@@ -218,7 +219,7 @@ export function parseGeminiOutput(raw) {
         return {
             text: raw.trim().slice(0, 5000),
             sessionId: "",
-            usage: { input_tokens: 0, output_tokens: 0 },
+            usage: { input_tokens: 0, output_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0 },
             model: "",
             costUsd: 0,
         };

@@ -36,10 +36,18 @@ export const PLATFORM_FEE = 0.05; // 5%
 export function getModelPricing(model) {
     return API_PRICES[model] ?? DEFAULT_PRICING;
 }
-export function calculateCost(model, inputTokens, outputTokens) {
+// Cache pricing multipliers (relative to base input price)
+const CACHE_WRITE_MULTIPLIER = 1.25; // 5-minute cache write
+const CACHE_READ_MULTIPLIER = 0.10; // cache hit
+export function calculateCost(model, inputTokens, outputTokens, cacheCreationTokens = 0, cacheReadTokens = 0) {
     const p = getModelPricing(model);
-    const apiCost = (inputTokens * p.input + outputTokens * p.output) / 1_000_000;
+    const M = 1_000_000;
+    const inputCost = (inputTokens * p.input) / M;
+    const cacheCreationCost = (cacheCreationTokens * p.input * CACHE_WRITE_MULTIPLIER) / M;
+    const cacheReadCost = (cacheReadTokens * p.input * CACHE_READ_MULTIPLIER) / M;
+    const outputCost = (outputTokens * p.output) / M;
+    const apiCost = inputCost + cacheCreationCost + cacheReadCost + outputCost;
     const relayCost = apiCost * RELAY_DISCOUNT;
     const providerEarn = relayCost * (1 - PLATFORM_FEE);
-    return { apiCost, relayCost, providerEarn };
+    return { inputCost, cacheCreationCost, cacheReadCost, outputCost, apiCost, relayCost, providerEarn };
 }

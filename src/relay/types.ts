@@ -55,9 +55,10 @@ export interface ParsedOutput {
   text: string;
   sessionId: string;
   usage: {
-    input_tokens: number;
+    input_tokens: number;          // base (non-cached) input
     output_tokens: number;
-    cached_tokens?: number;
+    cache_creation_tokens: number;  // tokens written to cache
+    cache_read_tokens: number;      // tokens read from cache
   };
   model: string;
   costUsd: number;
