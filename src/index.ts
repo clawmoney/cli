@@ -32,6 +32,14 @@ import {
   hubOrderCommand,
   hubHistoryCommand,
 } from './commands/hub.js';
+import {
+  relayRegisterCommand,
+  relayStartCommand,
+  relayStopCommand,
+  relayStatusCommand,
+  relayModelsCommand,
+  relayCreditsCommand,
+} from './commands/relay.js';
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
@@ -407,6 +415,91 @@ gig
   .action(async (taskId) => {
     try {
       await gigDisputeCommand(taskId);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+// relay (AI subscription resale)
+const relay = program
+  .command('relay')
+  .description('Relay marketplace: sell idle AI subscription capacity');
+
+relay
+  .command('register')
+  .description('Register as a relay provider')
+  .requiredOption('--cli <type>', 'Backend CLI: claude, codex, gemini')
+  .requiredOption('--model <model>', 'Model to offer (e.g., claude-opus-4-6)')
+  .option('--mode <mode>', 'Safety mode: chat, search, code, full', 'chat')
+  .option('--concurrency <n>', 'Max concurrent requests', '5')
+  .option('--daily-limit <usd>', 'Max daily spend in USD', '20')
+  .option('--price-input <usd>', 'Price per 1M input tokens', '5')
+  .option('--price-output <usd>', 'Price per 1M output tokens', '25')
+  .action(async (options) => {
+    try {
+      await relayRegisterCommand(options);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+relay
+  .command('start')
+  .description('Start accepting relay requests')
+  .option('--cli <type>', 'Override CLI type (claude, codex, gemini)')
+  .action(async (options) => {
+    try {
+      await relayStartCommand(options);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+relay
+  .command('stop')
+  .description('Stop relay provider')
+  .action(async () => {
+    try {
+      await relayStopCommand();
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+relay
+  .command('status')
+  .description('Check relay provider status')
+  .action(async () => {
+    try {
+      await relayStatusCommand();
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+relay
+  .command('models')
+  .description('List available relay models')
+  .action(async () => {
+    try {
+      await relayModelsCommand();
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+relay
+  .command('credits')
+  .description('Check relay credit balance')
+  .action(async () => {
+    try {
+      await relayCreditsCommand();
     } catch (err) {
       console.error((err as Error).message);
       process.exit(1);
