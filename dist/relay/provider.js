@@ -97,7 +97,9 @@ async function executeRelayRequest(request, config) {
     const { request_id, max_budget_usd } = request;
     const cliType = request.cli_type ?? config.relay.cli_type;
     const model = request.model ?? config.relay.model;
-    // Build prompt from messages (no --resume, full history as prompt)
+    const stateful = request.stateful ?? false;
+    const cliSessionId = request.cli_session_id ?? undefined;
+    // Build prompt from messages
     const prompt = request.messages
         ? messagesToPrompt(request.messages)
         : request.prompt ?? "";
@@ -107,14 +109,17 @@ async function executeRelayRequest(request, config) {
     const turns = request.messages
         ? request.messages.filter((m) => m.role === "user").length
         : 1;
+    const modeLabel = stateful
+        ? (cliSessionId ? `stateful[resume ${cliSessionId.slice(0, 8)}]` : "stateful[new]")
+        : "stateless";
     logger.info(`  ┌─ Request ${request_id.slice(0, 8)}`);
-    logger.info(`  │ CLI:    ${cliType} / ${model}`);
+    logger.info(`  │ CLI:    ${cliType} / ${model} (${modeLabel})`);
     logger.info(`  │ Turns:  ${turns}`);
     logger.info(`  │ Prompt: ${String(lastUserMsg).slice(0, 80)}`);
     try {
-        // No session_id — each request is stateless, full history in prompt
         const startMs = Date.now();
-        const args = buildCliArgs(cliType, prompt, undefined, max_budget_usd, model);
+        // In stateful mode, pass cli_session_id so buildCliArgs adds --resume
+        const args = buildCliArgs(cliType, prompt, cliSessionId, max_budget_usd, model);
         const raw = await spawnCli(cliType, args);
         const elapsedMs = Date.now() - startMs;
         const parsed = parseCliOutput(cliType, raw);
@@ -132,7 +137,7 @@ async function executeRelayRequest(request, config) {
             event: "relay_response",
             request_id,
             content: parsed.text,
-            session_id: parsed.sessionId || undefined,
+            cli_session_id: parsed.sessionId || undefined,
             usage: parsed.usage,
             model_used: parsed.model || model,
             cost_usd: parsed.costUsd || undefined,

@@ -6,7 +6,9 @@ export interface RelayRequest {
   prompt?: string;
   messages?: Array<{ role: string; content: string }>;
   cli_type?: string;
-  session_id?: string;
+  session_id?: string;           // relay session UUID
+  cli_session_id?: string | null; // CLI-side session id (for --resume)
+  stateful?: boolean;
   model?: string;
   max_budget_usd?: number;
 }
@@ -36,11 +38,13 @@ export interface RelayResponse {
   event: "relay_response";
   request_id: string;
   content: string;
-  session_id?: string;
+  session_id?: string;       // relay session (passed through)
+  cli_session_id?: string;   // CLI-side session id (returned for --resume next turn)
   usage?: {
     input_tokens: number;
     output_tokens: number;
-    cached_tokens?: number;
+    cache_creation_tokens?: number;
+    cache_read_tokens?: number;
   };
   model_used?: string;
   cost_usd?: number;

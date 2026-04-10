@@ -8,6 +8,8 @@ export interface RelayRequest {
     }>;
     cli_type?: string;
     session_id?: string;
+    cli_session_id?: string | null;
+    stateful?: boolean;
     model?: string;
     max_budget_usd?: number;
 }
@@ -27,10 +29,12 @@ export interface RelayResponse {
     request_id: string;
     content: string;
     session_id?: string;
+    cli_session_id?: string;
     usage?: {
         input_tokens: number;
         output_tokens: number;
-        cached_tokens?: number;
+        cache_creation_tokens?: number;
+        cache_read_tokens?: number;
     };
     model_used?: string;
     cost_usd?: number;
