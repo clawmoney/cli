@@ -93,10 +93,10 @@ function messagesToPrompt(messages) {
     return messages.map((m) => String(m.content ?? "")).join("\n");
 }
 async function executeRelayRequest(request, config) {
-    const { request_id, session_id, max_budget_usd } = request;
+    const { request_id, max_budget_usd } = request;
     const cliType = request.cli_type ?? config.relay.cli_type;
     const model = request.model ?? config.relay.model;
-    // Build prompt from messages or direct prompt
+    // Build prompt from messages (no --resume, full history as prompt)
     const prompt = request.messages
         ? messagesToPrompt(request.messages)
         : request.prompt ?? "";
@@ -111,7 +111,8 @@ async function executeRelayRequest(request, config) {
     logger.info(`  │ Turns:  ${turns}`);
     logger.info(`  │ Prompt: ${String(lastUserMsg).slice(0, 80)}`);
     try {
-        const args = buildCliArgs(cliType, prompt, session_id, max_budget_usd, model);
+        // No session_id — each request is stateless, full history in prompt
+        const args = buildCliArgs(cliType, prompt, undefined, max_budget_usd, model);
         const raw = await spawnCli(cliType, args);
         const parsed = parseCliOutput(cliType, raw);
         const answer = parsed.text.replace(/\n/g, " ").slice(0, 80);

@@ -21,7 +21,7 @@ export function spawnCli(
   timeoutMs: number = DEFAULT_TIMEOUT_MS
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    logger.info(`Spawning ${cliType} with args: ${args.join(" ").slice(0, 200)}`);
+    logger.info(`  │ Exec:   ${cliType} ${args.slice(0, 3).join(" ")}...`);
 
     const child = spawn(cliType, args, {
       stdio: ["ignore", "pipe", "pipe"],

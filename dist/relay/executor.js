@@ -12,7 +12,7 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 // ── Spawn CLI process ──
 export function spawnCli(cliType, args, timeoutMs = DEFAULT_TIMEOUT_MS) {
     return new Promise((resolve, reject) => {
-        logger.info(`Spawning ${cliType} with args: ${args.join(" ").slice(0, 200)}`);
+        logger.info(`  │ Exec:   ${cliType} ${args.slice(0, 3).join(" ")}...`);
         const child = spawn(cliType, args, {
             stdio: ["ignore", "pipe", "pipe"],
             timeout: timeoutMs,
