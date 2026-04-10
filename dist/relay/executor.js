@@ -178,7 +178,11 @@ export function parseCodexOutput(raw) {
 // ── Parse Gemini JSON output ──
 export function parseGeminiOutput(raw) {
     try {
-        const obj = JSON.parse(raw);
+        // Gemini may prefix output with non-JSON lines (e.g. "Loaded cached credentials.")
+        const lines = raw.split("\n");
+        const jsonStart = lines.findIndex((l) => l.trimStart().startsWith("{"));
+        const cleanRaw = jsonStart >= 0 ? lines.slice(jsonStart).join("\n") : raw;
+        const obj = JSON.parse(cleanRaw);
         // Gemini JSON: { response, session_id, stats: { models: { "<model>": { tokens: { input, output } } } } }
         const text = typeof obj.response === "string"
             ? obj.response
@@ -194,8 +198,8 @@ export function parseGeminiOutput(raw) {
                 model = modelName;
                 const tokens = modelStats.tokens;
                 if (tokens) {
-                    inputTokens += tokens.input ?? 0;
-                    outputTokens += tokens.output ?? 0;
+                    inputTokens += tokens.input ?? tokens.prompt ?? 0;
+                    outputTokens += tokens.candidates ?? tokens.output ?? 0;
                 }
             }
         }
