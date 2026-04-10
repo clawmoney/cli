@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import YAML from "yaml";
 import { RelayWsClient } from "./ws-client.js";
 import { spawnCli, buildCliArgs, parseCliOutput } from "./executor.js";
+import { calculateCost } from "./pricing.js";
 import { relayLogger as logger } from "./logger.js";
 import type {
   RelayProviderConfig,
@@ -146,26 +147,11 @@ async function executeRelayRequest(
     const answer = parsed.text.replace(/\n/g, " ").slice(0, 80);
     const inT = parsed.usage.input_tokens;
     const outT = parsed.usage.output_tokens;
-
-    // Cost calculation: API price vs relay price (30% of API)
-    const apiPrices: Record<string, [number, number]> = {
-      "claude-opus-4-6": [15, 75],       // $/M in, $/M out
-      "claude-sonnet-4-6": [3, 15],
-      "claude-haiku-4-5": [0.8, 4],
-      "gpt-5": [10, 30],
-      "gpt-5.4": [10, 30],
-      "o3": [10, 40],
-      "gemini-2.5-pro": [1.25, 10],
-      "gemini-2.5-flash": [0.15, 0.6],
-    };
-    const [apiIn, apiOut] = apiPrices[model] ?? [5, 25];
-    const apiCost = (inT * apiIn + outT * apiOut) / 1_000_000;
-    const relayCost = apiCost * 0.3;  // 30% of API price
-    const providerEarn = relayCost * 0.95;  // 95% to provider
+    const { apiCost, relayCost, providerEarn } = calculateCost(model, inT, outT);
 
     logger.info(`  │ Answer: ${answer}`);
     logger.info(`  │ Tokens: ${inT} in / ${outT} out`);
-    logger.info(`  │ API价:  $${apiCost.toFixed(4)} → Relay价: $${relayCost.toFixed(4)} → 赚: $${providerEarn.toFixed(4)}`);
+    logger.info(`  │ Cost:   API $${apiCost.toFixed(4)} → Relay $${relayCost.toFixed(4)} → Earn $${providerEarn.toFixed(4)}`);
     logger.info(`  └─ Done`);
 
     return {
