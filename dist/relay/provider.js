@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import YAML from "yaml";
 import { RelayWsClient } from "./ws-client.js";
-import { spawnCli, buildCliArgs, parseCliOutput } from "./executor.js";
+import { spawnCli, buildCliArgs, parseCliOutput, ensureEmptyMcpConfig, ensureSandboxDir, } from "./executor.js";
+import { callClaudeApi, preflightClaudeApi } from "./upstream/claude-api.js";
 import { calculateCost } from "./pricing.js";
 import { relayLogger as logger } from "./logger.js";
 const CONFIG_DIR = join(homedir(), ".clawmoney");
@@ -11,6 +12,7 @@ const CONFIG_FILE = join(CONFIG_DIR, "config.yaml");
 const PID_FILE = join(CONFIG_DIR, "relay.pid");
 const DEFAULT_RELAY = {
     cli_type: "claude",
+    execution_mode: "cli",
     model: "claude-opus-4-6",
     mode: "chat",
     concurrency: 5,
@@ -69,8 +71,13 @@ function loadRelayConfig(cliOverride) {
         process.exit(1);
     }
     const userRelay = (raw.relay ?? {});
+    // Env override lets `CLAWMONEY_RELAY_EXECUTION_MODE=api` flip the mode
+    // without editing config.yaml — useful for quick A/B and testing.
+    const envMode = process.env.CLAWMONEY_RELAY_EXECUTION_MODE;
+    const executionMode = envMode ?? userRelay.execution_mode ?? DEFAULT_RELAY.execution_mode;
     const relay = {
         cli_type: cliOverride ?? userRelay.cli_type ?? DEFAULT_RELAY.cli_type,
+        execution_mode: executionMode,
         model: userRelay.model ?? DEFAULT_RELAY.model,
         mode: userRelay.mode ?? DEFAULT_RELAY.mode,
         concurrency: userRelay.concurrency ?? DEFAULT_RELAY.concurrency,
@@ -99,6 +106,8 @@ async function executeRelayRequest(request, config) {
     const model = request.model ?? config.relay.model;
     const stateful = request.stateful ?? false;
     const cliSessionId = request.cli_session_id ?? undefined;
+    // api mode is currently claude-only; everything else falls back to spawn CLI.
+    const useApiMode = config.relay.execution_mode === "api" && cliType === "claude";
     // Build prompt from messages
     const prompt = request.messages
         ? messagesToPrompt(request.messages)
@@ -112,17 +121,34 @@ async function executeRelayRequest(request, config) {
     const modeLabel = stateful
         ? (cliSessionId ? `stateful[resume ${cliSessionId.slice(0, 8)}]` : "stateful[new]")
         : "stateless";
+    const execLabel = useApiMode ? "api" : "cli";
     logger.info(`  ┌─ Request ${request_id.slice(0, 8)}`);
-    logger.info(`  │ CLI:    ${cliType} / ${model} (${modeLabel})`);
+    logger.info(`  │ CLI:    ${cliType} / ${model} (${modeLabel}, exec=${execLabel})`);
     logger.info(`  │ Turns:  ${turns}`);
     logger.info(`  │ Prompt: ${String(lastUserMsg).slice(0, 80)}`);
     try {
         const startMs = Date.now();
-        // In stateful mode, pass cli_session_id so buildCliArgs adds --resume
-        const args = buildCliArgs(cliType, prompt, cliSessionId, max_budget_usd, model);
-        const raw = await spawnCli(cliType, args);
+        let parsed;
+        if (useApiMode) {
+            // Direct /v1/messages call — no subprocess, no sandbox needed because
+            // the only thing the upstream sees is the prompt text we pass in.
+            parsed = await callClaudeApi({
+                prompt,
+                model,
+                maxTokens: max_budget_usd ? undefined : 4096,
+            });
+        }
+        else {
+            // In stateful mode, pass cli_session_id so buildCliArgs adds --resume
+            const args = buildCliArgs(cliType, prompt, cliSessionId, max_budget_usd, model);
+            // Spawn from an empty sandbox directory so Claude Code's auto-injected
+            // cwd / CLAUDE.md / git-status context can't leak the provider's real
+            // project data to the consumer.
+            const sandbox = ensureSandboxDir();
+            const raw = await spawnCli(cliType, args, undefined, sandbox);
+            parsed = parseCliOutput(cliType, raw);
+        }
         const elapsedMs = Date.now() - startMs;
-        const parsed = parseCliOutput(cliType, raw);
         const answer = parsed.text.replace(/\n/g, " ").slice(0, 80);
         const { input_tokens: inT, output_tokens: outT, cache_creation_tokens: cacheWriteT, cache_read_tokens: cacheReadT } = parsed.usage;
         const cost = calculateCost(model, inT, outT, cacheWriteT, cacheReadT);
@@ -162,6 +188,17 @@ export function runRelayProvider(cliOverride) {
         process.exit(1);
     }
     const config = loadRelayConfig(cliOverride);
+    // Prepare relay sandbox assets once at startup.
+    ensureEmptyMcpConfig();
+    ensureSandboxDir();
+    // If the operator picked api mode, validate the OAuth token + fingerprint
+    // up-front so we fail fast instead of on the first inbound request.
+    if (config.relay.execution_mode === "api" && config.relay.cli_type === "claude") {
+        preflightClaudeApi(config.relay.rate_guard).catch((err) => {
+            logger.error(`Claude API preflight failed — falling back to CLI mode: ${err.message}`);
+            config.relay.execution_mode = "cli";
+        });
+    }
     const activeTasks = new Set();
     // Create WS client
     const wsClient = new RelayWsClient(config, (event) => {
@@ -231,5 +268,5 @@ export function runRelayProvider(cliOverride) {
     writeRelayPid();
     wsClient.start();
     logger.info("Relay Provider running. Listening for relay requests...");
-    logger.info(`Config: cli=${config.relay.cli_type}, model=${config.relay.model}, mode=${config.relay.mode}, concurrency=${config.relay.concurrency}`);
+    logger.info(`Config: cli=${config.relay.cli_type}, exec=${config.relay.execution_mode ?? "cli"}, model=${config.relay.model}, mode=${config.relay.mode}, concurrency=${config.relay.concurrency}`);
 }

@@ -42,19 +42,37 @@ export async function setupCommand() {
         return;
     }
     // Step 2: Check wallet status
+    //
+    // We try to get the wallet address directly — if awal returns one, the
+    // wallet is signed in, end of story. This avoids the awal `status` command
+    // returning an unrecognized shape (observed field-name drift: some versions
+    // return `authenticated`, others `signedIn`/`account`/nested objects)
+    // which would otherwise force us into the login flow even when the user
+    // is already signed in, and awal would then refuse with "already signed in".
     const walletSpinner = ora('Checking wallet status...').start();
     let walletAddress = '';
     let needsLogin = false;
     try {
-        const status = await awalExec(['status']);
-        const statusData = status.data;
-        if (statusData.authenticated || statusData.loggedIn || statusData.address) {
-            walletAddress = statusData.address || '';
-            walletSpinner.succeed(`Wallet connected${walletAddress ? `: ${walletAddress}` : ''}`);
+        const addrResult = await awalExec(['address']);
+        const addrData = addrResult.data;
+        const addr = addrData.address || '';
+        if (addr) {
+            walletAddress = addr;
+            walletSpinner.succeed(`Wallet connected: ${walletAddress}`);
         }
         else {
-            needsLogin = true;
-            walletSpinner.info('Wallet not authenticated');
+            // Fall back to legacy `status` shape in case some awal version only
+            // exposes authentication through that command.
+            const status = await awalExec(['status']);
+            const statusData = status.data;
+            if (statusData.authenticated || statusData.loggedIn || statusData.address) {
+                walletAddress = statusData.address || '';
+                walletSpinner.succeed(`Wallet connected${walletAddress ? `: ${walletAddress}` : ''}`);
+            }
+            else {
+                needsLogin = true;
+                walletSpinner.info('Wallet not authenticated');
+            }
         }
     }
     catch {
@@ -104,9 +122,30 @@ export async function setupCommand() {
             }
         }
         catch (err) {
-            loginSpinner.fail('Wallet login failed');
-            console.error(chalk.red(err.message));
-            return;
+            // If awal reports "already signed in" we're actually in the happy path
+            // — the wallet is authenticated, the address check at the top just
+            // failed to detect it. Try once more to fetch the address directly.
+            const msg = err.message || '';
+            if (/already\s*signed\s*in/i.test(msg)) {
+                loginSpinner.info('Wallet already signed in');
+                try {
+                    const addrResult = await awalExec(['address']);
+                    const addrData = addrResult.data;
+                    walletAddress = addrData.address || '';
+                    if (walletAddress) {
+                        console.log(chalk.dim(`  Wallet: ${walletAddress}`));
+                    }
+                }
+                catch {
+                    // Address fetch still failed — continue anyway; the agent
+                    // register/login flow below doesn't strictly require a wallet.
+                }
+            }
+            else {
+                loginSpinner.fail('Wallet login failed');
+                console.error(chalk.red(msg));
+                return;
+            }
         }
     }
     // If we still don't have address, try fetching it

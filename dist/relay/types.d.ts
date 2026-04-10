@@ -53,8 +53,18 @@ export interface ParsedOutput {
     model: string;
     costUsd: number;
 }
+export interface RelayRateGuardConfig {
+    max_concurrency?: number;
+    quiet_hours_max_concurrency?: number;
+    quiet_hours?: number[];
+    min_request_gap_ms?: number;
+    jitter_ms?: number;
+    daily_budget_usd?: number;
+}
 export interface RelayProviderSettings {
     cli_type: string;
+    execution_mode?: "cli" | "api";
+    rate_guard?: RelayRateGuardConfig;
     model: string;
     mode: string;
     concurrency: number;

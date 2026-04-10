@@ -70,8 +70,23 @@ export interface ParsedOutput {
 
 // ── Relay provider config ──
 
+export interface RelayRateGuardConfig {
+  max_concurrency?: number;
+  quiet_hours_max_concurrency?: number;
+  quiet_hours?: number[];
+  min_request_gap_ms?: number;
+  jitter_ms?: number;
+  daily_budget_usd?: number;
+}
+
 export interface RelayProviderSettings {
   cli_type: string;          // "claude", "codex", "gemini"
+  // Execution mode. "cli" spawns the local CLI per request (default, stable).
+  // "api" calls api.anthropic.com directly using the logged-in Claude Code
+  // OAuth token — ~10x faster, but currently only supported for cli_type="claude".
+  execution_mode?: "cli" | "api";
+  // Anti-ban rate-guard settings. Only applied in execution_mode="api".
+  rate_guard?: RelayRateGuardConfig;
   model: string;
   mode: string;              // "chat", "search", "code", "full"
   concurrency: number;
