@@ -113,15 +113,20 @@ async function executeRelayRequest(request, config) {
     logger.info(`  │ Prompt: ${String(lastUserMsg).slice(0, 80)}`);
     try {
         // No session_id — each request is stateless, full history in prompt
+        const startMs = Date.now();
         const args = buildCliArgs(cliType, prompt, undefined, max_budget_usd, model);
         const raw = await spawnCli(cliType, args);
+        const elapsedMs = Date.now() - startMs;
         const parsed = parseCliOutput(cliType, raw);
         const answer = parsed.text.replace(/\n/g, " ").slice(0, 80);
         const inT = parsed.usage.input_tokens;
         const outT = parsed.usage.output_tokens;
+        const cachedT = parsed.usage.cached_tokens ?? 0;
         const { apiCost, relayCost, providerEarn } = calculateCost(model, inT, outT);
+        const elapsedSec = (elapsedMs / 1000).toFixed(1);
         logger.info(`  │ Answer: ${answer}`);
-        logger.info(`  │ Tokens: ${inT} in / ${outT} out`);
+        logger.info(`  │ Tokens: ${inT} in (${cachedT} cached) / ${outT} out`);
+        logger.info(`  │ Time:   ${elapsedSec}s`);
         logger.info(`  │ Cost:   API $${apiCost.toFixed(4)} → Relay $${relayCost.toFixed(4)} → Earn $${providerEarn.toFixed(4)}`);
         logger.info(`  └─ Done`);
         return {

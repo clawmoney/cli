@@ -106,7 +106,10 @@ export function parseClaudeOutput(raw) {
         if (modelUsage) {
             for (const [modelName, usage] of Object.entries(modelUsage)) {
                 model = modelName;
-                inputTokens += usage.inputTokens ?? 0;
+                // Total input = base + cache_creation + cache_read
+                inputTokens += (usage.inputTokens ?? 0)
+                    + (usage.cacheCreationInputTokens ?? 0)
+                    + (usage.cacheReadInputTokens ?? 0);
                 outputTokens += usage.outputTokens ?? 0;
                 cachedTokens += usage.cacheReadInputTokens ?? 0;
             }
