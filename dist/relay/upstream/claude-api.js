@@ -367,9 +367,23 @@ export async function callClaudeApi(opts) {
         configureRateGuard();
     return rateGuard.run(() => doCallClaudeApi(opts));
 }
+// Maximum number of automatic retries on transient upstream errors
+// (429 / 5xx). Matches the Anthropic official SDK default. Does NOT count
+// the initial attempt or the one-shot 401-refresh retry.
+const MAX_TRANSIENT_RETRIES = 2;
+function parseRetryAfterMs(header) {
+    if (!header)
+        return null;
+    const asSeconds = Number(header);
+    if (Number.isFinite(asSeconds) && asSeconds >= 0)
+        return asSeconds * 1000;
+    const asDate = Date.parse(header);
+    if (Number.isFinite(asDate))
+        return Math.max(0, asDate - Date.now());
+    return null;
+}
 async function doCallClaudeApi(opts) {
     const fingerprint = loadFingerprint();
-    const creds = await getFreshCreds();
     const sessionId = randomUUID();
     const maxTokens = opts.maxTokens ?? 4096;
     const body = {
@@ -394,46 +408,55 @@ async function doCallClaudeApi(opts) {
         metadata: { user_id: buildMetadataUserID(fingerprint, sessionId) },
         stream: false,
     };
-    const resp = await fetch(ANTHROPIC_MESSAGES_URL, {
-        method: "POST",
-        headers: {
-            ...STATIC_CLAUDE_CODE_HEADERS,
-            "user-agent": fingerprint.user_agent,
-            "authorization": `Bearer ${creds.accessToken}`,
-            "x-claude-code-session-id": sessionId,
-        },
-        body: JSON.stringify(body),
-    });
-    if (resp.status === 401) {
-        // Token became invalid mid-flight; force a refresh and retry once.
-        logger.warn("[claude-api] 401 from upstream, forcing refresh + retry");
-        cachedCreds = null;
-        const fresh = await getFreshCreds();
-        const retry = await fetch(ANTHROPIC_MESSAGES_URL, {
+    const bodyJson = JSON.stringify(body);
+    let transientAttempt = 0;
+    let hasRefreshed = false;
+    while (true) {
+        const creds = await getFreshCreds();
+        const resp = await fetch(ANTHROPIC_MESSAGES_URL, {
             method: "POST",
             headers: {
                 ...STATIC_CLAUDE_CODE_HEADERS,
                 "user-agent": fingerprint.user_agent,
-                "authorization": `Bearer ${fresh.accessToken}`,
+                "authorization": `Bearer ${creds.accessToken}`,
                 "x-claude-code-session-id": sessionId,
             },
-            body: JSON.stringify(body),
+            body: bodyJson,
         });
-        if (!retry.ok) {
-            const text = await retry.text();
-            throw new Error(`Anthropic ${retry.status} after refresh: ${text.slice(0, 400)}`);
+        if (resp.ok) {
+            const parsed = parseResponse(await resp.json(), opts.model);
+            recordSpendFromUsage(parsed, opts.model);
+            return parsed;
         }
-        const parsedRetry = parseResponse(await retry.json(), opts.model);
-        recordSpendFromUsage(parsedRetry, opts.model);
-        return parsedRetry;
+        const errText = await resp.text();
+        // 401 → one-shot token refresh + retry. If we already refreshed once
+        // and still got 401, the credentials are genuinely broken — bubble up.
+        if (resp.status === 401 && !hasRefreshed) {
+            logger.warn("[claude-api] 401 from upstream, refreshing token + retry");
+            hasRefreshed = true;
+            cachedCreds = null;
+            continue;
+        }
+        // 429 / 5xx → transient upstream hiccup. Retry with exponential backoff
+        // + jitter, honoring Retry-After if present. This is what Anthropic's
+        // official SDK does by default; buyers used to see these as hard 502s
+        // even when the right move was "wait 1s and try again". We only do this
+        // inside the rate-guard slot we're already holding, so retries don't
+        // re-queue behind other requests.
+        const isTransient = resp.status === 429 ||
+            (resp.status >= 500 && resp.status <= 599);
+        if (isTransient && transientAttempt < MAX_TRANSIENT_RETRIES) {
+            const retryAfter = parseRetryAfterMs(resp.headers.get("retry-after"));
+            const backoffMs = retryAfter ?? 500 * Math.pow(2, transientAttempt) + Math.random() * 500;
+            logger.warn(`[claude-api] ${resp.status} from upstream (attempt ${transientAttempt + 1}/${MAX_TRANSIENT_RETRIES + 1}), retrying in ${Math.round(backoffMs)}ms — ${errText.slice(0, 200)}`);
+            await new Promise((r) => setTimeout(r, backoffMs));
+            transientAttempt++;
+            continue;
+        }
+        // Unrecoverable — bubble up with the upstream status + body so Hub can
+        // translate it into a sensible HTTP status for the buyer.
+        throw new Error(`Anthropic ${resp.status}: ${errText.slice(0, 400)}`);
     }
-    if (!resp.ok) {
-        const text = await resp.text();
-        throw new Error(`Anthropic ${resp.status}: ${text.slice(0, 400)}`);
-    }
-    const parsed = parseResponse(await resp.json(), opts.model);
-    recordSpendFromUsage(parsed, opts.model);
-    return parsed;
 }
 function recordSpendFromUsage(parsed, model) {
     if (!rateGuard)
