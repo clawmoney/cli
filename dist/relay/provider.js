@@ -89,29 +89,50 @@ function loadRelayConfig(cliOverride) {
     };
 }
 // ── Request handler ──
+function messagesToPrompt(messages) {
+    return messages.map((m) => String(m.content ?? "")).join("\n");
+}
 async function executeRelayRequest(request, config) {
-    const { request_id, prompt, session_id, max_budget_usd } = request;
-    const cliType = config.relay.cli_type;
+    const { request_id, session_id, max_budget_usd } = request;
+    const cliType = request.cli_type ?? config.relay.cli_type;
+    const model = request.model ?? config.relay.model;
+    // Build prompt from messages or direct prompt
+    const prompt = request.messages
+        ? messagesToPrompt(request.messages)
+        : request.prompt ?? "";
+    const lastUserMsg = request.messages
+        ? [...request.messages].reverse().find((m) => m.role === "user")?.content ?? ""
+        : prompt;
+    const turns = request.messages
+        ? request.messages.filter((m) => m.role === "user").length
+        : 1;
+    logger.info(`  ┌─ Request ${request_id.slice(0, 8)}`);
+    logger.info(`  │ CLI:    ${cliType} / ${model}`);
+    logger.info(`  │ Turns:  ${turns}`);
+    logger.info(`  │ Prompt: ${String(lastUserMsg).slice(0, 80)}`);
     try {
-        const args = buildCliArgs(cliType, prompt, session_id, max_budget_usd);
+        const args = buildCliArgs(cliType, prompt, session_id, max_budget_usd, model);
         const raw = await spawnCli(cliType, args);
         const parsed = parseCliOutput(cliType, raw);
+        const answer = parsed.text.replace(/\n/g, " ").slice(0, 80);
+        logger.info(`  │ Answer: ${answer}`);
+        logger.info(`  └─ Tokens: ${parsed.usage.input_tokens} in / ${parsed.usage.output_tokens} out`);
         return {
             event: "relay_response",
             request_id,
-            result: parsed.text,
+            content: parsed.text,
             session_id: parsed.sessionId || undefined,
             usage: parsed.usage,
-            model_used: parsed.model || config.relay.model,
+            model_used: parsed.model || model,
             cost_usd: parsed.costUsd || undefined,
         };
     }
     catch (err) {
-        logger.error(`Relay request ${request_id} failed:`, err);
+        logger.error(`  └─ ERROR: ${err instanceof Error ? err.message : err}`);
         return {
             event: "relay_response",
             request_id,
-            result: "",
+            content: "",
             error: err instanceof Error ? err.message : "Unknown execution error",
         };
     }
@@ -152,7 +173,7 @@ export function runRelayProvider(cliOverride) {
             wsClient.send({
                 event: "relay_response",
                 request_id: request.request_id,
-                result: "",
+                content: "",
                 error: "Provider is at maximum capacity. Please try again later.",
             });
             return;

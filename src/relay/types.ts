@@ -3,7 +3,9 @@
 export interface RelayRequest {
   event: "relay_request";
   request_id: string;
-  prompt: string;
+  prompt?: string;
+  messages?: Array<{ role: string; content: string }>;
+  cli_type?: string;
   session_id?: string;
   model?: string;
   max_budget_usd?: number;
@@ -33,7 +35,7 @@ export type RelayIncomingEvent =
 export interface RelayResponse {
   event: "relay_response";
   request_id: string;
-  result: string;
+  content: string;
   session_id?: string;
   usage?: {
     input_tokens: number;
