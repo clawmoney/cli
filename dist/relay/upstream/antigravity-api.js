@@ -102,9 +102,18 @@ const ANTIGRAVITY_MODEL_MAP = {
     "antigravity-gemini-3-flash": "gemini-3-flash",
     "antigravity-gemini-2.5-pro": "gemini-2.5-pro",
     "antigravity-gemini-2.5-flash": "gemini-2.5-flash",
-    "antigravity-claude-sonnet-4-6": "claude-sonnet-4-5",
-    "antigravity-claude-opus-4-6-thinking": "claude-opus-4-5-thinking",
+    // Claude models. claude-opus-4-6 may also be retired like gemini-3-pro —
+    // we learned about retirement via the "no longer available" plain-text
+    // body Google returns, so leave the 4-6 entries in and update when
+    // Google tells us otherwise. The 4-5 series is the currently-verified
+    // working path per sub2api migration 049.
     "antigravity-claude-opus-4-6": "claude-opus-4-6",
+    "antigravity-claude-opus-4-6-thinking": "claude-opus-4-5-thinking",
+    "antigravity-claude-opus-4-5-thinking": "claude-opus-4-5-thinking",
+    "antigravity-claude-sonnet-4-6": "claude-sonnet-4-5",
+    "antigravity-claude-sonnet-4-5": "claude-sonnet-4-5",
+    "antigravity-claude-sonnet-4-5-thinking": "claude-sonnet-4-5-thinking",
+    "antigravity-claude-haiku-4-5": "claude-sonnet-4-5",
 };
 function resolveAntigravityUpstreamModel(model) {
     return ANTIGRAVITY_MODEL_MAP[model] ?? model;
