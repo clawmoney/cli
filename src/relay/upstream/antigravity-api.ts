@@ -494,11 +494,16 @@ function extractTierId(data: LoadCodeAssistResponse): string | undefined {
 async function callLoadCodeAssist(
   accessToken: string
 ): Promise<{ project?: string; tier?: string } | null> {
+  // loadCodeAssist metadata fields match sub2api exactly — Google's protobuf
+  // validator rejects "MACOS"/"WINDOWS" strings on the `platform` enum (it
+  // only accepts UPPERCASE enum values like PLATFORM_UNSPECIFIED / DARWIN /
+  // LINUX / WINDOWS_NT). sub2api sends ideVersion + ideName instead, which
+  // bypasses the platform field entirely.
   const body = JSON.stringify({
     metadata: {
       ideType: "ANTIGRAVITY",
-      platform: process.platform === "win32" ? "WINDOWS" : "MACOS",
-      pluginType: "GEMINI",
+      ideVersion: ANTIGRAVITY_VERSION,
+      ideName: "antigravity",
     },
   });
   const headers = antigravitySetupHeaders(accessToken);
@@ -539,6 +544,9 @@ async function callOnboardUser(
   accessToken: string,
   tierId: string
 ): Promise<string | undefined> {
+  // onboardUser metadata: mirrors sub2api (client.go:519-522) exactly. Unlike
+  // loadCodeAssist, this call *does* take `platform` + `pluginType`, but it
+  // wants the protobuf enum values — "PLATFORM_UNSPECIFIED" not "MACOS".
   const body = JSON.stringify({
     tierId,
     metadata: {
