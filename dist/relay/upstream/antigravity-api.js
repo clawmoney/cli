@@ -94,8 +94,11 @@ const GENERATE_PATH = "/v1internal:streamGenerateContent?alt=sse";
  * names.
  */
 const ANTIGRAVITY_MODEL_MAP = {
-    "antigravity-gemini-3-pro": "gemini-3-pro-high",
-    "antigravity-gemini-3.1-pro": "gemini-3-pro-high",
+    // Gemini 3 Pro was retired in April 2026 — Google now returns a plain-text
+    // "no longer available, switch to Gemini 3.1 Pro" body if you ask for it.
+    // Route both the 3-pro and 3.1-pro market IDs to 3.1-pro-high.
+    "antigravity-gemini-3-pro": "gemini-3.1-pro-high",
+    "antigravity-gemini-3.1-pro": "gemini-3.1-pro-high",
     "antigravity-gemini-3-flash": "gemini-3-flash",
     "antigravity-gemini-2.5-pro": "gemini-2.5-pro",
     "antigravity-gemini-2.5-flash": "gemini-2.5-flash",
