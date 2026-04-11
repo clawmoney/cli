@@ -521,7 +521,8 @@ function buildCodexRequestFrame(
   fingerprint: ResolvedFingerprint,
   sessionId: string,
   turnMetadataHeader: string,
-  windowGeneration: number
+  windowGeneration: number,
+  warmup: boolean
 ): Record<string, unknown> {
   // `client_metadata` is a flat string-to-string map. Real CLI populates
   // it via build_ws_client_metadata() (client.rs:575-605). The keys look
@@ -531,7 +532,7 @@ function buildCodexRequestFrame(
     "x-codex-window-id": `${sessionId}:${windowGeneration}`,
     "x-codex-turn-metadata": turnMetadataHeader,
   };
-  return {
+  const frame: Record<string, unknown> = {
     type: "response.create",
     model,
     instructions: RELAY_INSTRUCTIONS,
@@ -560,6 +561,15 @@ function buildCodexRequestFrame(
     include: ["reasoning.encrypted_content"],
     client_metadata: clientMetadata,
   };
+  if (warmup) {
+    // Real CLI's prewarm flow sets `generate: false` on the first frame
+    // of each turn (codex-rs/core/src/client.rs:1283-1285). The server
+    // replies with a response.completed event but does NOT generate
+    // tokens, so the warmup is cheap. The real frame then follows on
+    // the SAME WebSocket session.
+    frame.generate = false;
+  }
+  return frame;
 }
 
 // ── Event accumulator ──
@@ -856,19 +866,42 @@ async function doCallCodexApi(opts: CallCodexApiOptions): Promise<ParsedOutput> 
       sandbox: platformSandboxTag,
     });
 
-    // Build the WS request frame with the just-built turn metadata so
-    // the frame's `client_metadata["x-codex-turn-metadata"]` matches the
-    // `x-codex-turn-metadata` HTTP header on the same handshake — real
-    // CLI sends them both and they carry the same value.
-    const frame = buildCodexRequestFrame(
+    // Build TWO frames for the same WS session — real Codex CLI's turn
+    // flow is:
+    //   1. open WebSocket
+    //   2. send prewarm frame `{...request, generate: false}`
+    //   3. wait for response.completed (server returns completed with
+    //      no generated tokens — warmup is cheap)
+    //   4. send the real frame on the SAME connection
+    //   5. wait for response.completed with the actual stream output
+    //   6. close WebSocket
+    // See codex-rs/core/src/client.rs:1377-1425 (prewarm_websocket) and
+    // lines 1283-1285 (`if warmup { ws_payload.generate = Some(false); }`).
+    //
+    // Relay accounts that skip step 2-3 stick out: the account's entire
+    // traffic history shows zero prewarm frames, while every real CLI
+    // user's account shows exactly one prewarm per turn. We mirror the
+    // full two-phase flow to eliminate this signal.
+    const warmupFrame = buildCodexRequestFrame(
       prompt,
       opts.model,
       fingerprint,
       sessionId,
       turnMetadata,
-      windowGeneration
+      windowGeneration,
+      /*warmup*/ true
     );
-    const frameJson = JSON.stringify(frame);
+    const realFrame = buildCodexRequestFrame(
+      prompt,
+      opts.model,
+      fingerprint,
+      sessionId,
+      turnMetadata,
+      windowGeneration,
+      /*warmup*/ false
+    );
+    const warmupFrameJson = JSON.stringify(warmupFrame);
+    const realFrameJson = JSON.stringify(realFrame);
 
     // Build handshake headers to match Codex CLI 0.118's real upgrade
     // request. Key sources:
@@ -955,8 +988,15 @@ async function doCallCodexApi(opts: CallCodexApiOptions): Promise<ParsedOutput> 
       throw err;
     }
 
-    // Connection is open — send the first (and only) client frame and
-    // accumulate server frames until we see a terminal event.
+    // Connection is open. Run the two-phase prewarm → real flow on the
+    // same WebSocket session. Phase state machine:
+    //   - phase = "warmup": server frames are consumed only to detect
+    //     response.completed. Text / usage deltas are ignored because
+    //     generate=false suppresses them (and even if the server sends
+    //     something, we want the real request's numbers, not the
+    //     warmup's).
+    //   - phase = "real": server frames populate the shared accumulator
+    //     as before; response.completed finishes the promise.
     const { ws } = dialed;
 
     const acc: ParsedFrameResult = {
@@ -970,6 +1010,7 @@ async function doCallCodexApi(opts: CallCodexApiOptions): Promise<ParsedOutput> 
 
     let resolved = false;
     const result = await new Promise<{ ok: true } | { ok: false; retriable: boolean; error: Error }>((resolve) => {
+      let phase: "warmup" | "real" = "warmup";
       const finish = (r: { ok: true } | { ok: false; retriable: boolean; error: Error }) => {
         if (resolved) return;
         resolved = true;
@@ -990,6 +1031,30 @@ async function doCallCodexApi(opts: CallCodexApiOptions): Promise<ParsedOutput> 
         });
       }, WS_OVERALL_TIMEOUT_MS);
 
+      // Scratch accumulator used for the warmup phase. Real CLI throws
+      // warmup output away (client.rs:1408-1417 just reads until
+      // Completed and discards everything else).
+      const warmupAcc: ParsedFrameResult = {
+        text: "",
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        model: opts.model,
+        terminal: false,
+      };
+
+      const sendFrame = (frameJson: string) => {
+        try {
+          ws.send(frameJson, (sendErr?: Error) => {
+            if (sendErr) {
+              finish({ ok: false, retriable: true, error: sendErr });
+            }
+          });
+        } catch (err) {
+          finish({ ok: false, retriable: true, error: err as Error });
+        }
+      };
+
       ws.on("message", (data: WebSocket.RawData, _isBinary: boolean) => {
         const text = Buffer.isBuffer(data)
           ? data.toString("utf-8")
@@ -997,7 +1062,8 @@ async function doCallCodexApi(opts: CallCodexApiOptions): Promise<ParsedOutput> 
           ? Buffer.concat(data).toString("utf-8")
           : Buffer.from(data as ArrayBuffer).toString("utf-8");
         // Frames are individual JSON objects (no newline framing).
-        const outcome = handleFrame(text, acc);
+        const target = phase === "warmup" ? warmupAcc : acc;
+        const outcome = handleFrame(text, target);
         if (outcome.rateLimit && rateGuard) {
           // Soft hint — record but don't kill this request. Next request will
           // hit the cooldown check at the guard level.
@@ -1010,15 +1076,25 @@ async function doCallCodexApi(opts: CallCodexApiOptions): Promise<ParsedOutput> 
               retriable: false,
               error: new Error(`Codex upstream error: ${outcome.error}`),
             });
-          } else {
-            acc.terminal = true;
-            finish({ ok: true });
+            return;
           }
+          if (phase === "warmup") {
+            // Warmup done — advance phase and send the real frame on
+            // the same WebSocket. Do NOT close the socket here; real
+            // CLI keeps the connection open so the real request can
+            // reuse it.
+            phase = "real";
+            sendFrame(realFrameJson);
+            return;
+          }
+          // Real phase completed.
+          acc.terminal = true;
+          finish({ ok: true });
         }
       });
 
       ws.on("close", (code: number, reason: Buffer) => {
-        if (acc.terminal) return; // normal close after terminal event
+        if (acc.terminal) return; // normal close after real-phase terminal event
         finish({
           ok: false,
           retriable: true,
@@ -1030,16 +1106,11 @@ async function doCallCodexApi(opts: CallCodexApiOptions): Promise<ParsedOutput> 
         finish({ ok: false, retriable: true, error: err });
       });
 
-      // Send the request frame.
-      try {
-        ws.send(frameJson, (sendErr?: Error) => {
-          if (sendErr) {
-            finish({ ok: false, retriable: true, error: sendErr });
-          }
-        });
-      } catch (err) {
-        finish({ ok: false, retriable: true, error: err as Error });
-      }
+      // Phase 1: send the warmup frame (generate=false). The server
+      // responds with response.completed without generating tokens;
+      // our message handler then transitions to phase "real" and sends
+      // the real frame on this same connection.
+      sendFrame(warmupFrameJson);
     });
 
     if (!result.ok) {
