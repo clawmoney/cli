@@ -114,26 +114,31 @@ const GENERATE_PATH = "/v1internal:streamGenerateContent?alt=sse";
  * names.
  */
 const ANTIGRAVITY_MODEL_MAP: Record<string, string> = {
-  // Gemini 3 Pro was retired in April 2026 — Google now returns a plain-text
-  // "no longer available, switch to Gemini 3.1 Pro" body if you ask for it.
-  // Route both the 3-pro and 3.1-pro market IDs to 3.1-pro-high.
+  // Verified live against a real Ultra account's
+  // `v1internal:fetchAvailableModels` response on 2026-04-11. sub2api
+  // migration 049's mapping is stale — Google has retired most `4-5`
+  // Claude variants and only `claude-opus-4-6-thinking` / `claude-sonnet-4-6`
+  // remain, both of which are thinking variants (the displayName literally
+  // says "(Thinking)" even for the plain id).
+  //
+  // Gemini: both `gemini-3-pro-high/low` and `gemini-3.1-pro-high/low` are
+  // available — prefer 3.1 for new traffic since Google's generate path
+  // sends "no longer available" plain text for 3-pro-high.
   "antigravity-gemini-3-pro": "gemini-3.1-pro-high",
   "antigravity-gemini-3.1-pro": "gemini-3.1-pro-high",
+  "antigravity-gemini-3.1-pro-low": "gemini-3.1-pro-low",
   "antigravity-gemini-3-flash": "gemini-3-flash",
   "antigravity-gemini-2.5-pro": "gemini-2.5-pro",
   "antigravity-gemini-2.5-flash": "gemini-2.5-flash",
-  // Claude models. claude-opus-4-6 may also be retired like gemini-3-pro —
-  // we learned about retirement via the "no longer available" plain-text
-  // body Google returns, so leave the 4-6 entries in and update when
-  // Google tells us otherwise. The 4-5 series is the currently-verified
-  // working path per sub2api migration 049.
-  "antigravity-claude-opus-4-6": "claude-opus-4-6",
-  "antigravity-claude-opus-4-6-thinking": "claude-opus-4-5-thinking",
-  "antigravity-claude-opus-4-5-thinking": "claude-opus-4-5-thinking",
-  "antigravity-claude-sonnet-4-6": "claude-sonnet-4-5",
-  "antigravity-claude-sonnet-4-5": "claude-sonnet-4-5",
-  "antigravity-claude-sonnet-4-5-thinking": "claude-sonnet-4-5-thinking",
-  "antigravity-claude-haiku-4-5": "claude-sonnet-4-5",
+  // Claude. All supported variants are thinking-mode; "4-5" market IDs fall
+  // through to 4-6 because that's what Google currently exposes.
+  "antigravity-claude-opus-4-6": "claude-opus-4-6-thinking",
+  "antigravity-claude-opus-4-6-thinking": "claude-opus-4-6-thinking",
+  "antigravity-claude-opus-4-5-thinking": "claude-opus-4-6-thinking",
+  "antigravity-claude-sonnet-4-6": "claude-sonnet-4-6",
+  "antigravity-claude-sonnet-4-5": "claude-sonnet-4-6",
+  "antigravity-claude-sonnet-4-5-thinking": "claude-sonnet-4-6",
+  "antigravity-claude-haiku-4-5": "claude-sonnet-4-6",
 };
 
 function resolveAntigravityUpstreamModel(model: string): string {
