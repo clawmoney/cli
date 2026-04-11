@@ -100,6 +100,30 @@ const ANTIGRAVITY_LOAD_ENDPOINTS = [
 
 const GENERATE_PATH = "/v1internal:generateContent";
 
+/**
+ * Map our `antigravity-*` market-facing model IDs to the real model names
+ * Google's v1internal endpoint accepts. The `antigravity-` prefix only
+ * exists in OUR namespace so buyers can pick the Antigravity quota pool
+ * vs the Gemini CLI quota pool for the same underlying model. Google's
+ * v1internal endpoint itself uses the bare names. Sources: sub2api
+ * migration 049_unify_antigravity_model_mapping.sql for canonical Google
+ * names.
+ */
+const ANTIGRAVITY_MODEL_MAP: Record<string, string> = {
+  "antigravity-gemini-3-pro": "gemini-3-pro-high",
+  "antigravity-gemini-3.1-pro": "gemini-3-pro-high",
+  "antigravity-gemini-3-flash": "gemini-3-flash",
+  "antigravity-gemini-2.5-pro": "gemini-2.5-pro",
+  "antigravity-gemini-2.5-flash": "gemini-2.5-flash",
+  "antigravity-claude-sonnet-4-6": "claude-sonnet-4-5",
+  "antigravity-claude-opus-4-6-thinking": "claude-opus-4-5-thinking",
+  "antigravity-claude-opus-4-6": "claude-opus-4-6",
+};
+
+function resolveAntigravityUpstreamModel(model: string): string {
+  return ANTIGRAVITY_MODEL_MAP[model] ?? model;
+}
+
 // Hardcoded fallback project ID used for workspace/business accounts that
 // don't return their own `cloudaicompanionProject` from `loadCodeAssist`. Same
 // value used by opencode-antigravity-auth and sub2api — it's not account-
@@ -761,12 +785,18 @@ async function doCallAntigravityApi(
   const projectId = account.project_id || ANTIGRAVITY_DEFAULT_PROJECT_ID;
   const maxTokens = opts.maxTokens ?? 8192;
 
+  const upstreamModel = resolveAntigravityUpstreamModel(opts.model);
+  if (upstreamModel !== opts.model) {
+    logger.info(
+      `[antigravity-api] model mapping: ${opts.model} → ${upstreamModel}`
+    );
+  }
   const outerRequest: V1InternalAntigravityRequest = {
     project: projectId,
     requestId: `agent-${randomUUID()}`,
     userAgent: "antigravity",
     requestType: "agent",
-    model: opts.model,
+    model: upstreamModel,
     request: {
       contents: [
         {
