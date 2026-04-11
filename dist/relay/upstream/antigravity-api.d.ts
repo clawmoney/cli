@@ -68,6 +68,7 @@ interface AntigravityAccountsFile {
     version: 1;
     accounts: AntigravityAccount[];
 }
+export declare function configureAntigravityDispatcher(): void;
 export declare function ensureClawmoneyDir(): void;
 export declare function loadAccounts(): AntigravityAccountsFile;
 export declare function saveAccounts(file: AntigravityAccountsFile): void;

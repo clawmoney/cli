@@ -83,8 +83,13 @@ const ANTIGRAVITY_VERSION = "1.21.9";
 const CLAWMONEY_DIR = join(homedir(), ".clawmoney");
 const ACCOUNTS_FILE = join(CLAWMONEY_DIR, "antigravity-accounts.json");
 // ── Proxy ──
+//
+// Exported so the `antigravity login` command can run the same proxy
+// setup before it hits oauth2.googleapis.com / userinfo / loadCodeAssist.
+// Without this, providers behind the GFW see `fetch failed` at the
+// token-exchange step even when the browser callback succeeds.
 let dispatcherConfigured = false;
-function configureDispatcher() {
+export function configureAntigravityDispatcher() {
     if (dispatcherConfigured)
         return;
     dispatcherConfigured = true;
@@ -101,6 +106,7 @@ function configureDispatcher() {
     setGlobalDispatcher(new ProxyAgent(url));
     logger.info(`[antigravity-api] upstream proxy ${url}`);
 }
+const configureDispatcher = configureAntigravityDispatcher;
 // ── Account storage ──
 export function ensureClawmoneyDir() {
     mkdirSync(CLAWMONEY_DIR, { recursive: true });
@@ -223,6 +229,7 @@ async function getFreshAccount() {
  * sub2api and opencode-antigravity-auth behavior.
  */
 export async function resolveAntigravityProjectId(accessToken) {
+    configureDispatcher();
     const body = JSON.stringify({
         metadata: {
             ideType: "ANTIGRAVITY",
@@ -510,6 +517,7 @@ export async function storeNewAntigravityAccount(input) {
  * the browser flow. Exported so the CLI login command can call it.
  */
 export async function exchangeAntigravityAuthCode(input) {
+    configureDispatcher();
     const start = Date.now();
     const resp = await fetch(OAUTH_TOKEN_URL, {
         method: "POST",
@@ -547,6 +555,7 @@ export async function exchangeAntigravityAuthCode(input) {
  * failure — we'll just store the account without an email label.
  */
 export async function fetchAntigravityUserEmail(accessToken) {
+    configureDispatcher();
     try {
         const resp = await fetch(OAUTH_USERINFO_URL, {
             headers: { authorization: `Bearer ${accessToken}` },

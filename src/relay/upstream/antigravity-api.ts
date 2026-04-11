@@ -211,9 +211,14 @@ interface LoadCodeAssistResponse {
 }
 
 // ── Proxy ──
+//
+// Exported so the `antigravity login` command can run the same proxy
+// setup before it hits oauth2.googleapis.com / userinfo / loadCodeAssist.
+// Without this, providers behind the GFW see `fetch failed` at the
+// token-exchange step even when the browser callback succeeds.
 
 let dispatcherConfigured = false;
-function configureDispatcher(): void {
+export function configureAntigravityDispatcher(): void {
   if (dispatcherConfigured) return;
   dispatcherConfigured = true;
   const url =
@@ -231,6 +236,7 @@ function configureDispatcher(): void {
   setGlobalDispatcher(new ProxyAgent(url) as unknown as Dispatcher);
   logger.info(`[antigravity-api] upstream proxy ${url}`);
 }
+const configureDispatcher = configureAntigravityDispatcher;
 
 // ── Account storage ──
 
@@ -394,6 +400,7 @@ async function getFreshAccount(): Promise<AntigravityAccount> {
 export async function resolveAntigravityProjectId(
   accessToken: string
 ): Promise<string> {
+  configureDispatcher();
   const body = JSON.stringify({
     metadata: {
       ideType: "ANTIGRAVITY",
@@ -781,6 +788,7 @@ export async function exchangeAntigravityAuthCode(input: {
   refresh_token: string;
   expiry_ms: number;
 }> {
+  configureDispatcher();
   const start = Date.now();
   const resp = await fetch(OAUTH_TOKEN_URL, {
     method: "POST",
@@ -829,6 +837,7 @@ export async function exchangeAntigravityAuthCode(input: {
 export async function fetchAntigravityUserEmail(
   accessToken: string
 ): Promise<string | undefined> {
+  configureDispatcher();
   try {
     const resp = await fetch(OAUTH_USERINFO_URL, {
       headers: { authorization: `Bearer ${accessToken}` },
