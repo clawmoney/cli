@@ -6,6 +6,7 @@ import ora from "ora";
 import { requireConfig } from "../utils/config.js";
 import { apiGet, apiPost } from "../utils/api.js";
 import { readRelayPid, isRelayPidAlive, removeRelayPid } from "../relay/provider.js";
+import { API_PRICES, RELAY_DISCOUNT } from "../relay/pricing.js";
 
 const LOG_FILE = join(homedir(), ".clawmoney", "relay.log");
 
@@ -25,22 +26,67 @@ export async function relayRegisterCommand(options: RegisterOptions): Promise<vo
   const config = requireConfig();
 
   // Validate CLI type
-  const validClis = ["claude", "codex", "gemini"];
+  const validClis = ["claude", "codex", "gemini", "antigravity"];
   if (!validClis.includes(options.cli)) {
     console.error(chalk.red(`Invalid CLI type "${options.cli}". Must be one of: ${validClis.join(", ")}`));
     process.exit(1);
   }
 
-  // Verify CLI is installed
-  const spinner = ora(`Checking if ${options.cli} is installed...`).start();
-  try {
-    execSync(`which ${options.cli}`, { stdio: "pipe" });
-    spinner.succeed(`${options.cli} is available`);
-  } catch {
-    spinner.fail(chalk.red(`${options.cli} is not installed or not in PATH`));
-    console.log(chalk.dim(`  Make sure ${options.cli} CLI is installed and accessible.`));
+  // Antigravity is api-only — there is no local CLI binary. For the other
+  // types we still probe `which` so misconfigured boxes fail fast.
+  if (options.cli === "antigravity") {
+    const spinner = ora("Checking Antigravity OAuth token...").start();
+    try {
+      const { loadAccounts } = await import("../relay/upstream/antigravity-api.js");
+      const file = loadAccounts();
+      if (file.accounts.length === 0) {
+        spinner.fail(chalk.red("No Antigravity accounts found."));
+        console.log(
+          chalk.dim(`  Run "clawmoney antigravity login" first to link a Google account.`)
+        );
+        process.exit(1);
+      }
+      spinner.succeed(
+        `Antigravity linked (${file.accounts[0]!.email ?? "email unknown"})`
+      );
+    } catch (err) {
+      spinner.fail(chalk.red(`Antigravity token check failed: ${(err as Error).message}`));
+      process.exit(1);
+    }
+  } else {
+    const spinner = ora(`Checking if ${options.cli} is installed...`).start();
+    try {
+      execSync(`which ${options.cli}`, { stdio: "pipe" });
+      spinner.succeed(`${options.cli} is available`);
+    } catch {
+      spinner.fail(chalk.red(`${options.cli} is not installed or not in PATH`));
+      console.log(chalk.dim(`  Make sure ${options.cli} CLI is installed and accessible.`));
+      process.exit(1);
+    }
+  }
+
+  // Auto-populate prices from the LiteLLM-sourced pricing table. Providers
+  // register at the FULL official API price; the Hub applies RELAY_DISCOUNT
+  // at charge time so buyers pay a fixed fraction across all platforms.
+  const known = API_PRICES[options.model];
+  if (!known && (options.priceInput == null || options.priceOutput == null)) {
+    console.error(
+      chalk.red(`Unknown model "${options.model}". Pricing table has no entry.`)
+    );
+    console.log(
+      chalk.dim(
+        `  Either add it to clawmoney-cli/src/relay/pricing.ts, or pass both ` +
+          `--price-input and --price-output explicitly.`
+      )
+    );
     process.exit(1);
   }
+  const priceInput = options.priceInput != null
+    ? parseFloat(options.priceInput)
+    : known!.input;
+  const priceOutput = options.priceOutput != null
+    ? parseFloat(options.priceOutput)
+    : known!.output;
 
   const regSpinner = ora("Registering as relay provider...").start();
 
@@ -51,8 +97,8 @@ export async function relayRegisterCommand(options: RegisterOptions): Promise<vo
       mode: options.mode ?? "chat",
       concurrency: parseInt(options.concurrency ?? "5", 10),
       daily_limit_usd: parseFloat(options.dailyLimit ?? "20"),
-      price_input_per_m: parseFloat(options.priceInput ?? "5"),
-      price_output_per_m: parseFloat(options.priceOutput ?? "25"),
+      price_input_per_m: priceInput,
+      price_output_per_m: priceOutput,
     };
 
     const resp = await apiPost<Record<string, unknown>>(
@@ -79,8 +125,14 @@ export async function relayRegisterCommand(options: RegisterOptions): Promise<vo
     console.log(`  ${chalk.bold("Mode:")}          ${options.mode ?? "chat"}`);
     console.log(`  ${chalk.bold("Concurrency:")}   ${body.concurrency}`);
     console.log(`  ${chalk.bold("Daily Limit:")}   $${body.daily_limit_usd}`);
-    console.log(`  ${chalk.bold("Input Price:")}   $${body.price_input_per_m}/1M tokens`);
-    console.log(`  ${chalk.bold("Output Price:")}  $${body.price_output_per_m}/1M tokens`);
+    console.log(`  ${chalk.bold("Input Price:")}   $${body.price_input_per_m}/1M tokens (official API)`);
+    console.log(`  ${chalk.bold("Output Price:")}  $${body.price_output_per_m}/1M tokens (official API)`);
+    const discountPct = Math.round(RELAY_DISCOUNT * 100);
+    console.log(
+      chalk.dim(
+        `  Buyers pay ${discountPct}% of the official API price — a ${100 - discountPct}% discount applied by the Hub.`
+      )
+    );
     console.log("");
     console.log(chalk.dim(`  Next: run "clawmoney relay start" to begin accepting requests.`));
   } catch (err) {

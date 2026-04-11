@@ -7,6 +7,7 @@ import { spawnCli, buildCliArgs, parseCliOutput, ensureEmptyMcpConfig, ensureSan
 import { callClaudeApi, preflightClaudeApi, getRateGuardSnapshot } from "./upstream/claude-api.js";
 import { callCodexApi, preflightCodexApi } from "./upstream/codex-api.js";
 import { callGeminiApi, preflightGeminiApi } from "./upstream/gemini-api.js";
+import { callAntigravityApi, preflightAntigravityApi, } from "./upstream/antigravity-api.js";
 import { calculateCost } from "./pricing.js";
 import { relayLogger as logger } from "./logger.js";
 const CONFIG_DIR = join(homedir(), ".clawmoney");
@@ -108,10 +109,13 @@ async function executeRelayRequest(request, config) {
     const model = request.model ?? config.relay.model;
     const stateful = request.stateful ?? false;
     const cliSessionId = request.cli_session_id ?? undefined;
-    // api mode is supported for claude / codex / gemini; anything else falls
-    // back to spawning the local CLI subprocess.
-    const useApiMode = config.relay.execution_mode === "api" &&
-        (cliType === "claude" || cliType === "codex" || cliType === "gemini");
+    // api mode is supported for claude / codex / gemini / antigravity; anything
+    // else falls back to spawning the local CLI subprocess. Antigravity is
+    // api-only (there is no local CLI to spawn) so execution_mode is ignored
+    // for it and we always route through the direct upstream handler.
+    const useApiMode = (config.relay.execution_mode === "api" &&
+        (cliType === "claude" || cliType === "codex" || cliType === "gemini")) ||
+        cliType === "antigravity";
     // Build prompt from messages
     const prompt = request.messages
         ? messagesToPrompt(request.messages)
@@ -148,6 +152,13 @@ async function executeRelayRequest(request, config) {
             }
             else if (cliType === "gemini") {
                 parsed = await callGeminiApi({
+                    prompt,
+                    model,
+                    maxTokens: max_budget_usd ? undefined : 8192,
+                });
+            }
+            else if (cliType === "antigravity") {
+                parsed = await callAntigravityApi({
                     prompt,
                     model,
                     maxTokens: max_budget_usd ? undefined : 8192,
@@ -235,6 +246,11 @@ export function runRelayProvider(cliOverride) {
     // up-front so we fail fast instead of on the first inbound request. Each
     // cli_type has its own preflight path (different credential file, different
     // fingerprint schema, different rate-guard instance).
+    // Antigravity is always api mode (no CLI to spawn), so force api execution
+    // even if config.yaml says "cli". For the other CLIs, api mode is opt-in.
+    if (config.relay.cli_type === "antigravity") {
+        config.relay.execution_mode = "api";
+    }
     if (config.relay.execution_mode === "api") {
         const preflightFn = config.relay.cli_type === "codex"
             ? preflightCodexApi
@@ -242,7 +258,9 @@ export function runRelayProvider(cliOverride) {
                 ? preflightGeminiApi
                 : config.relay.cli_type === "claude"
                     ? preflightClaudeApi
-                    : null;
+                    : config.relay.cli_type === "antigravity"
+                        ? preflightAntigravityApi
+                        : null;
         if (preflightFn) {
             preflightFn(config.relay.rate_guard).catch((err) => {
                 logger.error(`${config.relay.cli_type} API preflight failed — falling back to CLI mode: ${err.message}`);

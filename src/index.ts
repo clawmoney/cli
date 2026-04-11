@@ -40,6 +40,10 @@ import {
   relayModelsCommand,
   relayCreditsCommand,
 } from './commands/relay.js';
+import {
+  antigravityLoginCommand,
+  antigravityStatusCommand,
+} from './commands/antigravity.js';
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
@@ -429,7 +433,7 @@ const relay = program
 relay
   .command('register')
   .description('Register as a relay provider')
-  .requiredOption('--cli <type>', 'Backend CLI: claude, codex, gemini')
+  .requiredOption('--cli <type>', 'Backend CLI: claude, codex, gemini, antigravity')
   .requiredOption('--model <model>', 'Model to offer (e.g., claude-opus-4-6)')
   .option('--mode <mode>', 'Safety mode: chat, search, code, full', 'chat')
   .option('--concurrency <n>', 'Max concurrent requests', '5')
@@ -448,7 +452,7 @@ relay
 relay
   .command('start')
   .description('Start accepting relay requests')
-  .option('--cli <type>', 'Override CLI type (claude, codex, gemini)')
+  .option('--cli <type>', 'Override CLI type (claude, codex, gemini, antigravity)')
   .action(async (options) => {
     try {
       await relayStartCommand(options);
@@ -500,6 +504,35 @@ relay
   .action(async () => {
     try {
       await relayCreditsCommand();
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+// antigravity (Google Antigravity IDE OAuth — separate quota pool + Claude access)
+const antigravity = program
+  .command('antigravity')
+  .description('Google Antigravity IDE OAuth: link a Google account so the relay daemon can serve Claude + Gemini via the Antigravity quota pool');
+
+antigravity
+  .command('login')
+  .description('OAuth browser flow to link a Google account')
+  .action(async () => {
+    try {
+      await antigravityLoginCommand();
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+antigravity
+  .command('status')
+  .description('Show linked Antigravity accounts')
+  .action(async () => {
+    try {
+      await antigravityStatusCommand();
     } catch (err) {
       console.error((err as Error).message);
       process.exit(1);
