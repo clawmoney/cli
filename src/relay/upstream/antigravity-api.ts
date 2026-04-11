@@ -791,28 +791,33 @@ async function doCallAntigravityApi(
       `[antigravity-api] model mapping: ${opts.model} → ${upstreamModel}`
     );
   }
+  // Request shape mirrors sub2api's minimal inner GeminiRequest: contents +
+  // toolConfig + sessionId. generationConfig is optional and only gets set
+  // when the caller actually supplied max_tokens — sending a bare
+  // maxOutputTokens in the inner request against v1internal has been
+  // observed to return "500 Unknown Error" for some models.
+  const innerRequest: V1InternalAntigravityRequest["request"] = {
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: prompt }],
+      },
+    ],
+    toolConfig: {
+      functionCallingConfig: { mode: "VALIDATED" },
+    },
+    sessionId: generateStableSessionId(prompt),
+  };
   const outerRequest: V1InternalAntigravityRequest = {
     project: projectId,
     requestId: `agent-${randomUUID()}`,
     userAgent: "antigravity",
     requestType: "agent",
     model: upstreamModel,
-    request: {
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: prompt }],
-        },
-      ],
-      generationConfig: {
-        maxOutputTokens: maxTokens,
-      },
-      toolConfig: {
-        functionCallingConfig: { mode: "VALIDATED" },
-      },
-      sessionId: generateStableSessionId(prompt),
-    },
+    request: innerRequest,
   };
+  // Suppress unused-var lint while we keep maxTokens around for future use.
+  void maxTokens;
 
   const bodyJson = JSON.stringify(outerRequest);
 
