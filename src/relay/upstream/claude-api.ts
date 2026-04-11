@@ -748,18 +748,6 @@ export async function preflightClaudeApi(config?: RelayRateGuardConfig): Promise
 
 // ── API call ──
 
-interface AnthropicMessageResponse {
-  model?: string;
-  stop_reason?: string;
-  content?: Array<{ type: string; text?: string }>;
-  usage?: {
-    input_tokens?: number;
-    output_tokens?: number;
-    cache_creation_input_tokens?: number;
-    cache_read_input_tokens?: number;
-  };
-}
-
 export interface CallClaudeApiOptions {
   prompt: string;
   model: string;
@@ -843,7 +831,15 @@ async function doCallClaudeApi(opts: CallClaudeApiOptions): Promise<ParsedOutput
       },
     ],
     metadata: { user_id: buildMetadataUserID(fingerprint, sessionId) },
-    stream: false,
+    // Real Claude Code ALWAYS sends stream:true on its main path
+    // (claude-code-sourcemap/src/services/api/claude.ts:1824 —
+    // `{ ...params, stream: true }`). The non-stream call at line 864 is
+    // only the fallback path triggered when the stream fails mid-response.
+    // Sending stream:false on every request is a statistical signal that
+    // Anthropic could use to identify relay clients vs real CLI — the
+    // entire account's traffic would be the opposite polarity of what the
+    // CLI ever emits. Switch to streaming to match.
+    stream: true,
   };
   const bodyJson = JSON.stringify(body);
 
@@ -869,7 +865,10 @@ async function doCallClaudeApi(opts: CallClaudeApiOptions): Promise<ParsedOutput
     if (sessionWin) rateGuard?.setSessionWindow(sessionWin);
 
     if (resp.ok) {
-      const parsed = parseResponse(await resp.json() as AnthropicMessageResponse, opts.model);
+      // Stream parser — real Claude Code's main path uses stream:true; see
+      // body construction above. parseClaudeSseResponse aggregates text
+      // deltas + usage until message_stop, matching SDK semantics.
+      const parsed = await parseClaudeSseResponse(resp, opts.model);
       recordSpendFromUsage(parsed, opts.model);
       return parsed;
     }
@@ -938,22 +937,172 @@ function recordSpendFromUsage(parsed: ParsedOutput, model: string): void {
   rateGuard.recordSpend(cost.apiCost);
 }
 
-function parseResponse(data: AnthropicMessageResponse, fallbackModel: string): ParsedOutput {
-  const text = (data.content ?? [])
-    .filter((c) => c.type === "text" && typeof c.text === "string")
-    .map((c) => c.text as string)
-    .join("");
-  const usage = data.usage ?? {};
+/**
+ * Parse an Anthropic SSE `/v1/messages` stream response into a ParsedOutput.
+ *
+ * Wire format (Anthropic docs — beta.messages.create({stream: true})):
+ *
+ *   event: message_start
+ *   data: {"type":"message_start","message":{"id":"...","model":"...","usage":{"input_tokens":10,...}}}
+ *
+ *   event: content_block_start
+ *   data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+ *
+ *   event: content_block_delta
+ *   data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}
+ *
+ *   ... more deltas ...
+ *
+ *   event: content_block_stop
+ *   data: {"type":"content_block_stop","index":0}
+ *
+ *   event: message_delta
+ *   data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":42}}
+ *
+ *   event: message_stop
+ *   data: {"type":"message_stop"}
+ *
+ *   event: ping            (keepalive — ignore)
+ *
+ *   event: error           (upstream error — throw)
+ *   data: {"type":"error","error":{"type":"overloaded_error","message":"..."}}
+ */
+async function parseClaudeSseResponse(
+  resp: Response,
+  fallbackModel: string
+): Promise<ParsedOutput> {
+  const reader = resp.body?.getReader();
+  if (!reader) {
+    throw new Error("Claude streamGenerateContent returned no body");
+  }
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  let text = "";
+  let model = fallbackModel;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheCreation = 0;
+  let cacheRead = 0;
+  let streamError: { type?: string; message?: string } | undefined;
+
+  const processChunk = (jsonStr: string): void => {
+    const trimmed = jsonStr.trim();
+    if (!trimmed) return;
+    type Chunk = {
+      type?: string;
+      message?: {
+        model?: string;
+        usage?: {
+          input_tokens?: number;
+          output_tokens?: number;
+          cache_creation_input_tokens?: number;
+          cache_read_input_tokens?: number;
+        };
+      };
+      delta?: { type?: string; text?: string };
+      usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+        cache_creation_input_tokens?: number;
+        cache_read_input_tokens?: number;
+      };
+      error?: { type?: string; message?: string };
+    };
+    let chunk: Chunk;
+    try {
+      chunk = JSON.parse(trimmed) as Chunk;
+    } catch {
+      return;
+    }
+    switch (chunk.type) {
+      case "message_start": {
+        if (chunk.message?.model) model = chunk.message.model;
+        const u = chunk.message?.usage;
+        if (u) {
+          if (typeof u.input_tokens === "number") inputTokens = u.input_tokens;
+          if (typeof u.output_tokens === "number") outputTokens = u.output_tokens;
+          if (typeof u.cache_creation_input_tokens === "number") {
+            cacheCreation = u.cache_creation_input_tokens;
+          }
+          if (typeof u.cache_read_input_tokens === "number") {
+            cacheRead = u.cache_read_input_tokens;
+          }
+        }
+        break;
+      }
+      case "content_block_delta": {
+        // We only accumulate text_delta. input_json_delta is for tool calls,
+        // which we don't surface from the relay path (the buyer gets the
+        // model's final text response, not in-flight tool plumbing).
+        if (chunk.delta?.type === "text_delta" && typeof chunk.delta.text === "string") {
+          text += chunk.delta.text;
+        }
+        break;
+      }
+      case "message_delta": {
+        // message_delta carries the final output_tokens count and
+        // potentially an updated usage (e.g. cache hits applied late).
+        const u = chunk.usage;
+        if (u) {
+          if (typeof u.output_tokens === "number") outputTokens = u.output_tokens;
+          if (typeof u.input_tokens === "number") inputTokens = u.input_tokens;
+          if (typeof u.cache_creation_input_tokens === "number") {
+            cacheCreation = u.cache_creation_input_tokens;
+          }
+          if (typeof u.cache_read_input_tokens === "number") {
+            cacheRead = u.cache_read_input_tokens;
+          }
+        }
+        break;
+      }
+      case "error": {
+        streamError = chunk.error;
+        break;
+      }
+      // message_stop / content_block_start / content_block_stop / ping —
+      // structural, nothing to accumulate.
+      default:
+        break;
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let newlineIdx: number;
+    while ((newlineIdx = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, newlineIdx).replace(/\r$/, "");
+      buffer = buffer.slice(newlineIdx + 1);
+      if (!line) continue;
+      // SSE dispatches on `data: ...` lines. `event: ...` names are
+      // informational (the chunk JSON's `type` field is authoritative).
+      if (line.startsWith("data:")) {
+        processChunk(line.slice(5));
+      }
+    }
+  }
+  // Flush trailing line (rare — most servers end with a \n\n).
+  if (buffer.startsWith("data:")) {
+    processChunk(buffer.slice(5));
+  }
+
+  if (streamError) {
+    throw new Error(
+      `Anthropic stream error: ${streamError.type ?? "unknown"} — ${streamError.message ?? ""}`
+    );
+  }
+
   return {
     text,
     sessionId: "",
     usage: {
-      input_tokens: usage.input_tokens ?? 0,
-      output_tokens: usage.output_tokens ?? 0,
-      cache_creation_tokens: usage.cache_creation_input_tokens ?? 0,
-      cache_read_tokens: usage.cache_read_input_tokens ?? 0,
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      cache_creation_tokens: cacheCreation,
+      cache_read_tokens: cacheRead,
     },
-    model: data.model ?? fallbackModel,
+    model,
     costUsd: 0,
   };
 }
