@@ -509,8 +509,9 @@ async function callLoadCodeAssist(
         { method: "POST", headers, body }
       );
       if (!resp.ok) {
+        const errBody = await resp.text().catch(() => "");
         logger.warn(
-          `[antigravity-api] loadCodeAssist ${resp.status} at ${baseEndpoint}`
+          `[antigravity-api] loadCodeAssist ${resp.status} at ${baseEndpoint}: ${errBody.slice(0, 400)}`
         );
         continue;
       }

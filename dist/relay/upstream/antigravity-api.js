@@ -314,7 +314,8 @@ async function callLoadCodeAssist(accessToken) {
         try {
             const resp = await fetchWithProxy(`${baseEndpoint}/v1internal:loadCodeAssist`, { method: "POST", headers, body });
             if (!resp.ok) {
-                logger.warn(`[antigravity-api] loadCodeAssist ${resp.status} at ${baseEndpoint}`);
+                const errBody = await resp.text().catch(() => "");
+                logger.warn(`[antigravity-api] loadCodeAssist ${resp.status} at ${baseEndpoint}: ${errBody.slice(0, 400)}`);
                 continue;
             }
             const data = (await resp.json());
