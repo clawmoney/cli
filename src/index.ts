@@ -438,8 +438,8 @@ relay
   .option('--mode <mode>', 'Safety mode: chat, search, code, full', 'chat')
   .option('--concurrency <n>', 'Max concurrent requests', '5')
   .option('--daily-limit <usd>', 'Max daily spend in USD', '20')
-  .option('--price-input <usd>', 'Price per 1M input tokens', '5')
-  .option('--price-output <usd>', 'Price per 1M output tokens', '25')
+  .option('--price-input <usd>', 'Override input price per 1M (auto-populated from pricing.ts)')
+  .option('--price-output <usd>', 'Override output price per 1M (auto-populated from pricing.ts)')
   .action(async (options) => {
     try {
       await relayRegisterCommand(options);
