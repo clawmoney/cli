@@ -34,6 +34,15 @@ export type RelayIncomingEvent =
 
 // ── Response sent back to server ──
 
+export interface RelayResponseSessionWindow {
+  // UNIX ms when the rolling 5h window resets (upstream's reset header).
+  reset_at_ms: number;
+  // 0-100 if upstream surfaces utilization, else undefined.
+  utilization?: number;
+  // upstream status string ("allowed", "surpassed", etc.) if surfaced.
+  status?: string;
+}
+
 export interface RelayResponse {
   event: "relay_response";
   request_id: string;
@@ -49,6 +58,11 @@ export interface RelayResponse {
   model_used?: string;
   cost_usd?: number;
   error?: string;
+  // Opt-in session-window telemetry piggy-backed on the response envelope.
+  // Only populated in execution_mode="api" when the upstream surfaces its
+  // rolling 5h window reset headers (currently Claude). Hub uses this to
+  // avoid claim-scheduling providers whose window is nearly saturated.
+  session_window?: RelayResponseSessionWindow;
 }
 
 export type RelayOutgoingEvent = RelayResponse;
@@ -81,9 +95,11 @@ export interface RelayRateGuardConfig {
 
 export interface RelayProviderSettings {
   cli_type: string;          // "claude", "codex", "gemini"
-  // Execution mode. "cli" spawns the local CLI per request (default, stable).
-  // "api" calls api.anthropic.com directly using the logged-in Claude Code
-  // OAuth token — ~10x faster, but currently only supported for cli_type="claude".
+  // Execution mode. "cli" spawns the local CLI per request (default, stable,
+  // works for all cli_types). "api" calls the upstream provider's HTTPS API
+  // directly using the locally-cached OAuth token — ~10x faster, supported
+  // for cli_type="claude" | "codex" | "gemini". Each type has its own
+  // fingerprint bootstrap script under scripts/capture-<type>-request.mjs.
   execution_mode?: "cli" | "api";
   // Anti-ban rate-guard settings. Only applied in execution_mode="api".
   rate_guard?: RelayRateGuardConfig;

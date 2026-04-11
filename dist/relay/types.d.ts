@@ -24,6 +24,11 @@ export interface RelayErrorEvent {
     message: string;
 }
 export type RelayIncomingEvent = RelayRequest | RelayConnectedEvent | RelayErrorEvent;
+export interface RelayResponseSessionWindow {
+    reset_at_ms: number;
+    utilization?: number;
+    status?: string;
+}
 export interface RelayResponse {
     event: "relay_response";
     request_id: string;
@@ -39,6 +44,7 @@ export interface RelayResponse {
     model_used?: string;
     cost_usd?: number;
     error?: string;
+    session_window?: RelayResponseSessionWindow;
 }
 export type RelayOutgoingEvent = RelayResponse;
 export interface ParsedOutput {

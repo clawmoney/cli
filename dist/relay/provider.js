@@ -4,7 +4,9 @@ import { homedir } from "node:os";
 import YAML from "yaml";
 import { RelayWsClient } from "./ws-client.js";
 import { spawnCli, buildCliArgs, parseCliOutput, ensureEmptyMcpConfig, ensureSandboxDir, } from "./executor.js";
-import { callClaudeApi, preflightClaudeApi } from "./upstream/claude-api.js";
+import { callClaudeApi, preflightClaudeApi, getRateGuardSnapshot } from "./upstream/claude-api.js";
+import { callCodexApi, preflightCodexApi } from "./upstream/codex-api.js";
+import { callGeminiApi, preflightGeminiApi } from "./upstream/gemini-api.js";
 import { calculateCost } from "./pricing.js";
 import { relayLogger as logger } from "./logger.js";
 const CONFIG_DIR = join(homedir(), ".clawmoney");
@@ -106,8 +108,10 @@ async function executeRelayRequest(request, config) {
     const model = request.model ?? config.relay.model;
     const stateful = request.stateful ?? false;
     const cliSessionId = request.cli_session_id ?? undefined;
-    // api mode is currently claude-only; everything else falls back to spawn CLI.
-    const useApiMode = config.relay.execution_mode === "api" && cliType === "claude";
+    // api mode is supported for claude / codex / gemini; anything else falls
+    // back to spawning the local CLI subprocess.
+    const useApiMode = config.relay.execution_mode === "api" &&
+        (cliType === "claude" || cliType === "codex" || cliType === "gemini");
     // Build prompt from messages
     const prompt = request.messages
         ? messagesToPrompt(request.messages)
@@ -130,13 +134,32 @@ async function executeRelayRequest(request, config) {
         const startMs = Date.now();
         let parsed;
         if (useApiMode) {
-            // Direct /v1/messages call — no subprocess, no sandbox needed because
-            // the only thing the upstream sees is the prompt text we pass in.
-            parsed = await callClaudeApi({
-                prompt,
-                model,
-                maxTokens: max_budget_usd ? undefined : 4096,
-            });
+            // Direct upstream HTTPS call — no subprocess, no sandbox needed because
+            // the only thing the upstream sees is the prompt text we pass in. The
+            // right handler is picked by cli_type (claude → Anthropic, codex →
+            // chatgpt.com, gemini → cloudcode-pa). Each handler has its own
+            // fingerprint file and rate-guard instance.
+            if (cliType === "codex") {
+                parsed = await callCodexApi({
+                    prompt,
+                    model,
+                    maxTokens: max_budget_usd ? undefined : 4096,
+                });
+            }
+            else if (cliType === "gemini") {
+                parsed = await callGeminiApi({
+                    prompt,
+                    model,
+                    maxTokens: max_budget_usd ? undefined : 8192,
+                });
+            }
+            else {
+                parsed = await callClaudeApi({
+                    prompt,
+                    model,
+                    maxTokens: max_budget_usd ? undefined : 4096,
+                });
+            }
         }
         else {
             // In stateful mode, pass cli_session_id so buildCliArgs adds --resume
@@ -159,6 +182,22 @@ async function executeRelayRequest(request, config) {
         logger.info(`  │ Cost:   input=$${cost.inputCost.toFixed(4)} cache_w=$${cost.cacheCreationCost.toFixed(4)} cache_r=$${cost.cacheReadCost.toFixed(4)} output=$${cost.outputCost.toFixed(4)}`);
         logger.info(`  │ Total:  API $${cost.apiCost.toFixed(4)} → Relay $${cost.relayCost.toFixed(4)} → Earn $${cost.providerEarn.toFixed(4)}`);
         logger.info(`  └─ Done`);
+        // When we're running in api mode, piggy-back the provider's current 5h
+        // session-window snapshot onto the response so the Hub can use it for
+        // predictive claim scheduling (avoid routing fresh work to a provider
+        // whose window is already 90%+ saturated). Only populated if upstream
+        // actually surfaced the headers this turn.
+        let sessionWindowTelemetry;
+        if (useApiMode) {
+            const snap = getRateGuardSnapshot();
+            if (snap?.sessionWindow) {
+                sessionWindowTelemetry = {
+                    reset_at_ms: snap.sessionWindow.endMs,
+                    utilization: snap.sessionWindow.utilization,
+                    status: snap.sessionWindow.status,
+                };
+            }
+        }
         return {
             event: "relay_response",
             request_id,
@@ -167,6 +206,7 @@ async function executeRelayRequest(request, config) {
             usage: parsed.usage,
             model_used: parsed.model || model,
             cost_usd: parsed.costUsd || undefined,
+            session_window: sessionWindowTelemetry,
         };
     }
     catch (err) {
@@ -192,12 +232,23 @@ export function runRelayProvider(cliOverride) {
     ensureEmptyMcpConfig();
     ensureSandboxDir();
     // If the operator picked api mode, validate the OAuth token + fingerprint
-    // up-front so we fail fast instead of on the first inbound request.
-    if (config.relay.execution_mode === "api" && config.relay.cli_type === "claude") {
-        preflightClaudeApi(config.relay.rate_guard).catch((err) => {
-            logger.error(`Claude API preflight failed — falling back to CLI mode: ${err.message}`);
-            config.relay.execution_mode = "cli";
-        });
+    // up-front so we fail fast instead of on the first inbound request. Each
+    // cli_type has its own preflight path (different credential file, different
+    // fingerprint schema, different rate-guard instance).
+    if (config.relay.execution_mode === "api") {
+        const preflightFn = config.relay.cli_type === "codex"
+            ? preflightCodexApi
+            : config.relay.cli_type === "gemini"
+                ? preflightGeminiApi
+                : config.relay.cli_type === "claude"
+                    ? preflightClaudeApi
+                    : null;
+        if (preflightFn) {
+            preflightFn(config.relay.rate_guard).catch((err) => {
+                logger.error(`${config.relay.cli_type} API preflight failed — falling back to CLI mode: ${err.message}`);
+                config.relay.execution_mode = "cli";
+            });
+        }
     }
     const activeTasks = new Set();
     // Create WS client
