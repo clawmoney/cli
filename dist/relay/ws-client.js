@@ -94,7 +94,12 @@ export class RelayWsClient {
             this.reconnectTimer = null;
             this.connect();
         }, delay * 1000);
-        this.reconnectTimer.unref();
+        // CRITICAL: do NOT .unref() this timer. When the WS handle closes we lose
+        // our only refed I/O source — if the reconnect timer is unref'd Node sees
+        // an empty event loop and the process silently exits with code 0 before
+        // the timer fires. This was the "daemon dies after every Hub deploy" bug
+        // observed in 0.12.0–0.12.2. Leaving the timer refed is what keeps the
+        // daemon alive across WS disconnects.
         const { max, multiplier } = this.config.relay.reconnect;
         this.reconnectDelay = Math.min(delay * multiplier, max);
     }

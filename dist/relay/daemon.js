@@ -5,6 +5,16 @@
  * It runs the relay provider main loop (WS + Executor).
  */
 import { runRelayProvider } from "./provider.js";
+import { relayLogger as logger } from "./logger.js";
+// Process-level safety net: an unhandled promise rejection anywhere in the
+// async reconnect / request path must NOT silently kill the daemon. Log it
+// loudly and keep running — the reconnect loop will self-heal any broken WS.
+process.on("unhandledRejection", (reason) => {
+    logger.error("Unhandled promise rejection (daemon continues running):", reason instanceof Error ? reason.stack ?? reason.message : reason);
+});
+process.on("uncaughtException", (err) => {
+    logger.error("Uncaught exception (daemon continues running):", err.stack ?? err.message);
+});
 // Parse CLI args passed from the parent
 let cliType;
 const args = process.argv.slice(2);
