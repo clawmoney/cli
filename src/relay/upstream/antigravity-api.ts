@@ -501,7 +501,7 @@ async function callLoadCodeAssist(
       pluginType: "GEMINI",
     },
   });
-  const headers = antigravityHeaders(accessToken);
+  const headers = antigravitySetupHeaders(accessToken);
   for (const baseEndpoint of ANTIGRAVITY_LOAD_ENDPOINTS) {
     try {
       const resp = await fetchWithProxy(
@@ -546,7 +546,7 @@ async function callOnboardUser(
       pluginType: "GEMINI",
     },
   });
-  const headers = antigravityHeaders(accessToken);
+  const headers = antigravitySetupHeaders(accessToken);
   for (const baseEndpoint of ANTIGRAVITY_LOAD_ENDPOINTS) {
     for (let attempt = 1; attempt <= 5; attempt++) {
       try {
@@ -603,6 +603,10 @@ export async function resolveAntigravityProjectId(
   return ANTIGRAVITY_DEFAULT_PROJECT_ID;
 }
 
+/**
+ * Headers used for the streamGenerateContent / generateContent calls. Real
+ * Antigravity UA + x-goog-api-client + client-metadata.
+ */
 function antigravityHeaders(accessToken: string): Record<string, string> {
   return {
     "content-type": "application/json",
@@ -613,6 +617,28 @@ function antigravityHeaders(accessToken: string): Record<string, string> {
       `(KHTML, like Gecko) Antigravity/${ANTIGRAVITY_VERSION} ` +
       `Chrome/138.0.7204.235 Electron/37.3.1 Safari/537.36`,
     "x-goog-api-client": "google-cloud-sdk vscode_cloudshelleditor/0.1",
+    "client-metadata": JSON.stringify({
+      ideType: "ANTIGRAVITY",
+      platform: process.platform === "win32" ? "WINDOWS" : "MACOS",
+      pluginType: "GEMINI",
+    }),
+  };
+}
+
+/**
+ * Headers for the setup calls (loadCodeAssist / onboardUser). These want a
+ * simpler Gemini-CLI-flavored header set — the Antigravity UA + the
+ * `x-goog-api-client` cloud-shell-editor fingerprint triggers a 400 on
+ * prod/daily/autopush hosts. opencode-antigravity-auth/src/antigravity/oauth.ts
+ * uses the same subset (authorization + content-type + gemini-cli UA +
+ * client-metadata) and it works in the wild.
+ */
+function antigravitySetupHeaders(accessToken: string): Record<string, string> {
+  return {
+    "content-type": "application/json",
+    "accept": "application/json",
+    "authorization": `Bearer ${accessToken}`,
+    "user-agent": "google-api-nodejs-client/9.15.1",
     "client-metadata": JSON.stringify({
       ideType: "ANTIGRAVITY",
       platform: process.platform === "win32" ? "WINDOWS" : "MACOS",
