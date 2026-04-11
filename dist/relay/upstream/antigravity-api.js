@@ -57,27 +57,27 @@ export const ANTIGRAVITY_SCOPES = [
 export const ANTIGRAVITY_REDIRECT_URI = "http://localhost:51121/oauth-callback";
 const OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const OAUTH_USERINFO_URL = "https://www.googleapis.com/oauth2/v1/userinfo?alt=json";
-// Endpoint fallback order. Matches CLIProxy / opencode-antigravity-auth:
-// the Antigravity IDE talks to the `daily` sandbox first, with `autopush` and
-// prod as progressive fallbacks. We retry per request on connection errors,
-// 5xx, 429, or 404.
+// Endpoint list. sub2api (production-tested Go relay) uses only prod + daily.
+// We originally also included `autopush-cloudcode-pa.sandbox.googleapis.com`
+// from opencode-antigravity-auth's list, but that host requires the
+// `staging-cloudaicompanion` API to be manually enabled in Google Cloud
+// Console — which is a setup step the real Antigravity IDE doesn't need, so
+// it can't be the right path. Drop it.
 const ANTIGRAVITY_ENDPOINT_DAILY = "https://daily-cloudcode-pa.sandbox.googleapis.com";
-const ANTIGRAVITY_ENDPOINT_AUTOPUSH = "https://autopush-cloudcode-pa.sandbox.googleapis.com";
 const ANTIGRAVITY_ENDPOINT_PROD = "https://cloudcode-pa.googleapis.com";
+// Generate-path fallback order: daily → prod. Matches sub2api's
+// `ForwardBaseURLs()` — daily is the Antigravity IDE's primary forward
+// target; prod is the fallback when daily 404/500s.
 const ANTIGRAVITY_ENDPOINTS = [
     ANTIGRAVITY_ENDPOINT_DAILY,
-    ANTIGRAVITY_ENDPOINT_AUTOPUSH,
     ANTIGRAVITY_ENDPOINT_PROD,
 ];
-// For project discovery (loadCodeAssist / onboardUser) we hit PROD first.
-// sub2api and opencode-antigravity-auth both found that the sandbox daily/
-// autopush endpoints often 404 on these setup calls even though they handle
-// the generate path fine. Mirroring their order avoids the "no project →
-// fallback to hardcoded rising-fact-p41fc → 403 API not enabled" trap.
+// Setup-path fallback order: prod → daily. Matches sub2api's `BaseURLs`.
+// loadCodeAssist / onboardUser are best supported on prod; daily is the
+// backup for when prod has a temporary hiccup.
 const ANTIGRAVITY_LOAD_ENDPOINTS = [
     ANTIGRAVITY_ENDPOINT_PROD,
     ANTIGRAVITY_ENDPOINT_DAILY,
-    ANTIGRAVITY_ENDPOINT_AUTOPUSH,
 ];
 const GENERATE_PATH = "/v1internal:generateContent";
 // Hardcoded fallback project ID used for workspace/business accounts that
