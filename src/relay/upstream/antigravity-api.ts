@@ -98,7 +98,11 @@ const ANTIGRAVITY_LOAD_ENDPOINTS = [
   ANTIGRAVITY_ENDPOINT_DAILY,
 ] as const;
 
-const GENERATE_PATH = "/v1internal:generateContent";
+// Antigravity upstream only supports streamGenerateContent — the non-stream
+// variant returns a generic 500 "Unknown Error" for every model we tested.
+// Documented in sub2api/backend/internal/service/antigravity_gateway_service.go:1409
+// ("Antigravity 上游只支持流式请求"). We parse the ?alt=sse response inline.
+const GENERATE_PATH = "/v1internal:streamGenerateContent?alt=sse";
 
 /**
  * Map our `antigravity-*` market-facing model IDs to the real model names
@@ -850,8 +854,7 @@ async function doCallAntigravityApi(
     }
 
     if (resp.ok) {
-      const data = (await resp.json()) as V1InternalGenerateResponse;
-      const parsed = parseAntigravityResponse(data, opts.model);
+      const parsed = await parseAntigravitySseResponse(resp, opts.model);
       recordAntigravitySpend(parsed, opts.model);
       return parsed;
     }
@@ -935,29 +938,91 @@ function recordAntigravitySpend(parsed: ParsedOutput, model: string): void {
   rateGuard.recordSpend(cost.apiCost);
 }
 
-function parseAntigravityResponse(
-  data: V1InternalGenerateResponse,
+/**
+ * Parse Antigravity's streamGenerateContent?alt=sse response. Google sends
+ * Server-Sent Events where each line is `data: {json}`; the JSON shape
+ * matches a single `V1InternalGenerateResponse` chunk. Text parts accumulate
+ * across chunks, and usageMetadata is usually on the last chunk.
+ *
+ * Note: unlike vanilla Gemini API, Antigravity wraps each chunk's body in a
+ * top-level `response` field (mirroring the non-stream shape), so we unwrap.
+ */
+async function parseAntigravitySseResponse(
+  resp: Response,
   fallbackModel: string
-): ParsedOutput {
-  const response = data.response ?? {};
-  const candidates = response.candidates ?? [];
-  const firstCandidate = candidates[0];
+): Promise<ParsedOutput> {
+  const reader = resp.body?.getReader();
+  if (!reader) {
+    throw new Error("Antigravity streamGenerateContent returned no body");
+  }
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  let text = "";
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cachedTokens = 0;
 
-  const text = (firstCandidate?.content?.parts ?? [])
-    .map((p) => p.text ?? "")
-    .join("");
+  const processChunk = (jsonStr: string): void => {
+    const trimmed = jsonStr.trim();
+    if (!trimmed || trimmed === "[DONE]") return;
+    let chunk: V1InternalGenerateResponse;
+    try {
+      chunk = JSON.parse(trimmed) as V1InternalGenerateResponse;
+    } catch {
+      return;
+    }
+    // Antigravity SSE sometimes emits chunks with fields at the top level
+    // (without the `response` wrapper). Handle both shapes.
+    const body =
+      (chunk as V1InternalGenerateResponse).response ??
+      (chunk as unknown as NonNullable<V1InternalGenerateResponse["response"]>);
+    const candidates = body?.candidates ?? [];
+    for (const cand of candidates) {
+      for (const part of cand.content?.parts ?? []) {
+        if (part.text) text += part.text;
+      }
+    }
+    const usage = body?.usageMetadata;
+    if (usage) {
+      if (typeof usage.promptTokenCount === "number") {
+        inputTokens = usage.promptTokenCount;
+      }
+      if (typeof usage.candidatesTokenCount === "number") {
+        outputTokens = usage.candidatesTokenCount;
+      }
+      if (typeof usage.cachedContentTokenCount === "number") {
+        cachedTokens = usage.cachedContentTokenCount;
+      }
+    }
+  };
 
-  const usage = response.usageMetadata ?? {};
-  const cached = usage.cachedContentTokenCount ?? 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let newlineIdx: number;
+    while ((newlineIdx = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, newlineIdx).replace(/\r$/, "");
+      buffer = buffer.slice(newlineIdx + 1);
+      if (!line) continue;
+      if (line.startsWith("data:")) {
+        processChunk(line.slice(5));
+      }
+    }
+  }
+  // Flush tail (unlikely but safe)
+  if (buffer.startsWith("data:")) {
+    processChunk(buffer.slice(5));
+  }
 
   return {
     text,
     sessionId: "",
     usage: {
-      input_tokens: Math.max(0, (usage.promptTokenCount ?? 0) - cached),
-      output_tokens: usage.candidatesTokenCount ?? 0,
+      input_tokens: Math.max(0, inputTokens - cachedTokens),
+      output_tokens: outputTokens,
       cache_creation_tokens: 0,
-      cache_read_tokens: cached,
+      cache_read_tokens: cachedTokens,
     },
     model: fallbackModel,
     costUsd: 0,
