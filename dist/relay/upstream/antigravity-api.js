@@ -29,7 +29,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { ProxyAgent, setGlobalDispatcher } from "undici";
+import { ProxyAgent } from "undici";
 import { relayLogger as logger } from "../logger.js";
 import { RateGuard, RateGuardBudgetExceededError, RateGuardCooldownError, } from "./rate-guard.js";
 import { calculateCost } from "../pricing.js";
@@ -84,27 +84,70 @@ const CLAWMONEY_DIR = join(homedir(), ".clawmoney");
 const ACCOUNTS_FILE = join(CLAWMONEY_DIR, "antigravity-accounts.json");
 // ── Proxy ──
 //
-// Exported so the `antigravity login` command can run the same proxy
-// setup before it hits oauth2.googleapis.com / userinfo / loadCodeAssist.
-// Without this, providers behind the GFW see `fetch failed` at the
-// token-exchange step even when the browser callback succeeds.
-let dispatcherConfigured = false;
-export function configureAntigravityDispatcher() {
-    if (dispatcherConfigured)
-        return;
-    dispatcherConfigured = true;
+// We build our own ProxyAgent instead of relying on setGlobalDispatcher,
+// then pass it explicitly to each fetch() call. This is more reliable than
+// the global-dispatcher approach (no cross-module timing issues with Node's
+// built-in fetch) and makes errors surface with a real cause chain.
+//
+// Also exported so the `antigravity login` command can trigger the same
+// setup before it hits oauth2.googleapis.com / userinfo / loadCodeAssist —
+// providers behind the GFW were seeing "fetch failed" at the token-exchange
+// step before we honored HTTPS_PROXY here.
+let cachedProxyAgent = null;
+let proxyResolved = false;
+function getProxyAgent() {
+    if (proxyResolved)
+        return cachedProxyAgent;
+    proxyResolved = true;
     const url = process.env.HTTPS_PROXY ||
         process.env.https_proxy ||
         process.env.HTTP_PROXY ||
         process.env.http_proxy;
     if (!url)
-        return;
+        return null;
     if (!/^https?:\/\//.test(url)) {
         logger.warn(`[antigravity-api] ignoring non-HTTP proxy ${url} (SOCKS not supported)`);
-        return;
+        return null;
     }
-    setGlobalDispatcher(new ProxyAgent(url));
+    cachedProxyAgent = new ProxyAgent(url);
     logger.info(`[antigravity-api] upstream proxy ${url}`);
+    return cachedProxyAgent;
+}
+/**
+ * fetch wrapper that: (1) auto-applies the configured ProxyAgent when
+ * HTTPS_PROXY is set, and (2) unwraps undici's TypeError("fetch failed")
+ * to surface the real underlying error code — without this, users on the
+ * GFW side see opaque "fetch failed" messages and can't tell whether it's
+ * a DNS failure, cert error, proxy refusal, or timeout.
+ */
+async function fetchWithProxy(url, init = {}) {
+    const agent = getProxyAgent();
+    const opts = { ...init };
+    if (agent)
+        opts.dispatcher = agent;
+    try {
+        // Node's built-in fetch accepts `dispatcher` through the undici
+        // extension, but the DOM `RequestInit` type doesn't expose it. We cast
+        // via a local type to keep strict TS happy.
+        return await fetch(url, opts);
+    }
+    catch (err) {
+        // undici wraps the real network error in TypeError("fetch failed")
+        // with the real cause on err.cause. Surface it so "ECONNREFUSED"
+        // / "ETIMEDOUT" / "CERT_HAS_EXPIRED" is visible in logs.
+        const cause = err.cause;
+        if (cause) {
+            const code = cause.code;
+            const message = cause.message;
+            throw new Error(`fetch ${url} failed: ${code ?? ""} ${message ?? String(cause)}`.trim());
+        }
+        throw err;
+    }
+}
+// Legacy name kept for call sites that haven't been migrated. Also acts as
+// the public preflight hook for the daemon's `preflightAntigravityApi`.
+export function configureAntigravityDispatcher() {
+    getProxyAgent();
 }
 const configureDispatcher = configureAntigravityDispatcher;
 // ── Account storage ──
@@ -163,7 +206,7 @@ async function refreshUpstreamToken(refreshToken) {
         client_id: ANTIGRAVITY_CLIENT_ID,
         client_secret: ANTIGRAVITY_CLIENT_SECRET,
     });
-    const resp = await fetch(OAUTH_TOKEN_URL, {
+    const resp = await fetchWithProxy(OAUTH_TOKEN_URL, {
         method: "POST",
         headers: {
             "content-type": "application/x-www-form-urlencoded",
@@ -240,11 +283,7 @@ export async function resolveAntigravityProjectId(accessToken) {
     const headers = antigravityHeaders(accessToken);
     for (const baseEndpoint of ANTIGRAVITY_ENDPOINTS) {
         try {
-            const resp = await fetch(`${baseEndpoint}/v1internal:loadCodeAssist`, {
-                method: "POST",
-                headers,
-                body,
-            });
+            const resp = await fetchWithProxy(`${baseEndpoint}/v1internal:loadCodeAssist`, { method: "POST", headers, body });
             if (!resp.ok)
                 continue;
             const data = (await resp.json());
@@ -382,7 +421,7 @@ async function doCallAntigravityApi(opts) {
         const url = `${baseEndpoint}${GENERATE_PATH}`;
         let resp;
         try {
-            resp = await fetch(url, {
+            resp = await fetchWithProxy(url, {
                 method: "POST",
                 headers: antigravityHeaders(creds.access_token),
                 body: bodyJson,
@@ -517,9 +556,8 @@ export async function storeNewAntigravityAccount(input) {
  * the browser flow. Exported so the CLI login command can call it.
  */
 export async function exchangeAntigravityAuthCode(input) {
-    configureDispatcher();
     const start = Date.now();
-    const resp = await fetch(OAUTH_TOKEN_URL, {
+    const resp = await fetchWithProxy(OAUTH_TOKEN_URL, {
         method: "POST",
         headers: {
             "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
@@ -555,9 +593,8 @@ export async function exchangeAntigravityAuthCode(input) {
  * failure — we'll just store the account without an email label.
  */
 export async function fetchAntigravityUserEmail(accessToken) {
-    configureDispatcher();
     try {
-        const resp = await fetch(OAUTH_USERINFO_URL, {
+        const resp = await fetchWithProxy(OAUTH_USERINFO_URL, {
             headers: { authorization: `Bearer ${accessToken}` },
         });
         if (!resp.ok)
