@@ -18,8 +18,8 @@
  * next use.
  */
 import type { ParsedOutput, RelayRateGuardConfig } from "../types.js";
-import { RateGuard, RateGuardBudgetExceededError } from "./rate-guard.js";
-export { RateGuardBudgetExceededError };
+import { RateGuard, RateGuardBudgetExceededError, RateGuardCooldownError } from "./rate-guard.js";
+export { RateGuardBudgetExceededError, RateGuardCooldownError };
 export declare function configureRateGuard(config?: RelayRateGuardConfig): void;
 export declare function getRateGuardSnapshot(): ReturnType<RateGuard["currentLoad"]> | null;
 export declare function preflightClaudeApi(config?: RelayRateGuardConfig): Promise<void>;

@@ -19,17 +19,22 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, userInfo } from "node:os";
 import { randomUUID } from "node:crypto";
 import { ProxyAgent, setGlobalDispatcher, type Dispatcher } from "undici";
 import type { ParsedOutput, RelayRateGuardConfig } from "../types.js";
 import { relayLogger as logger } from "../logger.js";
-import { RateGuard, RateGuardBudgetExceededError } from "./rate-guard.js";
+import {
+  RateGuard,
+  RateGuardBudgetExceededError,
+  RateGuardCooldownError,
+  type SessionWindow,
+} from "./rate-guard.js";
 import { calculateCost } from "../pricing.js";
 
-export { RateGuardBudgetExceededError };
+export { RateGuardBudgetExceededError, RateGuardCooldownError };
 
 // ── Constants (sourced from sub2api + claude-cli/2.1.100 capture) ──
 
@@ -208,6 +213,124 @@ function buildMetadataUserID(fingerprint: ResolvedFingerprint, sessionId: string
     account_uuid: fingerprint.account_uuid,
     session_id: sessionId,
   });
+}
+
+// ── Masked session id (15-minute sliding window) ──
+//
+// Real Claude Code reuses the same session_id across many requests in the
+// same conversation. If we randomize a new UUID per request, from Anthropic's
+// side this account produces dozens of single-request "sessions" per hour,
+// which is a strong bot signal. sub2api (identity_service.go) solves this
+// with a 15-minute masked session id — every request within the window gets
+// the same id, sliding forward on each hit. We do the same in-process.
+
+const MASKED_SESSION_TTL_MS = 15 * 60 * 1000;
+let maskedSessionId: string | null = null;
+let maskedSessionLastUsedMs = 0;
+
+function getMaskedSessionId(): string {
+  const now = Date.now();
+  if (maskedSessionId && now - maskedSessionLastUsedMs < MASKED_SESSION_TTL_MS) {
+    maskedSessionLastUsedMs = now;
+    return maskedSessionId;
+  }
+  maskedSessionId = randomUUID();
+  maskedSessionLastUsedMs = now;
+  logger.info(
+    `[claude-api] new masked session_id ${maskedSessionId.slice(0, 8)}... (previous expired)`
+  );
+  return maskedSessionId;
+}
+
+// ── Prompt sanitization ──
+//
+// Some third-party CLIs (OpenCode is the canonical offender, per sub2api's
+// gateway_service.go:882-897) embed a fixed self-identity sentence at the
+// top of their prompt. If a buyer using such a tool sends that sentence
+// through our relay, Anthropic will see it, decide "this isn't Claude Code",
+// and 403 the request. Rewrite the known bad sentences to the Claude Code
+// banner before forwarding.
+
+const IDENTITY_REPLACEMENTS: Array<[string, string]> = [
+  [
+    "You are OpenCode, the best coding agent on the planet.",
+    "You are Claude Code, Anthropic's official CLI for Claude.",
+  ],
+];
+
+function sanitizePrompt(prompt: string): string {
+  if (!prompt) return prompt;
+  let out = prompt;
+  for (const [needle, repl] of IDENTITY_REPLACEMENTS) {
+    if (out.includes(needle)) {
+      out = out.split(needle).join(repl);
+      logger.info(
+        `[claude-api] sanitized third-party identity marker in prompt`
+      );
+    }
+  }
+  return out;
+}
+
+// ── 429 / 5h session window header parsing ──
+//
+// Anthropic surfaces rate-limit state on responses via these headers:
+//   anthropic-ratelimit-unified-5h-reset            RFC3339 / unix ts
+//   anthropic-ratelimit-unified-5h-utilization      0-100
+//   anthropic-ratelimit-unified-5h-status           "ok" | "surpassed" | ...
+//   anthropic-ratelimit-unified-7d-reset
+//   anthropic-ratelimit-unified-7d-utilization
+//   anthropic-ratelimit-unified-reset               aggregated fallback
+// Values may be either a decimal unix second count or an RFC3339 timestamp.
+// Returns absolute UNIX ms, or null.
+
+function parseAnthropicResetHeader(raw: string | null): number | null {
+  if (!raw) return null;
+  const asSeconds = Number(raw);
+  if (Number.isFinite(asSeconds) && asSeconds > 0) {
+    // Heuristic: values < 2 × 10^10 are unix seconds, higher are unix ms.
+    return asSeconds < 2e10 ? asSeconds * 1000 : asSeconds;
+  }
+  const asDate = Date.parse(raw);
+  if (Number.isFinite(asDate)) return asDate;
+  return null;
+}
+
+function extractSessionWindowFromHeaders(headers: Headers): SessionWindow | null {
+  const resetMs =
+    parseAnthropicResetHeader(headers.get("anthropic-ratelimit-unified-5h-reset")) ??
+    parseAnthropicResetHeader(headers.get("anthropic-ratelimit-unified-reset"));
+  if (!resetMs) return null;
+  const win: SessionWindow = {
+    endMs: resetMs,
+    startMs: resetMs - 5 * 60 * 60 * 1000,
+  };
+  const utilRaw = headers.get("anthropic-ratelimit-unified-5h-utilization");
+  if (utilRaw) {
+    const util = Number(utilRaw);
+    if (Number.isFinite(util)) win.utilization = util;
+  }
+  const status = headers.get("anthropic-ratelimit-unified-5h-status");
+  if (status) win.status = status;
+  return win;
+}
+
+function extractCooldownUntilFromHeaders(headers: Headers): { untilMs: number; reason: string } | null {
+  // Prefer the exact 5h window if present, fall back to the aggregated unified reset.
+  const reset5h = parseAnthropicResetHeader(headers.get("anthropic-ratelimit-unified-5h-reset"));
+  const reset7d = parseAnthropicResetHeader(headers.get("anthropic-ratelimit-unified-7d-reset"));
+  const resetUnified = parseAnthropicResetHeader(headers.get("anthropic-ratelimit-unified-reset"));
+  const retryAfter = parseRetryAfterMs(headers.get("retry-after"));
+  const retryAfterAbs = retryAfter != null ? Date.now() + retryAfter : null;
+  const candidates: Array<{ ms: number; reason: string }> = [];
+  if (reset5h) candidates.push({ ms: reset5h, reason: "anthropic 5h window" });
+  if (reset7d) candidates.push({ ms: reset7d, reason: "anthropic 7d window" });
+  if (resetUnified) candidates.push({ ms: resetUnified, reason: "anthropic unified" });
+  if (retryAfterAbs) candidates.push({ ms: retryAfterAbs, reason: "retry-after" });
+  if (candidates.length === 0) return null;
+  // Pick the soonest real reset time so we don't over-cooldown.
+  candidates.sort((a, b) => a.ms - b.ms);
+  return { untilMs: candidates[0].ms, reason: candidates[0].reason };
 }
 
 // ── OAuth credential I/O ──
@@ -401,7 +524,17 @@ function detectInstalledClaudeVersion(): string | null {
   }
 }
 
-function warnOnVersionDrift(): void {
+function compareSemver(a: string, b: string): number {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+function autoBumpFingerprintUaVersion(): void {
   const installed = detectInstalledClaudeVersion();
   if (!installed) {
     logger.warn(
@@ -409,20 +542,48 @@ function warnOnVersionDrift(): void {
     );
     return;
   }
-  // Compare against the version embedded in our captured fingerprint, not the
-  // hardcoded default — what matters is "is the captured fingerprint still
-  // current with the local CLI", not "does the local CLI match the reference
-  // version we tested with".
   const fp = cachedFingerprint;
-  const fpVersion = fp?.user_agent.match(/claude-cli\/(\d+\.\d+\.\d+)/)?.[1];
-  if (fpVersion && fpVersion !== installed) {
-    logger.warn(
-      `[claude-api] version drift: fingerprint captured from claude-cli/${fpVersion} but local installed is ${installed}. ` +
-      `Re-run scripts/capture-claude-request.mjs to refresh fingerprint.`
+  if (!fp) return;
+  const fpVersion = fp.user_agent.match(/claude-cli\/(\d+\.\d+\.\d+)/)?.[1];
+  if (!fpVersion) {
+    logger.info(`[claude-api] claude-cli version: ${installed} (no fingerprint version pin)`);
+    return;
+  }
+  if (fpVersion === installed) {
+    logger.info(`[claude-api] claude-cli version match: ${installed}`);
+    return;
+  }
+  if (compareSemver(installed, fpVersion) > 0) {
+    // Local CLI is NEWER than the fingerprint — auto-bump only the version
+    // number inside user_agent, leaving the entrypoint suffix ("external,
+    // sdk-cli") and all stainless headers as-is. sub2api does the same
+    // (identity_service.go mergeHeadersIntoFingerprint): merge semantics,
+    // not clobber, so we never overwrite known-real values with defaults.
+    const newUa = fp.user_agent.replace(
+      /claude-cli\/\d+\.\d+\.\d+/,
+      `claude-cli/${installed}`
+    );
+    fp.user_agent = newUa;
+    // Persist so we don't re-bump on every daemon restart.
+    try {
+      const onDisk = JSON.parse(readFileSync(FINGERPRINT_FILE, "utf-8"));
+      onDisk.user_agent = newUa;
+      writeFileSync(
+        FINGERPRINT_FILE,
+        JSON.stringify(onDisk, null, 2),
+        "utf-8"
+      );
+    } catch (err) {
+      logger.warn(`[claude-api] could not persist UA bump: ${(err as Error).message}`);
+    }
+    logger.info(
+      `[claude-api] auto-bumped fingerprint UA: claude-cli/${fpVersion} → claude-cli/${installed} (re-run capture-claude-request.mjs for full resync if upstream starts 403-ing)`
     );
   } else {
+    // Local CLI is OLDER than the fingerprint — fingerprint was captured
+    // on a newer machine and synced here. Don't touch it.
     logger.info(
-      `[claude-api] claude-cli version match: ${installed}${fpVersion ? "" : " (no fingerprint version pin)"}`
+      `[claude-api] local claude-cli ${installed} older than fingerprint ${fpVersion}, keeping fingerprint`
     );
   }
 }
@@ -463,7 +624,7 @@ export async function preflightClaudeApi(config?: RelayRateGuardConfig): Promise
   configureRateGuard(config);
   loadFingerprint();
   await getFreshCreds();
-  warnOnVersionDrift();
+  autoBumpFingerprintUaVersion();
   logger.info(
     `[claude-api] preflight OK (subscription=${cachedCreds?.subscriptionType ?? "?"}, tier=${cachedCreds?.rateLimitTier ?? "?"})`
   );
@@ -511,8 +672,18 @@ function parseRetryAfterMs(header: string | null): number | null {
 }
 
 async function doCallClaudeApi(opts: CallClaudeApiOptions): Promise<ParsedOutput> {
+  // Empty prompts would hit upstream as `{type: "text", text: ""}` which
+  // Anthropic rejects with 400. Fail fast before burning a rate-guard slot.
+  const sanitizedPrompt = sanitizePrompt(opts.prompt ?? "");
+  if (!sanitizedPrompt.trim()) {
+    throw new Error("Empty prompt");
+  }
+
   const fingerprint = loadFingerprint();
-  const sessionId = randomUUID();
+  // Masked session id: same value across all requests in a 15-min window,
+  // so Anthropic sees a persistent "conversation" instead of hundreds of
+  // one-shot sessions.
+  const sessionId = getMaskedSessionId();
   const maxTokens = opts.maxTokens ?? 4096;
 
   const body = {
@@ -543,7 +714,7 @@ async function doCallClaudeApi(opts: CallClaudeApiOptions): Promise<ParsedOutput
     messages: [
       {
         role: "user",
-        content: [{ type: "text", text: opts.prompt }],
+        content: [{ type: "text", text: sanitizedPrompt }],
       },
     ],
     metadata: { user_id: buildMetadataUserID(fingerprint, sessionId) },
@@ -567,6 +738,11 @@ async function doCallClaudeApi(opts: CallClaudeApiOptions): Promise<ParsedOutput
       body: bodyJson,
     });
 
+    // Update session window state from every response (success OR failure) —
+    // upstream surfaces the 5h window state in response headers regardless.
+    const sessionWin = extractSessionWindowFromHeaders(resp.headers);
+    if (sessionWin) rateGuard?.setSessionWindow(sessionWin);
+
     if (resp.ok) {
       const parsed = parseResponse(await resp.json() as AnthropicMessageResponse, opts.model);
       recordSpendFromUsage(parsed, opts.model);
@@ -574,6 +750,23 @@ async function doCallClaudeApi(opts: CallClaudeApiOptions): Promise<ParsedOutput
     }
 
     const errText = await resp.text();
+
+    // Real 429 from upstream → engage hard cooldown so we stop hammering.
+    // We do NOT retry a 429: any retry would just slam the rate-limited
+    // account harder and extend the ban. Parse the reset headers, mark
+    // cooldown, and fail this request. Subsequent requests will immediately
+    // short-circuit via checkCooldown().
+    if (resp.status === 429) {
+      const cooldown = extractCooldownUntilFromHeaders(resp.headers);
+      if (cooldown && rateGuard) {
+        rateGuard.triggerCooldown(cooldown.untilMs, cooldown.reason);
+      } else if (rateGuard) {
+        // No reset headers — conservative 5 minute fallback so we don't
+        // retry immediately, but we also don't over-cooldown.
+        rateGuard.triggerCooldown(Date.now() + 5 * 60_000, "fallback 5m (no reset header)");
+      }
+      throw new Error(`Anthropic 429 rate-limited: ${errText.slice(0, 300)}`);
+    }
 
     // 401 → one-shot token refresh + retry. If we already refreshed once
     // and still got 401, the credentials are genuinely broken — bubble up.
@@ -584,15 +777,14 @@ async function doCallClaudeApi(opts: CallClaudeApiOptions): Promise<ParsedOutput
       continue;
     }
 
-    // 429 / 5xx → transient upstream hiccup. Retry with exponential backoff
+    // 5xx → transient upstream hiccup. Retry with exponential backoff
     // + jitter, honoring Retry-After if present. This is what Anthropic's
     // official SDK does by default; buyers used to see these as hard 502s
     // even when the right move was "wait 1s and try again". We only do this
     // inside the rate-guard slot we're already holding, so retries don't
-    // re-queue behind other requests.
-    const isTransient =
-      resp.status === 429 ||
-      (resp.status >= 500 && resp.status <= 599);
+    // re-queue behind other requests. Note that 429 is NOT included here —
+    // it's handled above with a hard cooldown instead of retry.
+    const isTransient = resp.status >= 500 && resp.status <= 599;
     if (isTransient && transientAttempt < MAX_TRANSIENT_RETRIES) {
       const retryAfter = parseRetryAfterMs(resp.headers.get("retry-after"));
       const backoffMs =

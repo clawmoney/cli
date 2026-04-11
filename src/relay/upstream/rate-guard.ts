@@ -4,13 +4,20 @@
  * Provider accounts are real human subscriptions (Claude Max etc.) — the
  * goal is to look like the Provider's own normal use pattern, not a bot.
  *
- * Three layers of protection:
+ * Protection layers:
  *   1. Hard concurrency cap (≤ 2 by default) — waits in queue, never rejects.
  *   2. Jittered min-gap between consecutive requests.
  *   3. Quiet hours: at night in the Provider's local time zone, downgrade
  *      to 1 concurrent request (or pause entirely).
  *   4. Daily budget: stop accepting once daily-accumulated cost exceeds a
  *      configured cap (reset at local midnight).
+ *   5. Upstream rate-limit cooldown: when we see a real 429 from the
+ *      upstream, remember the reset time and refuse all further requests
+ *      until that point — so we don't keep hammering an already-limited
+ *      account and risk a deeper ban.
+ *   6. Anthropic 5-hour session window tracking: when upstream headers
+ *      expose the rolling 5h window state, we track it so future work can
+ *      predictively slow down before the window gets saturated.
  *
  * All of these are configurable per-provider but default to conservative
  * values known to be safe from real-user observation.
@@ -49,6 +56,37 @@ export class RateGuardBudgetExceededError extends Error {
   }
 }
 
+/**
+ * Thrown when the rate-guard is in a hard cooldown after observing a real
+ * upstream 429. The `untilMs` field is an absolute UNIX ms timestamp — after
+ * that point the guard will stop throwing and new requests go through again.
+ */
+export class RateGuardCooldownError extends Error {
+  readonly untilMs: number;
+  readonly reason: string;
+  constructor(untilMs: number, reason: string) {
+    const seconds = Math.max(0, Math.round((untilMs - Date.now()) / 1000));
+    super(
+      `Rate-guard cooldown (${reason}): ${seconds}s until reset (until ${new Date(untilMs).toISOString()})`
+    );
+    this.name = "RateGuardCooldownError";
+    this.untilMs = untilMs;
+    this.reason = reason;
+  }
+}
+
+/** Tracks the rolling 5-hour session window that Anthropic surfaces in response headers. */
+export interface SessionWindow {
+  /** Window end (= reset time) as UNIX ms. */
+  endMs: number;
+  /** Window start (= endMs - 5h) as UNIX ms. */
+  startMs: number;
+  /** 0-100 if upstream tells us the utilization, otherwise undefined. */
+  utilization?: number;
+  /** "ok" | "surpassed" | "rejected" | whatever the upstream header says. */
+  status?: string;
+}
+
 export class RateGuard {
   private readonly cfg: RateGuardConfig;
   private inFlight = 0;
@@ -56,9 +94,47 @@ export class RateGuard {
   private lastRequestAtMs = 0;
   private dailySpentUsd = 0;
   private dailyEpochDay = -1;
+  // Upstream-imposed cooldown — we got a 429, don't send anything else
+  // until this timestamp.
+  private cooldownUntilMs = 0;
+  private cooldownReason = "";
+  // Rolling 5h session window surfaced by Anthropic headers.
+  private sessionWindow: SessionWindow | null = null;
 
   constructor(config: Partial<RateGuardConfig> = {}) {
     this.cfg = { ...DEFAULT_RATE_GUARD_CONFIG, ...config };
+  }
+
+  /** Record an upstream-imposed cooldown. Called after parsing a real 429. */
+  triggerCooldown(untilMs: number, reason: string): void {
+    if (untilMs <= Date.now()) return;
+    // Never shrink an existing cooldown — always take the later reset time.
+    if (untilMs > this.cooldownUntilMs) {
+      this.cooldownUntilMs = untilMs;
+      this.cooldownReason = reason;
+      const seconds = Math.round((untilMs - Date.now()) / 1000);
+      logger.warn(
+        `[rate-guard] cooldown engaged (${reason}): ${seconds}s until reset`
+      );
+    }
+  }
+
+  /** Update the 5h session window tracker from parsed upstream headers. */
+  setSessionWindow(window: SessionWindow): void {
+    this.sessionWindow = window;
+    const mins = Math.round((window.endMs - Date.now()) / 60_000);
+    logger.info(
+      `[rate-guard] session window: ${window.utilization ?? "?"}% used, resets in ${mins}min (status=${window.status ?? "unknown"})`
+    );
+  }
+
+  getSessionWindow(): SessionWindow | null {
+    if (!this.sessionWindow) return null;
+    if (this.sessionWindow.endMs <= Date.now()) {
+      this.sessionWindow = null;
+      return null;
+    }
+    return this.sessionWindow;
   }
 
   private currentMaxConcurrency(): number {
@@ -96,28 +172,55 @@ export class RateGuard {
     }
   }
 
+  /** Check upstream-imposed cooldown. Throws RateGuardCooldownError if still cooling. */
+  checkCooldown(): void {
+    if (this.cooldownUntilMs > 0 && Date.now() < this.cooldownUntilMs) {
+      throw new RateGuardCooldownError(this.cooldownUntilMs, this.cooldownReason);
+    }
+    // Auto-clear once the reset time has passed.
+    if (this.cooldownUntilMs > 0 && Date.now() >= this.cooldownUntilMs) {
+      logger.info(`[rate-guard] cooldown cleared (${this.cooldownReason})`);
+      this.cooldownUntilMs = 0;
+      this.cooldownReason = "";
+    }
+  }
+
   /** Record cost after a successful request. */
   recordSpend(usdCost: number): void {
     this.rotateDailyCounterIfNeeded();
     this.dailySpentUsd += usdCost;
   }
 
-  currentLoad(): { inFlight: number; queued: number; spentUsd: number; budgetUsd: number } {
+  currentLoad(): {
+    inFlight: number;
+    queued: number;
+    spentUsd: number;
+    budgetUsd: number;
+    cooldownUntilMs: number;
+    cooldownReason: string;
+    sessionWindow: SessionWindow | null;
+  } {
     return {
       inFlight: this.inFlight,
       queued: this.waitQueue.length,
       spentUsd: this.dailySpentUsd,
       budgetUsd: this.cfg.dailyBudgetUsd,
+      cooldownUntilMs: this.cooldownUntilMs,
+      cooldownReason: this.cooldownReason,
+      sessionWindow: this.getSessionWindow(),
     };
   }
 
   /**
    * Wrap an upstream call. Blocks until:
+   *   - we're not in an upstream 429 cooldown
+   *   - daily budget is not exhausted
    *   - concurrency slot is available
    *   - min request gap (+jitter) has elapsed since previous release
-   * Throws RateGuardBudgetExceededError if the daily cap is already hit.
+   * Throws RateGuardCooldownError / RateGuardBudgetExceededError as appropriate.
    */
   async run<T>(fn: () => Promise<T>): Promise<T> {
+    this.checkCooldown();
     this.checkBudget();
     await this.acquireSlot();
     try {
