@@ -69,6 +69,16 @@ const ANTIGRAVITY_ENDPOINTS = [
     ANTIGRAVITY_ENDPOINT_AUTOPUSH,
     ANTIGRAVITY_ENDPOINT_PROD,
 ];
+// For project discovery (loadCodeAssist / onboardUser) we hit PROD first.
+// sub2api and opencode-antigravity-auth both found that the sandbox daily/
+// autopush endpoints often 404 on these setup calls even though they handle
+// the generate path fine. Mirroring their order avoids the "no project →
+// fallback to hardcoded rising-fact-p41fc → 403 API not enabled" trap.
+const ANTIGRAVITY_LOAD_ENDPOINTS = [
+    ANTIGRAVITY_ENDPOINT_PROD,
+    ANTIGRAVITY_ENDPOINT_DAILY,
+    ANTIGRAVITY_ENDPOINT_AUTOPUSH,
+];
 const GENERATE_PATH = "/v1internal:generateContent";
 // Hardcoded fallback project ID used for workspace/business accounts that
 // don't return their own `cloudaicompanionProject` from `loadCodeAssist`. Same
@@ -271,8 +281,27 @@ async function getFreshAccount() {
  * back to `ANTIGRAVITY_DEFAULT_PROJECT_ID` in that case, matching the
  * sub2api and opencode-antigravity-auth behavior.
  */
-export async function resolveAntigravityProjectId(accessToken) {
-    configureDispatcher();
+function extractProjectId(raw) {
+    if (!raw)
+        return undefined;
+    const project = raw.cloudaicompanionProject;
+    if (typeof project === "string" && project)
+        return project;
+    if (project && typeof project === "object" && project.id)
+        return project.id;
+    return undefined;
+}
+function extractTierId(data) {
+    const pick = (t) => {
+        if (!t)
+            return undefined;
+        if (typeof t === "string")
+            return t || undefined;
+        return t.id || undefined;
+    };
+    return pick(data.paidTier) ?? pick(data.currentTier);
+}
+async function callLoadCodeAssist(accessToken) {
     const body = JSON.stringify({
         metadata: {
             ideType: "ANTIGRAVITY",
@@ -281,24 +310,82 @@ export async function resolveAntigravityProjectId(accessToken) {
         },
     });
     const headers = antigravityHeaders(accessToken);
-    for (const baseEndpoint of ANTIGRAVITY_ENDPOINTS) {
+    for (const baseEndpoint of ANTIGRAVITY_LOAD_ENDPOINTS) {
         try {
             const resp = await fetchWithProxy(`${baseEndpoint}/v1internal:loadCodeAssist`, { method: "POST", headers, body });
-            if (!resp.ok)
+            if (!resp.ok) {
+                logger.warn(`[antigravity-api] loadCodeAssist ${resp.status} at ${baseEndpoint}`);
                 continue;
-            const data = (await resp.json());
-            const project = data.cloudaicompanionProject;
-            if (typeof project === "string" && project)
-                return project;
-            if (project && typeof project === "object" && project.id) {
-                return project.id;
             }
+            const data = (await resp.json());
+            return {
+                project: extractProjectId(data),
+                tier: extractTierId(data),
+            };
         }
-        catch {
-            // try next endpoint
+        catch (err) {
+            logger.warn(`[antigravity-api] loadCodeAssist error at ${baseEndpoint}: ${err.message}`);
         }
     }
-    logger.warn(`[antigravity-api] loadCodeAssist did not return a project — using default ${ANTIGRAVITY_DEFAULT_PROJECT_ID}`);
+    return null;
+}
+/**
+ * Trigger Google's onboarding flow so a fresh account gets a real project
+ * ID back. Some accounts (especially first-time Antigravity users) return
+ * an empty `cloudaicompanionProject` from loadCodeAssist; they have to be
+ * onboarded first. Mirrors sub2api's Client.OnboardUser retry/poll logic.
+ */
+async function callOnboardUser(accessToken, tierId) {
+    const body = JSON.stringify({
+        tierId,
+        metadata: {
+            ideType: "ANTIGRAVITY",
+            platform: "PLATFORM_UNSPECIFIED",
+            pluginType: "GEMINI",
+        },
+    });
+    const headers = antigravityHeaders(accessToken);
+    for (const baseEndpoint of ANTIGRAVITY_LOAD_ENDPOINTS) {
+        for (let attempt = 1; attempt <= 5; attempt++) {
+            try {
+                const resp = await fetchWithProxy(`${baseEndpoint}/v1internal:onboardUser`, { method: "POST", headers, body });
+                if (!resp.ok) {
+                    if (resp.status >= 500 || resp.status === 404)
+                        break; // try next endpoint
+                    logger.warn(`[antigravity-api] onboardUser ${resp.status} at ${baseEndpoint}`);
+                    return undefined;
+                }
+                const data = (await resp.json());
+                const project = extractProjectId(data.response);
+                if (data.done && project)
+                    return project;
+                // done=false → wait a couple seconds and poll again
+                await new Promise((r) => setTimeout(r, 2000));
+            }
+            catch (err) {
+                logger.warn(`[antigravity-api] onboardUser error at ${baseEndpoint}: ${err.message}`);
+                break;
+            }
+        }
+    }
+    return undefined;
+}
+export async function resolveAntigravityProjectId(accessToken) {
+    configureDispatcher();
+    const loaded = await callLoadCodeAssist(accessToken);
+    if (loaded?.project)
+        return loaded.project;
+    if (loaded?.tier) {
+        logger.info(`[antigravity-api] loadCodeAssist returned no project (tier=${loaded.tier}) — running onboardUser...`);
+        const onboarded = await callOnboardUser(accessToken, loaded.tier);
+        if (onboarded) {
+            logger.info(`[antigravity-api] onboardUser succeeded, project=${onboarded}`);
+            return onboarded;
+        }
+    }
+    logger.warn(`[antigravity-api] could not resolve a real project — falling back to ${ANTIGRAVITY_DEFAULT_PROJECT_ID}. ` +
+        `This shared project needs staging-cloudaicompanion API enabled in Google Cloud Console; ` +
+        `expect 403 errors until a real project is resolved.`);
     return ANTIGRAVITY_DEFAULT_PROJECT_ID;
 }
 function antigravityHeaders(accessToken) {

@@ -72,14 +72,6 @@ export declare function configureAntigravityDispatcher(): void;
 export declare function ensureClawmoneyDir(): void;
 export declare function loadAccounts(): AntigravityAccountsFile;
 export declare function saveAccounts(file: AntigravityAccountsFile): void;
-/**
- * Discover the Google Cloud project ID associated with this Antigravity
- * account via `loadCodeAssist`. Required for every v1internal request.
- *
- * Some workspace / business accounts return an empty string here — we fall
- * back to `ANTIGRAVITY_DEFAULT_PROJECT_ID` in that case, matching the
- * sub2api and opencode-antigravity-auth behavior.
- */
 export declare function resolveAntigravityProjectId(accessToken: string): Promise<string>;
 export declare function configureAntigravityRateGuard(config?: RelayRateGuardConfig): void;
 export declare function getAntigravityRateGuardSnapshot(): ReturnType<RateGuard["currentLoad"]> | null;
