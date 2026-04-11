@@ -125,28 +125,33 @@ function loadGeminiOAuth() {
     }
     return raw;
 }
+/**
+ * Persist refreshed credentials to ~/.gemini/oauth_creds.json. Throws on
+ * failure — the caller (doRefreshAndPersist) must treat a failed write as
+ * a reason to keep the OLD token rather than advancing in-memory state, to
+ * avoid the "two valid access tokens for the same account" signal that
+ * Google's fraud detection interprets as account hijacking.
+ */
 function writeGeminiOAuth(creds) {
-    try {
-        const existing = existsSync(GEMINI_CREDS_FILE)
-            ? JSON.parse(readFileSync(GEMINI_CREDS_FILE, "utf-8"))
-            : {};
-        const merged = {
-            ...existing,
-            access_token: creds.access_token,
-            refresh_token: creds.refresh_token,
-            expiry_date: creds.expiry_date,
-            token_type: creds.token_type ?? existing["token_type"] ?? "Bearer",
-        };
-        if (creds.id_token)
-            merged["id_token"] = creds.id_token;
-        if (creds.scope)
-            merged["scope"] = creds.scope;
-        writeFileSync(GEMINI_CREDS_FILE, JSON.stringify(merged, null, 2), "utf-8");
-        logger.info("[gemini-api] ~/.gemini/oauth_creds.json updated");
-    }
-    catch (err) {
-        logger.warn(`[gemini-api] could not persist refreshed token: ${err.message}`);
-    }
+    const existing = existsSync(GEMINI_CREDS_FILE)
+        ? JSON.parse(readFileSync(GEMINI_CREDS_FILE, "utf-8"))
+        : {};
+    const merged = {
+        ...existing,
+        access_token: creds.access_token,
+        refresh_token: creds.refresh_token,
+        expiry_date: creds.expiry_date,
+        token_type: creds.token_type ?? existing["token_type"] ?? "Bearer",
+    };
+    if (creds.id_token)
+        merged["id_token"] = creds.id_token;
+    if (creds.scope)
+        merged["scope"] = creds.scope;
+    writeFileSync(GEMINI_CREDS_FILE, JSON.stringify(merged, null, 2), {
+        encoding: "utf-8",
+        mode: 0o600,
+    });
+    logger.info("[gemini-api] ~/.gemini/oauth_creds.json updated");
 }
 async function refreshUpstreamToken(refreshToken) {
     // Google OAuth2 uses application/x-www-form-urlencoded (not JSON like Claude's).
@@ -193,7 +198,15 @@ async function doRefreshAndPersist(current) {
         scope: fresh.scope ?? current.scope,
         token_type: fresh.token_type,
     };
-    writeGeminiOAuth(next);
+    // Persist FIRST. If writing to ~/.gemini/oauth_creds.json fails, keep the
+    // old token — see claude-api.ts doRefreshAndPersist for the rationale.
+    try {
+        writeGeminiOAuth(next);
+    }
+    catch (err) {
+        logger.error(`[gemini-api] CRITICAL: persist failed — keeping old token to avoid account-hijack detection signal: ${err.message}`);
+        return current;
+    }
     return next;
 }
 async function getFreshCreds() {

@@ -62,7 +62,10 @@ const DEFAULT_USER_AGENT = "";
 // openai-beta header value for the 0.118+ WebSocket protocol.
 const OPENAI_BETA_WS_VALUE = "responses_websockets=2026-02-06";
 const REFRESH_SKEW_MS = 3 * 60 * 1000;
-const MASKED_SESSION_TTL_MS = 15 * 60 * 1000;
+// Matches claude-api.ts MASKED_SESSION_TTL_MS — 3 minutes with ±30s jitter
+// to mimic human coding rhythm and avoid all providers rolling in lockstep.
+const MASKED_SESSION_TTL_MS = 3 * 60 * 1000;
+const MASKED_SESSION_JITTER_MS = 30 * 1000;
 const MAX_TRANSIENT_RETRIES = 2;
 // Per-call upper bound on how long we wait for a terminal WS frame.
 // Codex responses on small prompts come back in <10s; we give a generous
@@ -213,12 +216,17 @@ async function doRefreshAndPersist(current) {
             refresh_token: fresh.refreshToken,
         },
     };
+    // Persist FIRST, then advance in-memory state. If the on-disk write fails
+    // we keep serving on the old token — see claude-api.ts doRefreshAndPersist
+    // for the full rationale (OpenAI/ChatGPT would see two valid access tokens
+    // in flight for the same account and mark it as hijacked otherwise).
     try {
         writeCodexAuth(updatedFile);
         logger.info("[codex-api] ~/.codex/auth.json updated");
     }
     catch (err) {
-        logger.warn(`[codex-api] failed to persist refreshed token: ${err.message}`);
+        logger.error(`[codex-api] CRITICAL: persist failed — keeping old token to avoid account-hijack detection signal: ${err.message}`);
+        return current;
     }
     return {
         accessToken: fresh.accessToken,
@@ -244,18 +252,22 @@ async function getFreshCreds() {
     cachedCreds = await refreshInflight;
     return cachedCreds;
 }
-// ── Masked session id (15-minute sliding window) ──
+// ── Masked session id (3-minute sliding window, jittered) ──
+// See the claude-api.ts copy of this block for the full rationale — real
+// Codex reuses the same id across consecutive requests in a conversation;
+// rolling one per request screams bot. Kept in sync with claude's TTL.
 let maskedSessionId = null;
-let maskedSessionLastUsedMs = 0;
+let maskedSessionExpiresAt = 0;
 function getMaskedSessionId() {
     const now = Date.now();
-    if (maskedSessionId && now - maskedSessionLastUsedMs < MASKED_SESSION_TTL_MS) {
-        maskedSessionLastUsedMs = now;
+    if (maskedSessionId && now < maskedSessionExpiresAt) {
         return maskedSessionId;
     }
     maskedSessionId = randomUUID();
-    maskedSessionLastUsedMs = now;
-    logger.info(`[codex-api] new masked session_id ${maskedSessionId.slice(0, 8)}... (previous expired)`);
+    const jitter = Math.floor((Math.random() * 2 - 1) * MASKED_SESSION_JITTER_MS);
+    maskedSessionExpiresAt = now + MASKED_SESSION_TTL_MS + jitter;
+    logger.info(`[codex-api] new masked session_id ${maskedSessionId.slice(0, 8)}... ` +
+        `(window=${Math.round((MASKED_SESSION_TTL_MS + jitter) / 1000)}s)`);
     return maskedSessionId;
 }
 // ── Rate-limit cooldown parsing ──

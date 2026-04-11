@@ -111,6 +111,8 @@ interface ClaudeAiOauth {
 
 interface LoadedCreds extends ClaudeAiOauth {
   source: "keychain" | "file";
+  /** Populated when source === "file". Used by refresh logic to write back. */
+  filePath?: string;
   _rawWrapper: Record<string, unknown>;
 }
 
@@ -215,29 +217,40 @@ function buildMetadataUserID(fingerprint: ResolvedFingerprint, sessionId: string
   });
 }
 
-// ── Masked session id (15-minute sliding window) ──
+// ── Masked session id (3-minute sliding window, jittered) ──
 //
 // Real Claude Code reuses the same session_id across many requests in the
 // same conversation. If we randomize a new UUID per request, from Anthropic's
 // side this account produces dozens of single-request "sessions" per hour,
 // which is a strong bot signal. sub2api (identity_service.go) solves this
-// with a 15-minute masked session id — every request within the window gets
-// the same id, sliding forward on each hit. We do the same in-process.
+// with a masked session id — every request within the window gets the same
+// id, sliding forward on each hit.
+//
+// We use a **3-minute** window (not 15) because that matches the median real
+// human coding rhythm better: a user types a prompt, reads the answer, types
+// a follow-up, reads, context-switches. 15 minutes of same-session traffic
+// at machine-paced intervals is itself suspicious for a human operator. We
+// also add ±30s jitter so multiple providers don't all roll their sessions
+// in lockstep at :00 / :03 / :06 etc — that kind of coordinated reset is an
+// obvious relay-farm signature.
 
-const MASKED_SESSION_TTL_MS = 15 * 60 * 1000;
+const MASKED_SESSION_TTL_MS = 3 * 60 * 1000; // 3 minutes
+const MASKED_SESSION_JITTER_MS = 30 * 1000; // ±30s
 let maskedSessionId: string | null = null;
-let maskedSessionLastUsedMs = 0;
+let maskedSessionExpiresAt = 0;
 
 function getMaskedSessionId(): string {
   const now = Date.now();
-  if (maskedSessionId && now - maskedSessionLastUsedMs < MASKED_SESSION_TTL_MS) {
-    maskedSessionLastUsedMs = now;
+  if (maskedSessionId && now < maskedSessionExpiresAt) {
     return maskedSessionId;
   }
   maskedSessionId = randomUUID();
-  maskedSessionLastUsedMs = now;
+  // New window starts now, expires TTL + jitter from here.
+  const jitter = Math.floor((Math.random() * 2 - 1) * MASKED_SESSION_JITTER_MS);
+  maskedSessionExpiresAt = now + MASKED_SESSION_TTL_MS + jitter;
   logger.info(
-    `[claude-api] new masked session_id ${maskedSessionId.slice(0, 8)}... (previous expired)`
+    `[claude-api] new masked session_id ${maskedSessionId.slice(0, 8)}... ` +
+      `(window=${Math.round((MASKED_SESSION_TTL_MS + jitter) / 1000)}s)`
   );
   return maskedSessionId;
 }
@@ -349,11 +362,12 @@ function readCredentialsFromKeychain(): Record<string, unknown> | null {
   }
 }
 
+const CLAUDE_CREDENTIALS_FILE_PATH = join(homedir(), ".claude", ".credentials.json");
+
 function readCredentialsFromFile(): Record<string, unknown> | null {
-  const path = join(homedir(), ".claude", ".credentials.json");
-  if (!existsSync(path)) return null;
+  if (!existsSync(CLAUDE_CREDENTIALS_FILE_PATH)) return null;
   try {
-    return JSON.parse(readFileSync(path, "utf-8"));
+    return JSON.parse(readFileSync(CLAUDE_CREDENTIALS_FILE_PATH, "utf-8"));
   } catch {
     return null;
   }
@@ -374,6 +388,7 @@ function loadClaudeOAuth(): LoadedCreds {
   }
   return {
     source: fromKeychain ? "keychain" : "file",
+    filePath: fromKeychain ? undefined : CLAUDE_CREDENTIALS_FILE_PATH,
     accessToken: oauth.accessToken,
     refreshToken: oauth.refreshToken,
     expiresAt: oauth.expiresAt,
@@ -467,14 +482,40 @@ async function doRefreshAndPersist(current: LoadedCreds): Promise<LoadedCreds> {
       ? fresh.scopes
       : (wrapper.claudeAiOauth as ClaudeAiOauth).scopes,
   };
+
+  // IMPORTANT: persist BEFORE advancing the in-memory state. If the keychain
+  // write silently fails we must NOT start using the new access/refresh token
+  // — doing so creates a "two valid tokens in flight" pattern that looks to
+  // Anthropic like account hijacking (same account_id, two access_tokens
+  // issued within the 3-minute refresh skew window). The correct fallback is
+  // to keep serving on the old token until the next refresh cycle retries
+  // the persist, so on-disk and in-memory state always agree.
   if (current.source === "keychain") {
     try {
       writeCredentialsToKeychain(wrapper);
       logger.info("[claude-api] keychain updated");
     } catch (err) {
-      logger.warn(`[claude-api] keychain write failed: ${(err as Error).message}`);
+      logger.error(
+        `[claude-api] CRITICAL: keychain write failed — keeping old token to avoid account-hijack detection signal: ${(err as Error).message}`
+      );
+      return current;
+    }
+  } else if (current.source === "file" && current.filePath) {
+    try {
+      writeFileSync(
+        current.filePath,
+        JSON.stringify(wrapper, null, 2),
+        { encoding: "utf-8", mode: 0o600 }
+      );
+      logger.info(`[claude-api] ${current.filePath} updated`);
+    } catch (err) {
+      logger.error(
+        `[claude-api] CRITICAL: credential file write failed — keeping old token to avoid account-hijack detection signal: ${(err as Error).message}`
+      );
+      return current;
     }
   }
+
   const next: LoadedCreds = {
     ...current,
     accessToken: fresh.accessToken,

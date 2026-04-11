@@ -10,13 +10,48 @@ import {
   ensureEmptyMcpConfig,
   ensureSandboxDir,
 } from "./executor.js";
-import { callClaudeApi, preflightClaudeApi, getRateGuardSnapshot } from "./upstream/claude-api.js";
-import { callCodexApi, preflightCodexApi } from "./upstream/codex-api.js";
-import { callGeminiApi, preflightGeminiApi } from "./upstream/gemini-api.js";
+import {
+  callClaudeApi,
+  preflightClaudeApi,
+  getRateGuardSnapshot as getClaudeRateGuardSnapshot,
+} from "./upstream/claude-api.js";
+import {
+  callCodexApi,
+  preflightCodexApi,
+  getRateGuardSnapshot as getCodexRateGuardSnapshot,
+} from "./upstream/codex-api.js";
+import {
+  callGeminiApi,
+  preflightGeminiApi,
+  getGeminiRateGuardSnapshot,
+} from "./upstream/gemini-api.js";
 import {
   callAntigravityApi,
   preflightAntigravityApi,
+  getAntigravityRateGuardSnapshot,
 } from "./upstream/antigravity-api.js";
+
+/**
+ * Pick the rate-guard snapshot matching this request's cli_type. Fixes a
+ * pre-existing bug where gemini/codex responses were piggy-backing Claude's
+ * session_window telemetry because provider.ts always called the claude-api
+ * snapshot regardless of upstream.
+ */
+function getRateGuardSnapshotForCli(
+  cli: string
+): ReturnType<typeof getClaudeRateGuardSnapshot> {
+  switch (cli) {
+    case "codex":
+      return getCodexRateGuardSnapshot();
+    case "gemini":
+      return getGeminiRateGuardSnapshot();
+    case "antigravity":
+      return getAntigravityRateGuardSnapshot();
+    case "claude":
+    default:
+      return getClaudeRateGuardSnapshot();
+  }
+}
 import { calculateCost } from "./pricing.js";
 import { relayLogger as logger } from "./logger.js";
 import type {
@@ -269,7 +304,7 @@ async function executeRelayRequest(
     // actually surfaced the headers this turn.
     let sessionWindowTelemetry: RelayResponse["session_window"];
     if (useApiMode) {
-      const snap = getRateGuardSnapshot();
+      const snap = getRateGuardSnapshotForCli(cliType);
       if (snap?.sessionWindow) {
         sessionWindowTelemetry = {
           reset_at_ms: snap.sessionWindow.endMs,

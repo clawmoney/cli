@@ -385,7 +385,13 @@ export function loadAccounts(): AntigravityAccountsFile {
 
 export function saveAccounts(file: AntigravityAccountsFile): void {
   ensureClawmoneyDir();
-  writeFileSync(ACCOUNTS_FILE, JSON.stringify(file, null, 2), "utf-8");
+  // mode 0o600 so other local users / rogue processes can't read the
+  // refresh_token. Google's fraud detection treats a refresh_token seen
+  // from two machines / user-agents as account hijacking.
+  writeFileSync(ACCOUNTS_FILE, JSON.stringify(file, null, 2), {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
 }
 
 function loadPrimaryAccount(): AntigravityAccount {
@@ -406,17 +412,17 @@ function loadPrimaryAccount(): AntigravityAccount {
   return primary;
 }
 
+/**
+ * Persist a partial update to the primary account record. Throws on write
+ * failure — refresh callers must treat that as a reason to keep the old
+ * token (see the "two valid tokens in flight" rationale in claude-api.ts).
+ * Non-refresh callers (project_id cache) can swallow the error.
+ */
 function persistPrimaryAccount(patch: Partial<AntigravityAccount>): void {
   const file = loadAccounts();
   if (file.accounts.length === 0) return;
   file.accounts[0] = { ...file.accounts[0]!, ...patch };
-  try {
-    saveAccounts(file);
-  } catch (err) {
-    logger.warn(
-      `[antigravity-api] could not persist account update: ${(err as Error).message}`
-    );
-  }
+  saveAccounts(file);
 }
 
 // ── OAuth refresh ──
@@ -480,11 +486,20 @@ async function doRefreshAndPersist(
     refresh_token: fresh.refresh_token,
     expiry_ms: fresh.expiry_ms,
   };
-  persistPrimaryAccount({
-    access_token: next.access_token,
-    refresh_token: next.refresh_token,
-    expiry_ms: next.expiry_ms,
-  });
+  // Persist FIRST. If writing to antigravity-accounts.json fails, keep
+  // using the old token — see claude-api.ts doRefreshAndPersist for why.
+  try {
+    persistPrimaryAccount({
+      access_token: next.access_token,
+      refresh_token: next.refresh_token,
+      expiry_ms: next.expiry_ms,
+    });
+  } catch (err) {
+    logger.error(
+      `[antigravity-api] CRITICAL: persist failed — keeping old token to avoid account-hijack detection signal: ${(err as Error).message}`
+    );
+    return current;
+  }
   return next;
 }
 
@@ -744,7 +759,15 @@ export async function preflightAntigravityApi(
     logger.info("[antigravity-api] resolving project ID via loadCodeAssist...");
     const projectId = await resolveAntigravityProjectId(account.access_token!);
     account.project_id = projectId;
-    persistPrimaryAccount({ project_id: projectId });
+    // Persist is non-critical here: failure just means we'll re-resolve on
+    // next daemon restart instead of hitting the cache.
+    try {
+      persistPrimaryAccount({ project_id: projectId });
+    } catch (err) {
+      logger.warn(
+        `[antigravity-api] failed to cache project_id: ${(err as Error).message}`
+      );
+    }
     cachedAccount = account;
   }
   logger.info(
