@@ -5,21 +5,40 @@
  * same RateGuard integration, same OAuth refresh + persist-back pattern, same
  * fingerprint file loading, same 5xx retry path, same preflight function.
  *
+ * IMPORTANT — wire format: codex-cli 0.118+ migrated from HTTP POST+SSE to a
+ * WebSocket-based Responses API. The endpoint is accessed as
+ *   wss://chatgpt.com/backend-api/codex/responses
+ * with the handshake headers shown below, and after the upgrade the client
+ * sends a single `{type:"response.create", ...}` JSON frame. The server
+ * replies with a stream of JSON frames that mirror the old SSE event names
+ * (`response.created`, `response.output_text.delta`, `response.completed`,
+ * `response.failed`, `response.error`, etc.). We accumulate text deltas +
+ * the terminal event, close cleanly, and return ParsedOutput — exactly the
+ * same contract the caller sees for HTTP Claude.
+ *
  * Key differences from claude-api.ts:
  *  - Token source: ~/.codex/auth.json (written by the Codex CLI)
- *  - Upstream: https://chatgpt.com/backend-api/codex/responses (Responses API)
- *  - Request body is OpenAI Responses API shape (input[], instructions, model, store, stream)
- *  - Response is always SSE; we consume it internally and return ParsedOutput
+ *  - Upstream transport: WebSocket to chatgpt.com/backend-api/codex/responses
+ *  - Handshake header `openai-beta: responses_websockets=2026-02-06`
+ *  - Handshake header `version: <codex cli version>`
+ *  - Handshake header `chatgpt-account-id` from ~/.codex/auth.json tokens.account_id
+ *  - First frame is a JSON `response.create` — request body is OpenAI Responses
+ *    API shape (input[], instructions, model, store, stream) with `type` added
  *  - Session headers: session_id + conversation_id (not x-claude-code-session-id)
- *  - Rate-limit headers: x-codex-primary-* / x-codex-secondary-*
- *  - No per-request device_id/account_uuid metadata — chatgpt-account-id header instead
+ *  - Rate-limit headers surface on the upgrade response or via `rate_limits` /
+ *    `response.failed` frames — we parse both
  */
 
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { ProxyAgent, setGlobalDispatcher, type Dispatcher } from "undici";
+import * as https from "node:https";
+import * as net from "node:net";
+import * as tls from "node:tls";
+import { URL } from "node:url";
+import WebSocket from "ws";
+import { ProxyAgent as UndiciProxyAgent, setGlobalDispatcher, type Dispatcher } from "undici";
 import type { ParsedOutput, RelayRateGuardConfig } from "../types.js";
 import { relayLogger as logger } from "../logger.js";
 import {
@@ -35,25 +54,34 @@ export { RateGuardBudgetExceededError, RateGuardCooldownError };
 
 const OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token";
-const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
+// Same path as the old POST endpoint, just accessed via WebSocket upgrade.
+// Capture confirmed: `GET /v1/responses HTTP/1.1` with `Host: chatgpt.com`
+// + `Connection: Upgrade` hits the same backend route.
+const CODEX_RESPONSES_WS_URL = "wss://chatgpt.com/backend-api/codex/responses";
 
 const CODEX_AUTH_FILE = join(homedir(), ".codex", "auth.json");
 const CLAWMONEY_DIR = join(homedir(), ".clawmoney");
 const FINGERPRINT_FILE = join(CLAWMONEY_DIR, "codex-fingerprint.json");
 
-// Codex CLI version hardcoded from sub2api (openai_gateway_service.go:codexCLIVersion).
-// Auto-bumped at runtime from local `codex --version` if newer.
-const DEFAULT_CLI_VERSION = "0.104.0";
-const DEFAULT_USER_AGENT = `codex_cli_rs/${DEFAULT_CLI_VERSION}`;
-// originator must match CodexOfficialClientOriginatorPrefixes (codex_ prefix).
-const DEFAULT_ORIGINATOR = "codex_cli_rs";
+// Default fingerprint values. Overridden per-machine by the capture script.
+const DEFAULT_CLI_VERSION = "0.118.0";
+const DEFAULT_ORIGINATOR = "codex_exec";
+// Observed in the 0.118 capture: there is NO user-agent header. Leave empty
+// by default; the fingerprint file may still override with a real value for
+// older codex-cli that does send one.
+const DEFAULT_USER_AGENT = "";
 
-// OpenAI Responses API requires this beta flag for OAuth (ChatGPT) accounts.
-const OPENAI_BETA_HEADER = "responses=experimental";
+// openai-beta header value for the 0.118+ WebSocket protocol.
+const OPENAI_BETA_WS_VALUE = "responses_websockets=2026-02-06";
 
 const REFRESH_SKEW_MS = 3 * 60 * 1000;
 const MASKED_SESSION_TTL_MS = 15 * 60 * 1000;
 const MAX_TRANSIENT_RETRIES = 2;
+
+// Per-call upper bound on how long we wait for a terminal WS frame.
+// Codex responses on small prompts come back in <10s; we give a generous
+// ceiling to tolerate slow tokens without hanging the daemon forever.
+const WS_OVERALL_TIMEOUT_MS = 180 * 1000;
 
 // Default relay instructions for Codex. Upstream treats `instructions` as
 // the system prompt. Keep minimal so the buyer's prompt gets full focus.
@@ -83,20 +111,28 @@ interface LoadedCreds {
 }
 
 interface CodexFingerprint {
-  user_agent: string;
-  cli_version: string;
-  originator: string;
+  user_agent?: string;
+  cli_version?: string;
+  originator?: string;
+  openai_beta?: string;
 }
 
 interface ResolvedFingerprint {
   user_agent: string;
   cli_version: string;
   originator: string;
+  openai_beta: string;
 }
 
 // ── Proxy ──
+//
+// We configure the global undici dispatcher for the OAuth refresh fetch()
+// call (which uses node's undici-backed fetch), AND we store the proxy URL
+// so the per-call WebSocket dial can install an https-proxy-agent on it.
 
 let dispatcherConfigured = false;
+let wsProxyUrl: string | null = null;
+
 function configureDispatcher(): void {
   if (dispatcherConfigured) return;
   dispatcherConfigured = true;
@@ -110,7 +146,8 @@ function configureDispatcher(): void {
     logger.warn(`[codex-api] ignoring non-HTTP proxy ${url} (SOCKS not supported)`);
     return;
   }
-  setGlobalDispatcher(new ProxyAgent(url) as unknown as Dispatcher);
+  setGlobalDispatcher(new UndiciProxyAgent(url) as unknown as Dispatcher);
+  wsProxyUrl = url;
   logger.info(`[codex-api] upstream proxy ${url}`);
 }
 
@@ -123,24 +160,26 @@ function loadCodexFingerprint(): ResolvedFingerprint {
   if (!existsSync(FINGERPRINT_FILE)) {
     logger.warn(
       `[codex-api] fingerprint not found at ${FINGERPRINT_FILE} — using defaults. ` +
-      `Run \`node scripts/capture-codex-request.mjs\` then ` +
-      `\`OPENAI_BASE_URL=http://127.0.0.1:8788/v1 codex exec "hi"\` to bootstrap.`
+      `Run \`node scripts/capture-codex-request.mjs\` then \`codex exec "hi"\` ` +
+      `(with OPENAI_BASE_URL pointing at the capture proxy) to bootstrap.`
     );
     cachedFingerprint = {
       user_agent: DEFAULT_USER_AGENT,
       cli_version: DEFAULT_CLI_VERSION,
       originator: DEFAULT_ORIGINATOR,
+      openai_beta: OPENAI_BETA_WS_VALUE,
     };
     return cachedFingerprint;
   }
-  const raw = JSON.parse(readFileSync(FINGERPRINT_FILE, "utf-8")) as Partial<CodexFingerprint>;
+  const raw = JSON.parse(readFileSync(FINGERPRINT_FILE, "utf-8")) as CodexFingerprint;
   cachedFingerprint = {
     user_agent: raw.user_agent ?? DEFAULT_USER_AGENT,
     cli_version: raw.cli_version ?? DEFAULT_CLI_VERSION,
     originator: raw.originator ?? DEFAULT_ORIGINATOR,
+    openai_beta: raw.openai_beta ?? OPENAI_BETA_WS_VALUE,
   };
   logger.info(
-    `[codex-api] fingerprint loaded (ua=${cachedFingerprint.user_agent}, originator=${cachedFingerprint.originator})`
+    `[codex-api] fingerprint loaded (version=${cachedFingerprint.cli_version}, originator=${cachedFingerprint.originator}, openai-beta=${cachedFingerprint.openai_beta})`
   );
   return cachedFingerprint;
 }
@@ -220,7 +259,6 @@ async function refreshUpstreamToken(refreshToken: string): Promise<RefreshedToke
     headers: {
       "accept": "application/json",
       "content-type": "application/x-www-form-urlencoded",
-      "user-agent": DEFAULT_USER_AGENT,
     },
     body: body.toString(),
   });
@@ -311,29 +349,34 @@ function getMaskedSessionId(): string {
   return maskedSessionId;
 }
 
-// ── Rate-limit header parsing ──
+// ── Rate-limit cooldown parsing ──
 //
-// ChatGPT Codex rate limit headers:
-//   x-codex-primary-used-percent / x-codex-primary-reset-after-seconds
-//   x-codex-secondary-used-percent / x-codex-secondary-reset-after-seconds
-// Pick the nearest real reset time to drive rate-guard cooldown.
+// Rate-limit state comes from two places on the new WS protocol:
+//   1. The upgrade-phase HTTP response headers (on 4xx/5xx responses to the
+//      GET + Upgrade request), where Codex still surfaces
+//        x-codex-primary-used-percent / x-codex-primary-reset-after-seconds
+//        x-codex-secondary-used-percent / x-codex-secondary-reset-after-seconds
+//   2. Inline `rate_limits` / `response.failed` JSON frames over the socket
+//      itself, which contain the same `reset_after_seconds` fields nested
+//      under `rate_limits.primary.reset_after_seconds`.
 
-function parseCodexRateLimitHeaders(headers: Headers): {
+function cooldownFromHttpHeaders(headers: Record<string, string | string[] | undefined>): {
   ms: number;
   reason: string;
 } | null {
-  function getMs(resetAfterSecondsHeader: string): number | null {
-    const raw = headers.get(resetAfterSecondsHeader);
-    if (!raw) return null;
-    const secs = Number(raw);
+  function getNumericHeader(name: string): number | null {
+    const v = headers[name] ?? headers[name.toLowerCase()];
+    const str = Array.isArray(v) ? v[0] : v;
+    if (str == null) return null;
+    const secs = Number(str);
     if (!Number.isFinite(secs) || secs <= 0) return null;
     return Date.now() + secs * 1000;
   }
-  const primary = getMs("x-codex-primary-reset-after-seconds");
-  const secondary = getMs("x-codex-secondary-reset-after-seconds");
-  const retryAfterRaw = headers.get("retry-after");
+  const primary = getNumericHeader("x-codex-primary-reset-after-seconds");
+  const secondary = getNumericHeader("x-codex-secondary-reset-after-seconds");
+  const retryAfterRaw = (headers["retry-after"] ?? headers["Retry-After"]) as string | undefined;
   let retryAfterMs: number | null = null;
-  if (retryAfterRaw) {
+  if (typeof retryAfterRaw === "string") {
     const s = Number(retryAfterRaw);
     retryAfterMs = Number.isFinite(s) && s >= 0 ? Date.now() + s * 1000 : null;
   }
@@ -341,6 +384,23 @@ function parseCodexRateLimitHeaders(headers: Headers): {
   if (primary) candidates.push({ ms: primary, reason: "codex primary window" });
   if (secondary) candidates.push({ ms: secondary, reason: "codex secondary window" });
   if (retryAfterMs) candidates.push({ ms: retryAfterMs, reason: "retry-after" });
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => a.ms - b.ms);
+  return candidates[0];
+}
+
+function cooldownFromRateLimitsFrame(evt: Record<string, unknown>): { ms: number; reason: string } | null {
+  const rl = evt["rate_limits"] as Record<string, unknown> | undefined;
+  if (!rl) return null;
+  const candidates: Array<{ ms: number; reason: string }> = [];
+  for (const key of ["primary", "secondary"]) {
+    const bucket = rl[key] as Record<string, unknown> | undefined;
+    if (!bucket) continue;
+    const secs = Number(bucket["reset_after_seconds"] ?? 0);
+    if (Number.isFinite(secs) && secs > 0) {
+      candidates.push({ ms: Date.now() + secs * 1000, reason: `codex ${key} window` });
+    }
+  }
   if (candidates.length === 0) return null;
   candidates.sort((a, b) => a.ms - b.ms);
   return candidates[0];
@@ -378,17 +438,29 @@ export function getRateGuardSnapshot(): ReturnType<RateGuard["currentLoad"]> | n
 export async function preflightCodexApi(config?: RelayRateGuardConfig): Promise<void> {
   configureDispatcher();
   configureRateGuard(config);
+  // Load fingerprint (warns but does not throw if absent — defaults apply).
   loadCodexFingerprint();
+  // Load & decode creds, refreshing if near expiry.
   await getFreshCreds();
+  // Ensure the `ws` package is actually resolvable so we fail fast at
+  // preflight instead of on the first relay request.
+  if (typeof WebSocket !== "function") {
+    throw new Error("ws package failed to load — cannot open Codex WebSocket upstream");
+  }
   logger.info(
-    `[codex-api] preflight OK (account_id=***${cachedCreds?.accountId?.slice(-6) ?? "?"}, expires=${new Date(cachedCreds?.expiresAt ?? 0).toISOString()})`
+    `[codex-api] preflight OK (account_id=${cachedCreds?.accountId ? "set" : "missing"}, expires_in=${Math.max(0, Math.round(((cachedCreds?.expiresAt ?? 0) - Date.now()) / 1000))}s)`
   );
 }
 
-// ── Responses API request builder ──
+// ── Request body builder ──
+//
+// Over WebSocket, codex-cli sends a single JSON frame that is effectively the
+// old HTTP POST body with `type: "response.create"` injected. We mirror that
+// exactly: input[] / instructions / model / store / stream plus the type tag.
 
-function buildRequestBody(prompt: string, model: string, _maxTokens?: number): object {
-  const body: Record<string, unknown> = {
+function buildRequestFrame(prompt: string, model: string): Record<string, unknown> {
+  return {
+    type: "response.create",
     model,
     input: [
       {
@@ -400,75 +472,76 @@ function buildRequestBody(prompt: string, model: string, _maxTokens?: number): o
     instructions: RELAY_INSTRUCTIONS,
     // OAuth → ChatGPT internal API requires store=false.
     store: false,
-    // Internal endpoint always returns SSE; we consume it internally.
+    // Internal endpoint always streams — mirrors Codex CLI.
     stream: true,
   };
-  // max_output_tokens is stripped by the Codex transform layer upstream —
-  // deliberately omitted to avoid 400s.
-  return body;
 }
 
-// ── SSE parser ──
-//
-// Upstream always returns text/event-stream. We accumulate deltas and pull
-// the terminal `response.done` (or `response.completed`) event for usage
-// and the final output[] text.
+// ── Event accumulator ──
 
-interface ParsedSSEResult {
+interface ParsedFrameResult {
   text: string;
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
   model: string;
+  terminal: boolean;
+  error?: string;
 }
 
-function parseCodexSSE(sseBody: string, fallbackModel: string): ParsedSSEResult {
-  const lines = sseBody.split("\n");
-  let text = "";
-  let inputTokens = 0;
-  let outputTokens = 0;
-  let cacheReadTokens = 0;
-  let model = fallbackModel;
-  const deltaTexts: string[] = [];
+function handleFrame(
+  raw: string,
+  acc: ParsedFrameResult,
+): { terminal: boolean; error?: string; rateLimit?: { ms: number; reason: string } } {
+  let evt: Record<string, unknown>;
+  try {
+    evt = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return { terminal: false };
+  }
 
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith("data:")) continue;
-    const data = trimmed.slice(5).trim();
-    if (!data || data === "[DONE]") continue;
+  const type = typeof evt["type"] === "string" ? (evt["type"] as string) : "";
 
-    let evt: Record<string, unknown>;
-    try {
-      evt = JSON.parse(data) as Record<string, unknown>;
-    } catch {
-      continue;
-    }
+  // Text deltas — identical to the HTTP SSE format, just one JSON per frame.
+  if (type === "response.output_text.delta") {
+    const delta = evt["delta"] as string | undefined;
+    if (typeof delta === "string") acc.text += delta;
+    return { terminal: false };
+  }
 
-    const type = evt["type"] as string | undefined;
+  // Standalone rate-limits frame (seen in sub2api captures). Does NOT end
+  // the turn, but we harvest the cooldown window for later use.
+  if (type === "rate_limits") {
+    const cd = cooldownFromRateLimitsFrame(evt);
+    return { terminal: false, rateLimit: cd ?? undefined };
+  }
 
-    if (type === "response.output_text.delta") {
-      const delta = evt["delta"] as string | undefined;
-      if (delta) deltaTexts.push(delta);
-    }
+  // Error frame — surfaces 400-class issues and upstream policy rejections.
+  if (type === "response.failed" || type === "response.error" || type === "error") {
+    const errObj = (evt["error"] ?? evt["response"]) as Record<string, unknown> | undefined;
+    const msg =
+      (errObj && typeof errObj["message"] === "string" && (errObj["message"] as string)) ||
+      (typeof evt["message"] === "string" && (evt["message"] as string)) ||
+      "unknown codex ws error";
+    const cd = cooldownFromRateLimitsFrame(evt);
+    return { terminal: true, error: msg, rateLimit: cd ?? undefined };
+  }
 
-    if (type === "response.done" || type === "response.completed") {
-      const resp = evt["response"] as Record<string, unknown> | undefined;
-      if (!resp) continue;
-
-      if (typeof resp["model"] === "string") {
-        model = resp["model"];
-      }
-
+  if (type === "response.completed" || type === "response.done") {
+    const resp = evt["response"] as Record<string, unknown> | undefined;
+    if (resp) {
+      if (typeof resp["model"] === "string") acc.model = resp["model"];
       const usage = resp["usage"] as Record<string, unknown> | undefined;
       if (usage) {
-        inputTokens = Number(usage["input_tokens"] ?? 0);
-        outputTokens = Number(usage["output_tokens"] ?? 0);
+        acc.inputTokens = Number(usage["input_tokens"] ?? 0);
+        acc.outputTokens = Number(usage["output_tokens"] ?? 0);
         const details = usage["input_tokens_details"] as Record<string, unknown> | undefined;
         if (details) {
-          cacheReadTokens = Number(details["cached_tokens"] ?? 0);
+          acc.cacheReadTokens = Number(details["cached_tokens"] ?? 0);
         }
       }
-
+      // Prefer the complete output[] text if present — it's the authoritative
+      // final form; delta accumulation is a fallback.
       const output = resp["output"] as Array<Record<string, unknown>> | undefined;
       if (Array.isArray(output) && output.length > 0) {
         const parts: string[] = [];
@@ -481,29 +554,156 @@ function parseCodexSSE(sseBody: string, fallbackModel: string): ParsedSSEResult 
             }
           }
         }
-        if (parts.length > 0) {
-          text = parts.join("");
-        }
+        if (parts.length > 0) acc.text = parts.join("");
       }
     }
+    return { terminal: true };
   }
 
-  if (!text && deltaTexts.length > 0) {
-    text = deltaTexts.join("");
-  }
-
-  return { text, inputTokens, outputTokens, cacheReadTokens, model };
+  return { terminal: false };
 }
 
-// ── Retry-After helper ──
+// ── WebSocket dialer ──
+//
+// Wraps the ws package with proxy support (HttpsProxyAgent for HTTP CONNECT
+// proxies) and a Promise that resolves on 'open' or rejects on early close /
+// upgrade failure. The 'unexpected-response' event gives us the upgrade-phase
+// status code + headers, which we need for 401 refresh and 429 cooldown
+// handling.
 
-function parseRetryAfterMs(header: string | null): number | null {
-  if (!header) return null;
-  const asSeconds = Number(header);
-  if (Number.isFinite(asSeconds) && asSeconds >= 0) return asSeconds * 1000;
-  const asDate = Date.parse(header);
-  if (Number.isFinite(asDate)) return Math.max(0, asDate - Date.now());
-  return null;
+interface DialResult {
+  ws: WebSocket;
+}
+
+class WsDialError extends Error {
+  readonly statusCode: number;
+  readonly headers: Record<string, string | string[] | undefined>;
+  readonly bodySnippet: string;
+  constructor(status: number, headers: Record<string, string | string[] | undefined>, bodySnippet: string) {
+    super(`Codex WS upgrade failed: HTTP ${status} — ${bodySnippet.slice(0, 200)}`);
+    this.name = "WsDialError";
+    this.statusCode = status;
+    this.headers = headers;
+    this.bodySnippet = bodySnippet;
+  }
+}
+
+// Minimal HTTP-CONNECT tunneling Agent for HTTPS/WSS targets.
+//
+// When the Provider is behind an HTTP proxy (e.g. `export HTTPS_PROXY=
+// http://127.0.0.1:7890`), Node's built-in https.Agent does not support
+// CONNECT tunneling out of the box. We avoid adding a third-party proxy
+// agent dep by inlining the ~15 lines of glue needed: open a plain TCP
+// socket to the proxy, send a CONNECT line, wait for `200 Connection
+// Established`, then hand the raw socket back to the caller wrapped in
+// a TLS session targeting the origin host.
+//
+// The `ws` package accepts anything that quacks like an http.Agent with a
+// `createConnection(opts, cb)` method. We subclass https.Agent and override
+// createConnection, but the TS declarations for `Agent.createConnection`
+// point at a Duplex-returning signature that doesn't quite match our
+// socket-returning one, so we cast through `unknown` where required.
+class HttpsConnectAgent extends https.Agent {
+  private readonly proxyHost: string;
+  private readonly proxyPort: number;
+  constructor(proxyUrl: string) {
+    super({ keepAlive: false });
+    const parsed = new URL(proxyUrl);
+    this.proxyHost = parsed.hostname;
+    this.proxyPort = Number(parsed.port) || 80;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  createConnection(opts: any, callback: any): any {
+    const targetHost = (opts.host as string) || "";
+    const targetPort = Number(opts.port) || 443;
+    const tcp = net.connect(this.proxyPort, this.proxyHost, () => {
+      tcp.write(
+        `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n\r\n`
+      );
+    });
+    let buf = "";
+    const onData = (chunk: Buffer) => {
+      buf += chunk.toString("utf-8");
+      const headerEnd = buf.indexOf("\r\n\r\n");
+      if (headerEnd === -1) return;
+      tcp.off("data", onData);
+      const statusLine = buf.split("\r\n", 1)[0] ?? "";
+      const m = statusLine.match(/^HTTP\/\d\.\d\s+(\d+)/);
+      const code = m ? Number(m[1]) : 0;
+      if (code !== 200) {
+        tcp.destroy();
+        callback(new Error(`proxy CONNECT failed: ${statusLine}`));
+        return;
+      }
+      // Success — upgrade the tunneled TCP socket to TLS.
+      const secured = tls.connect({
+        socket: tcp,
+        servername: targetHost,
+        host: targetHost,
+        port: targetPort,
+      });
+      secured.on("error", (err) => callback(err));
+      secured.on("secureConnect", () => callback(null, secured));
+    };
+    tcp.on("data", onData);
+    tcp.on("error", (err) => callback(err));
+    return undefined;
+  }
+}
+
+function dialCodexWebSocket(
+  headers: Record<string, string>,
+): Promise<DialResult> {
+  return new Promise((resolve, reject) => {
+    let agent: HttpsConnectAgent | undefined;
+    if (wsProxyUrl) {
+      agent = new HttpsConnectAgent(wsProxyUrl);
+    }
+
+    // ws honors permessage-deflate out of the box when the server offers it,
+    // which matches the "Sec-WebSocket-Extensions: permessage-deflate;
+    // client_max_window_bits" line in the real handshake.
+    const ws = new WebSocket(CODEX_RESPONSES_WS_URL, undefined, {
+      headers,
+      agent,
+      perMessageDeflate: { clientMaxWindowBits: 15 },
+      handshakeTimeout: 30_000,
+      // We set Host, Origin, etc. purely via headers above — no other fields
+      // should bleed from ws defaults since they'd diverge from the real CLI.
+    });
+
+    const onOpen = () => {
+      ws.off("error", onError);
+      ws.off("unexpected-response", onUnexpected);
+      resolve({ ws });
+    };
+    const onError = (err: Error) => {
+      ws.off("open", onOpen);
+      ws.off("unexpected-response", onUnexpected);
+      reject(err);
+    };
+    const onUnexpected = (_req: unknown, res: import("http").IncomingMessage) => {
+      // The server rejected the upgrade — capture status + body to drive
+      // 401/429/5xx handling the same way the old HTTP path did.
+      const chunks: Buffer[] = [];
+      res.on("data", (c: Buffer) => chunks.push(c));
+      res.on("end", () => {
+        const body = Buffer.concat(chunks).toString("utf-8");
+        ws.off("open", onOpen);
+        ws.off("error", onError);
+        reject(new WsDialError(res.statusCode ?? 0, res.headers as Record<string, string | string[] | undefined>, body));
+      });
+      res.on("error", (err: Error) => {
+        ws.off("open", onOpen);
+        ws.off("error", onError);
+        reject(err);
+      });
+    };
+
+    ws.once("open", onOpen);
+    ws.once("error", onError);
+    ws.once("unexpected-response", onUnexpected);
+  });
 }
 
 // ── Core API call ──
@@ -528,8 +728,8 @@ async function doCallCodexApi(opts: CallCodexApiOptions): Promise<ParsedOutput> 
 
   const fingerprint = loadCodexFingerprint();
   const sessionId = getMaskedSessionId();
-  const requestBody = buildRequestBody(prompt, opts.model, opts.maxTokens);
-  const bodyJson = JSON.stringify(requestBody);
+  const frame = buildRequestFrame(prompt, opts.model);
+  const frameJson = JSON.stringify(frame);
 
   let transientAttempt = 0;
   let hasRefreshed = false;
@@ -537,89 +737,210 @@ async function doCallCodexApi(opts: CallCodexApiOptions): Promise<ParsedOutput> 
   while (true) {
     const creds = await getFreshCreds();
 
-    const resp = await fetch(CODEX_RESPONSES_URL, {
-      method: "POST",
-      headers: {
-        "accept": "text/event-stream",
-        "content-type": "application/json",
-        "authorization": `Bearer ${creds.accessToken}`,
-        "user-agent": fingerprint.user_agent,
-        "originator": fingerprint.originator,
-        "openai-beta": OPENAI_BETA_HEADER,
-        // Required for ChatGPT internal API — identifies the subscription account.
-        "chatgpt-account-id": creds.accountId,
-        // Masked session identifiers — same value for 15 min so upstream
-        // sees a persistent session, not one-shot bot-like sessions.
-        "session_id": sessionId,
-        "conversation_id": sessionId,
-      },
-      body: bodyJson,
+    // Turn-metadata header: non-essential to the daemon, but the real CLI
+    // always sends one, and upstream may count missing headers as a bot
+    // signal. We synthesize a minimal JSON that covers the observed keys
+    // without leaking anything sensitive.
+    const turnMetadata = JSON.stringify({
+      session_id: sessionId,
+      turn_id: randomUUID(),
+      workspaces: {},
     });
 
-    if (resp.ok) {
-      const sseBody = await resp.text();
-      const parsed = parseCodexSSE(sseBody, opts.model);
-      const result: ParsedOutput = {
-        text: parsed.text,
-        sessionId,
-        usage: {
-          input_tokens: parsed.inputTokens,
-          output_tokens: parsed.outputTokens,
-          cache_creation_tokens: 0,
-          cache_read_tokens: parsed.cacheReadTokens,
-        },
-        model: parsed.model,
-        costUsd: 0,
-      };
-      if (rateGuard) {
-        const cost = calculateCost(
-          opts.model,
-          result.usage.input_tokens,
-          result.usage.output_tokens,
-          result.usage.cache_creation_tokens,
-          result.usage.cache_read_tokens,
+    // Build handshake headers matching the real Codex CLI 0.118 capture.
+    // Keys are lowercase because ws normalizes on send anyway and lowercase
+    // matches the observed on-wire casing.
+    const headers: Record<string, string> = {
+      "authorization": `Bearer ${creds.accessToken}`,
+      "chatgpt-account-id": creds.accountId,
+      "originator": fingerprint.originator,
+      "openai-beta": fingerprint.openai_beta,
+      "session_id": sessionId,
+      "version": fingerprint.cli_version,
+      "x-codex-turn-metadata": turnMetadata,
+      "x-client-request-id": sessionId,
+    };
+    if (fingerprint.user_agent) {
+      headers["user-agent"] = fingerprint.user_agent;
+    }
+
+    let dialed: DialResult;
+    try {
+      dialed = await dialCodexWebSocket(headers);
+    } catch (err) {
+      if (err instanceof WsDialError) {
+        const status = err.statusCode;
+
+        if (status === 429) {
+          const cooldown = cooldownFromHttpHeaders(err.headers);
+          if (cooldown && rateGuard) {
+            rateGuard.triggerCooldown(cooldown.ms, cooldown.reason);
+          } else if (rateGuard) {
+            rateGuard.triggerCooldown(Date.now() + 5 * 60_000, "fallback 5m (no reset header)");
+          }
+          throw new Error(`Codex 429 rate-limited: ${err.bodySnippet.slice(0, 300)}`);
+        }
+
+        if (status === 401 && !hasRefreshed) {
+          logger.warn("[codex-api] 401 from upgrade, refreshing token + retry");
+          hasRefreshed = true;
+          cachedCreds = null;
+          continue;
+        }
+
+        const isTransient = status >= 500 && status <= 599;
+        if (isTransient && transientAttempt < MAX_TRANSIENT_RETRIES) {
+          const backoffMs = 500 * Math.pow(2, transientAttempt) + Math.random() * 500;
+          logger.warn(
+            `[codex-api] upgrade ${status} (attempt ${transientAttempt + 1}/${MAX_TRANSIENT_RETRIES + 1}), retrying in ${Math.round(backoffMs)}ms — ${err.bodySnippet.slice(0, 200)}`
+          );
+          await new Promise((r) => setTimeout(r, backoffMs));
+          transientAttempt++;
+          continue;
+        }
+
+        throw new Error(`Codex upgrade ${status}: ${err.bodySnippet.slice(0, 400)}`);
+      }
+      // Plain transport error (DNS, TCP, TLS) — treat like a 5xx for retry
+      // purposes, then bubble up.
+      if (transientAttempt < MAX_TRANSIENT_RETRIES) {
+        const backoffMs = 500 * Math.pow(2, transientAttempt) + Math.random() * 500;
+        logger.warn(
+          `[codex-api] transport error (attempt ${transientAttempt + 1}/${MAX_TRANSIENT_RETRIES + 1}), retrying in ${Math.round(backoffMs)}ms — ${(err as Error).message}`
         );
-        rateGuard.recordSpend(cost.apiCost);
-        result.costUsd = cost.apiCost;
+        await new Promise((r) => setTimeout(r, backoffMs));
+        transientAttempt++;
+        continue;
       }
-      logger.info(
-        `[codex-api] OK model=${parsed.model} in=${parsed.inputTokens} out=${parsed.outputTokens} cache_read=${parsed.cacheReadTokens}`
-      );
-      return result;
+      throw err;
     }
 
-    const errText = await resp.text();
+    // Connection is open — send the first (and only) client frame and
+    // accumulate server frames until we see a terminal event.
+    const { ws } = dialed;
 
-    if (resp.status === 429) {
-      const cooldown = parseCodexRateLimitHeaders(resp.headers);
-      if (cooldown && rateGuard) {
-        rateGuard.triggerCooldown(cooldown.ms, cooldown.reason);
-      } else if (rateGuard) {
-        rateGuard.triggerCooldown(Date.now() + 5 * 60_000, "fallback 5m (no reset header)");
+    const acc: ParsedFrameResult = {
+      text: "",
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      model: opts.model,
+      terminal: false,
+    };
+
+    let resolved = false;
+    const result = await new Promise<{ ok: true } | { ok: false; retriable: boolean; error: Error }>((resolve) => {
+      const finish = (r: { ok: true } | { ok: false; retriable: boolean; error: Error }) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+        try {
+          ws.close(1000, "done");
+        } catch {
+          // ignore
+        }
+        resolve(r);
+      };
+
+      const timer = setTimeout(() => {
+        finish({
+          ok: false,
+          retriable: false,
+          error: new Error(`Codex WS timed out after ${WS_OVERALL_TIMEOUT_MS}ms waiting for response.completed`),
+        });
+      }, WS_OVERALL_TIMEOUT_MS);
+
+      ws.on("message", (data: WebSocket.RawData, _isBinary: boolean) => {
+        const text = Buffer.isBuffer(data)
+          ? data.toString("utf-8")
+          : Array.isArray(data)
+          ? Buffer.concat(data).toString("utf-8")
+          : Buffer.from(data as ArrayBuffer).toString("utf-8");
+        // Frames are individual JSON objects (no newline framing).
+        const outcome = handleFrame(text, acc);
+        if (outcome.rateLimit && rateGuard) {
+          // Soft hint — record but don't kill this request. Next request will
+          // hit the cooldown check at the guard level.
+          rateGuard.triggerCooldown(outcome.rateLimit.ms, outcome.rateLimit.reason);
+        }
+        if (outcome.terminal) {
+          if (outcome.error) {
+            finish({
+              ok: false,
+              retriable: false,
+              error: new Error(`Codex upstream error: ${outcome.error}`),
+            });
+          } else {
+            acc.terminal = true;
+            finish({ ok: true });
+          }
+        }
+      });
+
+      ws.on("close", (code: number, reason: Buffer) => {
+        if (acc.terminal) return; // normal close after terminal event
+        finish({
+          ok: false,
+          retriable: true,
+          error: new Error(`Codex WS closed early (code=${code}, reason=${reason.toString().slice(0, 200)})`),
+        });
+      });
+
+      ws.on("error", (err: Error) => {
+        finish({ ok: false, retriable: true, error: err });
+      });
+
+      // Send the request frame.
+      try {
+        ws.send(frameJson, (sendErr?: Error) => {
+          if (sendErr) {
+            finish({ ok: false, retriable: true, error: sendErr });
+          }
+        });
+      } catch (err) {
+        finish({ ok: false, retriable: true, error: err as Error });
       }
-      throw new Error(`Codex 429 rate-limited: ${errText.slice(0, 300)}`);
+    });
+
+    if (!result.ok) {
+      if (result.retriable && transientAttempt < MAX_TRANSIENT_RETRIES) {
+        const backoffMs = 500 * Math.pow(2, transientAttempt) + Math.random() * 500;
+        logger.warn(
+          `[codex-api] mid-session ws error (attempt ${transientAttempt + 1}/${MAX_TRANSIENT_RETRIES + 1}), retrying in ${Math.round(backoffMs)}ms — ${result.error.message}`
+        );
+        await new Promise((r) => setTimeout(r, backoffMs));
+        transientAttempt++;
+        continue;
+      }
+      throw result.error;
     }
 
-    if (resp.status === 401 && !hasRefreshed) {
-      logger.warn("[codex-api] 401 from upstream, refreshing token + retry");
-      hasRefreshed = true;
-      cachedCreds = null;
-      continue;
-    }
-
-    const isTransient = resp.status >= 500 && resp.status <= 599;
-    if (isTransient && transientAttempt < MAX_TRANSIENT_RETRIES) {
-      const retryAfter = parseRetryAfterMs(resp.headers.get("retry-after"));
-      const backoffMs =
-        retryAfter ?? 500 * Math.pow(2, transientAttempt) + Math.random() * 500;
-      logger.warn(
-        `[codex-api] ${resp.status} from upstream (attempt ${transientAttempt + 1}/${MAX_TRANSIENT_RETRIES + 1}), retrying in ${Math.round(backoffMs)}ms — ${errText.slice(0, 200)}`
+    const parsed: ParsedOutput = {
+      text: acc.text,
+      sessionId,
+      usage: {
+        input_tokens: acc.inputTokens,
+        output_tokens: acc.outputTokens,
+        cache_creation_tokens: 0,
+        cache_read_tokens: acc.cacheReadTokens,
+      },
+      model: acc.model,
+      costUsd: 0,
+    };
+    if (rateGuard) {
+      const cost = calculateCost(
+        opts.model,
+        parsed.usage.input_tokens,
+        parsed.usage.output_tokens,
+        parsed.usage.cache_creation_tokens,
+        parsed.usage.cache_read_tokens,
       );
-      await new Promise((r) => setTimeout(r, backoffMs));
-      transientAttempt++;
-      continue;
+      rateGuard.recordSpend(cost.apiCost);
+      parsed.costUsd = cost.apiCost;
     }
-
-    throw new Error(`Codex ${resp.status}: ${errText.slice(0, 400)}`);
+    logger.info(
+      `[codex-api] OK model=${acc.model} in=${acc.inputTokens} out=${acc.outputTokens} cache_read=${acc.cacheReadTokens}`
+    );
+    return parsed;
   }
 }

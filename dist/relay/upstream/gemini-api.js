@@ -35,25 +35,20 @@ const OAUTH_CLIENT_ID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.goog
 const OAUTH_CLIENT_SECRET = ["GOCSPX", "4uHgMPm-1o7Sk", "geV6Cu5clXFsxl"].join("-");
 const OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
 // Google Code Assist API — what the real `gemini` CLI uses for OAuth calls.
+// Capture of gemini-cli 0.36.0 shows it uses :generateContent for short
+// non-stream calls (complexity scorer) and :streamGenerateContent?alt=sse
+// for the main response. We use the non-stream variant to keep the relay
+// simple — same envelope, same auth, just a single JSON response.
 const CODE_ASSIST_BASE_URL = "https://cloudcode-pa.googleapis.com";
 const CODE_ASSIST_GENERATE_PATH = "/v1internal:generateContent";
 const GEMINI_CREDS_FILE = join(homedir(), ".gemini", "oauth_creds.json");
 const CLAWMONEY_DIR = join(homedir(), ".clawmoney");
 const FINGERPRINT_FILE = join(CLAWMONEY_DIR, "gemini-fingerprint.json");
 // Fallback UA used before the capture script has bootstrapped this machine.
-// sub2api's constants.go has "GeminiCLI/0.1.5 (Windows; AMD64)" but the real
-// local CLI is 0.36.0. The capture script overwrites this with the observed value.
-const DEFAULT_CLI_VERSION = "0.1.5";
-const DEFAULT_USER_AGENT = `GeminiCLI/${DEFAULT_CLI_VERSION} (darwin; arm64)`;
-// Disable all safety filters — relay prompts are arbitrary and would otherwise
-// get blocked by Gemini's content classifier on behalf of the buyer's query.
-const DEFAULT_SAFETY_SETTINGS = [
-    { category: "HARM_CATEGORY_HARASSMENT", threshold: "OFF" },
-    { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "OFF" },
-    { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "OFF" },
-    { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "OFF" },
-    { category: "HARM_CATEGORY_CIVIC_INTEGRITY", threshold: "OFF" },
-];
+// Real captured format: "GeminiCLI/<cli>/<default-model> (darwin; arm64; terminal) google-api-nodejs-client/9.15.1"
+const DEFAULT_CLI_VERSION = "0.36.0";
+const DEFAULT_USER_AGENT = `GeminiCLI/${DEFAULT_CLI_VERSION} (darwin; arm64; terminal) google-api-nodejs-client/9.15.1`;
+const DEFAULT_X_GOOG_API_CLIENT = "gl-node/25.2.1";
 // ── Proxy (honor HTTPS_PROXY / http_proxy env vars) ──
 let dispatcherConfigured = false;
 function configureDispatcher() {
@@ -73,7 +68,6 @@ function configureDispatcher() {
     setGlobalDispatcher(new ProxyAgent(url));
     logger.info(`[gemini-api] upstream proxy ${url}`);
 }
-// ── Fingerprint ──
 let cachedFingerprint = null;
 function loadFingerprint() {
     if (cachedFingerprint)
@@ -81,18 +75,22 @@ function loadFingerprint() {
     if (!existsSync(FINGERPRINT_FILE)) {
         throw new Error(`Gemini fingerprint not found at ${FINGERPRINT_FILE}. ` +
             `Run \`node scripts/capture-gemini-request.mjs\` (Terminal 1) ` +
-            `then \`CODE_ASSIST_ENDPOINT=http://127.0.0.1:8789 gemini -p hi\` (Terminal 2) ` +
-            `to bootstrap project_id, cli_version, and user_agent.`);
+            `then \`NO_PROXY=127.0.0.1 CODE_ASSIST_ENDPOINT=http://127.0.0.1:8789 gemini -p hi\` (Terminal 2) ` +
+            `to bootstrap project_id, cli_version, user_agent, and x_goog_api_client. ` +
+            `Keep HTTPS_PROXY/http_proxy set if you're behind a GFW egress — ` +
+            `gemini needs them to reach oauth2.googleapis.com for token refresh.`);
     }
     const raw = JSON.parse(readFileSync(FINGERPRINT_FILE, "utf-8"));
-    if (!raw.project_id) {
-        throw new Error(`Gemini fingerprint at ${FINGERPRINT_FILE} is missing project_id. ` +
-            `Re-run capture-gemini-request.mjs to refresh.`);
+    if (!raw.project_id || raw.project_id === "UNKNOWN") {
+        throw new Error(`Gemini fingerprint at ${FINGERPRINT_FILE} has invalid project_id (${raw.project_id}). ` +
+            `Re-run capture-gemini-request.mjs — the real project comes from the ` +
+            `:retrieveUserQuota request body, not :loadCodeAssist.`);
     }
     cachedFingerprint = {
         project_id: raw.project_id,
         cli_version: raw.cli_version ?? DEFAULT_CLI_VERSION,
         user_agent: raw.user_agent ?? DEFAULT_USER_AGENT,
+        x_goog_api_client: raw.x_goog_api_client ?? DEFAULT_X_GOOG_API_CLIENT,
     };
     logger.info(`[gemini-api] fingerprint loaded (project=${cachedFingerprint.project_id}, ` +
         `cli_version=${cachedFingerprint.cli_version}, ua=${cachedFingerprint.user_agent})`);
@@ -269,13 +267,15 @@ async function doCallGeminiApi(opts) {
         throw new Error("Empty prompt");
     }
     const fingerprint = loadFingerprint();
-    const requestId = getMaskedRequestId();
+    const userPromptId = getMaskedRequestId();
     const maxTokens = opts.maxTokens ?? 8192;
+    // Real envelope observed from gemini-cli 0.36.0 traffic:
+    //   {model, project, user_prompt_id, request}
+    // NOT the Antigravity envelope. user_prompt_id is a UUID stable per session.
     const outerRequest = {
-        project: fingerprint.project_id,
-        requestId,
-        userAgent: fingerprint.user_agent,
         model: opts.model,
+        project: fingerprint.project_id,
+        user_prompt_id: userPromptId,
         request: {
             contents: [
                 {
@@ -286,7 +286,7 @@ async function doCallGeminiApi(opts) {
             generationConfig: {
                 maxOutputTokens: maxTokens,
             },
-            safetySettings: DEFAULT_SAFETY_SETTINGS,
+            session_id: null,
         },
     };
     const bodyJson = JSON.stringify(outerRequest);
@@ -295,6 +295,13 @@ async function doCallGeminiApi(opts) {
     let hasRefreshed = false;
     while (true) {
         const creds = await getFreshCreds();
+        // Real gemini-cli headers observed in capture:
+        //   authorization: Bearer <token>
+        //   content-type: application/json
+        //   accept: application/json
+        //   user-agent: GeminiCLI/<cli>/<model> (darwin; arm64; terminal) google-api-nodejs-client/9.15.1
+        //   x-goog-api-client: gl-node/<node-version>   <-- NOT gemini-cli/...
+        //   (NO x-goog-user-project — project lives in the body)
         const resp = await fetch(url, {
             method: "POST",
             headers: {
@@ -302,8 +309,7 @@ async function doCallGeminiApi(opts) {
                 "accept": "application/json",
                 "authorization": `Bearer ${creds.access_token}`,
                 "user-agent": fingerprint.user_agent,
-                "x-goog-user-project": fingerprint.project_id,
-                "x-goog-api-client": `gemini-cli/${fingerprint.cli_version}`,
+                "x-goog-api-client": fingerprint.x_goog_api_client,
             },
             body: bodyJson,
         });

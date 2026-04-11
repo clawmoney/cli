@@ -76,33 +76,37 @@ function resolveUpstreamURL(path) {
 }
 
 /**
- * Extract fingerprint fields from a v1internal:generateContent request body.
+ * Extract fingerprint fields from a real gemini-cli v1internal request body.
  *
- * The outer envelope sent by Gemini CLI:
- *   { project, requestId, userAgent, model, request: {...} }
+ * The real envelope captured from gemini-cli 0.36.0:
+ *   { model, project, user_prompt_id, request: {...} }
  *
- * project   → project_id for x-goog-user-project
- * userAgent → user_agent header value (body field as fallback)
- * version from User-Agent header → cli_version
+ * project    → project_id (for body.project in our own requests)
+ * User-Agent → user_agent header value
+ * version from User-Agent → cli_version
+ * x-goog-api-client header → stainless-equivalent
+ *
+ * Returns null if the body does not contain a usable `project` field — e.g.
+ * the :loadCodeAssist bootstrap request has only `{metadata}` and no project,
+ * so we skip it and wait for :retrieveUserQuota or :generateContent.
  */
 function extractFingerprint(body, headers) {
   const projectId =
-    typeof body.project === "string" ? body.project.trim() : "";
+    typeof body === "object" && typeof body.project === "string"
+      ? body.project.trim()
+      : "";
+  if (!projectId) return null;
 
-  const ua = (headers["user-agent"] || body.userAgent || "").trim();
+  const ua = (headers["user-agent"] || "").trim();
   const versionMatch = ua.match(/GeminiCLI\/(\d+\.\d+[\.\d]*)/i);
   const cliVersion = versionMatch ? versionMatch[1] : "unknown";
-
-  if (!projectId) {
-    console.warn(
-      "  ! No project field in request body — fingerprint will have project_id=UNKNOWN"
-    );
-  }
+  const xGoogApiClient = (headers["x-goog-api-client"] || "").trim();
 
   return {
-    project_id: projectId || "UNKNOWN",
+    project_id: projectId,
     cli_version: cliVersion,
-    user_agent: ua || "GeminiCLI/unknown",
+    user_agent: ua || `GeminiCLI/${cliVersion}`,
+    x_goog_api_client: xGoogApiClient || `gl-node/unknown`,
   };
 }
 
@@ -173,25 +177,32 @@ const server = createServer((req, res) => {
     ) {
       try {
         const fp = extractFingerprint(parsedBody, req.headers);
-        writeFileSync(FINGERPRINT_PATH, JSON.stringify(fp, null, 2), "utf-8");
-        fingerprintWritten = true;
-        console.log(`\n  ✓ fingerprint written → ${FINGERPRINT_PATH}`);
-        console.log(`    project_id:  ${fp.project_id}`);
-        console.log(`    cli_version: ${fp.cli_version}`);
-        console.log(`    user_agent:  ${fp.user_agent}`);
+        if (!fp) {
+          // Request doesn't carry a project (probably :loadCodeAssist) — wait
+          // for the next v1internal request that does.
+          console.log(`  → skipping fingerprint extraction (no project in body)`);
+        } else {
+          writeFileSync(FINGERPRINT_PATH, JSON.stringify(fp, null, 2), "utf-8");
+          fingerprintWritten = true;
+          console.log(`\n  ✓ fingerprint written → ${FINGERPRINT_PATH}`);
+          console.log(`    project_id:       ${fp.project_id}`);
+          console.log(`    cli_version:      ${fp.cli_version}`);
+          console.log(`    user_agent:       ${fp.user_agent}`);
+          console.log(`    x_goog_api_client: ${fp.x_goog_api_client}`);
 
-        // Scrub all capture files — they contain OAuth bearer tokens.
-        try {
-          for (const f of readdirSync(OUT_DIR)) {
-            if (/^capture-gemini-\d+\.json$/.test(f)) {
-              unlinkSync(join(OUT_DIR, f));
+          // Scrub all capture files — they contain OAuth bearer tokens.
+          try {
+            for (const f of readdirSync(OUT_DIR)) {
+              if (/^capture-gemini-\d+\.json$/.test(f)) {
+                unlinkSync(join(OUT_DIR, f));
+              }
             }
+            console.log(
+              `  ✓ cleared all capture-gemini-*.json files (OAuth tokens scrubbed)`
+            );
+          } catch (e) {
+            console.warn(`  ! could not scrub captures: ${e.message}`);
           }
-          console.log(
-            `  ✓ cleared all capture-gemini-*.json files (OAuth tokens scrubbed)`
-          );
-        } catch (e) {
-          console.warn(`  ! could not scrub captures: ${e.message}`);
         }
       } catch (err) {
         console.error(`  ! fingerprint extraction failed: ${err.message}`);
