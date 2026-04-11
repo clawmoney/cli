@@ -67,9 +67,25 @@ const CONFIG_DIR = join(homedir(), ".clawmoney");
 const CONFIG_FILE = join(CONFIG_DIR, "config.yaml");
 const PID_FILE = join(CONFIG_DIR, "relay.pid");
 
+// Default execution mode is `api` as of 0.14.7. The `cli` fallback is still
+// supported — set `relay.execution_mode: cli` in ~/.clawmoney/config.yaml
+// or export CLAWMONEY_RELAY_EXECUTION_MODE=cli at launch — but new
+// providers get the direct-API path by default because:
+//   - Every spawnCli() round-trip burns 2-5 seconds of cold start, which
+//     is far too much for a request/response relay where buyers expect
+//     sub-second handoff.
+//   - Each subprocess consumes its own RAM + file handles; API mode runs
+//     hundreds of concurrent calls out of one Node process.
+//   - The fingerprint gap that used to make CLI mode "safer" is now
+//     closed — 0.14.0–0.14.6 ported the real CLI's attribution hash,
+//     streaming transport, thinking config, dynamic beta header, session
+//     masking, Gemini startup warmup, and Codex per-turn prewarm. API
+//     mode now matches real-CLI wire shape on every upstream.
+// CLI mode will be removed entirely in 0.15.0 once we've observed a
+// week of API-mode-default in production.
 const DEFAULT_RELAY: RelayProviderSettings = {
   cli_type: "claude",
-  execution_mode: "cli",
+  execution_mode: "api",
   model: "claude-opus-4-6",
   mode: "chat",
   concurrency: 5,

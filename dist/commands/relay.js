@@ -97,7 +97,20 @@ export async function relayRegisterCommand(options) {
         const discountPct = Math.round(RELAY_DISCOUNT * 100);
         console.log(chalk.dim(`  Buyers pay ${discountPct}% of the official API price — a ${100 - discountPct}% discount applied by the Hub.`));
         console.log("");
-        console.log(chalk.dim(`  Next: run "clawmoney relay start" to begin accepting requests.`));
+        console.log(chalk.bold("  Next steps"));
+        console.log(chalk.dim(`    1. Start the daemon:`));
+        console.log(chalk.dim(`         clawmoney relay start`));
+        if (process.platform === "darwin") {
+            console.log(chalk.dim(`    2. (macOS) Install the daemon as a launchd user agent so it`));
+            console.log(chalk.dim(`       survives logouts AND keeps macOS Keychain unlocked for`));
+            console.log(chalk.dim(`       Claude API mode (SSH shells can't read a locked Keychain):`));
+            console.log(chalk.dim(`         ./scripts/install-daemon-launchd.sh`));
+            console.log(chalk.dim(`       (from the clawmoney-cli repo; see scripts/README for details)`));
+        }
+        console.log("");
+        console.log(chalk.dim(`  Tip: the daemon now defaults to direct-API mode (execution_mode: api)`));
+        console.log(chalk.dim(`  for ~10x lower latency per request. To fall back to subprocess-per-`));
+        console.log(chalk.dim(`  request mode, set \`relay.execution_mode: cli\` in ~/.clawmoney/config.yaml.`));
     }
     catch (err) {
         regSpinner.fail(chalk.red("Registration failed"));
