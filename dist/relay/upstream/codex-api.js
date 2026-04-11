@@ -54,7 +54,13 @@ const CLAWMONEY_DIR = join(homedir(), ".clawmoney");
 const FINGERPRINT_FILE = join(CLAWMONEY_DIR, "codex-fingerprint.json");
 // Default fingerprint values. Overridden per-machine by the capture script.
 const DEFAULT_CLI_VERSION = "0.118.0";
-const DEFAULT_ORIGINATOR = "codex_exec";
+// Verified against codex-rs/login/src/auth/default_client.rs:34 —
+// `pub const DEFAULT_ORIGINATOR: &str = "codex_cli_rs"`. A prior audit
+// claimed this was "codex_exec" which was wrong; real Codex CLI sends
+// `codex_cli_rs` on every /backend-api/codex/responses upgrade, and a
+// different originator value is a direct fingerprint mismatch against
+// OpenAI's allowlist of known first-party clients.
+const DEFAULT_ORIGINATOR = "codex_cli_rs";
 // Observed in the 0.118 capture: there is NO user-agent header. Leave empty
 // by default; the fingerprint file may still override with a real value for
 // older codex-cli that does send one.
@@ -113,15 +119,31 @@ function loadCodexFingerprint() {
             cli_version: DEFAULT_CLI_VERSION,
             originator: DEFAULT_ORIGINATOR,
             openai_beta: OPENAI_BETA_WS_VALUE,
+            installation_id: randomUUID(),
         };
         return cachedFingerprint;
     }
     const raw = JSON.parse(readFileSync(FINGERPRINT_FILE, "utf-8"));
+    // Persist a per-daemon installation UUID the first time we see this
+    // fingerprint — the value must be stable across daemon restarts (real
+    // CLI generates it once on install) so we write it back when minted.
+    let installationId = raw.installation_id;
+    if (!installationId) {
+        installationId = randomUUID();
+        try {
+            writeFileSync(FINGERPRINT_FILE, JSON.stringify({ ...raw, installation_id: installationId }, null, 2), { encoding: "utf-8", mode: 0o600 });
+            logger.info("[codex-api] persisted new installation_id to fingerprint file");
+        }
+        catch (err) {
+            logger.warn(`[codex-api] could not persist installation_id: ${err.message}`);
+        }
+    }
     cachedFingerprint = {
         user_agent: raw.user_agent ?? DEFAULT_USER_AGENT,
         cli_version: raw.cli_version ?? DEFAULT_CLI_VERSION,
         originator: raw.originator ?? DEFAULT_ORIGINATOR,
         openai_beta: raw.openai_beta ?? OPENAI_BETA_WS_VALUE,
+        installation_id: installationId,
     };
     logger.info(`[codex-api] fingerprint loaded (version=${cachedFingerprint.cli_version}, originator=${cachedFingerprint.originator}, openai-beta=${cachedFingerprint.openai_beta})`);
     return cachedFingerprint;
@@ -367,13 +389,31 @@ export async function preflightCodexApi(config) {
 }
 // ── Request body builder ──
 //
-// Over WebSocket, codex-cli sends a single JSON frame that is effectively the
-// old HTTP POST body with `type: "response.create"` injected. We mirror that
-// exactly: input[] / instructions / model / store / stream plus the type tag.
-function buildRequestFrame(prompt, model) {
+// Over WebSocket, codex-cli sends a single JSON frame that serializes
+// `ResponseCreateWsRequest` (codex-rs/codex-api/src/common.rs:200-225).
+// The struct has SIX required fields that we were previously omitting —
+// OpenAI's backend appears to tolerate missing defaults, but leaving
+// them out makes the wire shape distinct from a real CLI client, which
+// is exactly the fingerprint the account-detection pipeline watches for.
+//
+// Required (per real CLI schema):
+//   model, instructions, input, tools, tool_choice, parallel_tool_calls,
+//   reasoning (optional but almost always present via default_reasoning_level),
+//   store, stream, include, client_metadata (with installation_id + window_id +
+//   turn_metadata)
+function buildCodexRequestFrame(prompt, model, fingerprint, sessionId, turnMetadataHeader, windowGeneration) {
+    // `client_metadata` is a flat string-to-string map. Real CLI populates
+    // it via build_ws_client_metadata() (client.rs:575-605). The keys look
+    // like HTTP header names but they're JSON fields.
+    const clientMetadata = {
+        "x-codex-installation-id": fingerprint.installation_id,
+        "x-codex-window-id": `${sessionId}:${windowGeneration}`,
+        "x-codex-turn-metadata": turnMetadataHeader,
+    };
     return {
         type: "response.create",
         model,
+        instructions: RELAY_INSTRUCTIONS,
         input: [
             {
                 type: "message",
@@ -381,11 +421,23 @@ function buildRequestFrame(prompt, model) {
                 content: prompt,
             },
         ],
-        instructions: RELAY_INSTRUCTIONS,
+        // Real CLI sends tools: [] when no MCP/local tools are configured.
+        // Absent != [] on the wire, so we always emit the empty array.
+        tools: [],
+        tool_choice: "auto",
+        parallel_tool_calls: false,
+        // Reasoning is server-side for most models; real CLI sends
+        // {effort: "medium"} by default when `supports_reasoning_summaries`
+        // (virtually all gpt-5.x+). Passing medium is the safest default.
+        reasoning: { effort: "medium", summary: "auto" },
         // OAuth → ChatGPT internal API requires store=false.
         store: false,
         // Internal endpoint always streams — mirrors Codex CLI.
         stream: true,
+        // Real CLI sends include: ["reasoning.encrypted_content"] when
+        // reasoning is set; otherwise []. We set reasoning, so include it.
+        include: ["reasoning.encrypted_content"],
+        client_metadata: clientMetadata,
     };
 }
 function handleFrame(raw, acc) {
@@ -591,33 +643,79 @@ async function doCallCodexApi(opts) {
     }
     const fingerprint = loadCodexFingerprint();
     const sessionId = getMaskedSessionId();
-    const frame = buildRequestFrame(prompt, opts.model);
-    const frameJson = JSON.stringify(frame);
     let transientAttempt = 0;
     let hasRefreshed = false;
+    // Real CLI bumps `window_generation` each time the conversation's
+    // window rolls (compact, new subtopic, etc.). For the relay scenario
+    // we start at 0 and keep it there — retries within the same prompt
+    // don't advance the window.
+    const windowGeneration = 0;
     while (true) {
         const creds = await getFreshCreds();
-        // Turn-metadata header: non-essential to the daemon, but the real CLI
-        // always sends one, and upstream may count missing headers as a bot
-        // signal. We synthesize a minimal JSON that covers the observed keys
-        // without leaking anything sensitive.
+        // Turn-metadata header: real Codex CLI builds this from TurnMetadataBag
+        // (codex-rs/core/src/turn_metadata.rs:56-66). Field order in serde
+        // is session_id → turn_id → workspaces → sandbox, with
+        // `skip_serializing_if` for None and empty BTreeMap, meaning:
+        //   - Empty `workspaces` is OMITTED, not serialized as `{}`.
+        //   - `sandbox` is always present on an interactive CLI run because
+        //     TurnMetadataState constructs it from sandbox_tag(sandbox_policy).
+        // Our relay has no real workspace + no sandbox policy, so we:
+        //   - Skip the workspaces field entirely (matches BTreeMap::is_empty).
+        //   - Emit a platform-appropriate sandbox tag so the field matches
+        //     what a real CLI user on this OS would send. Real CLI values:
+        //       "seatbelt"        — macOS
+        //       "seccomp"         — Linux
+        //       "windows_sandbox" — Windows (restricted token)
+        //       "none"            — DangerFullAccess / sandbox disabled
+        //     We pick the default per platform; an operator can override via
+        //     the fingerprint file if they're running with a custom policy.
+        const platformSandboxTag = process.platform === "darwin"
+            ? "seatbelt"
+            : process.platform === "linux"
+                ? "seccomp"
+                : process.platform === "win32"
+                    ? "windows_sandbox"
+                    : "none";
         const turnMetadata = JSON.stringify({
             session_id: sessionId,
             turn_id: randomUUID(),
-            workspaces: {},
+            sandbox: platformSandboxTag,
         });
-        // Build handshake headers matching the real Codex CLI 0.118 capture.
-        // Keys are lowercase because ws normalizes on send anyway and lowercase
-        // matches the observed on-wire casing.
+        // Build the WS request frame with the just-built turn metadata so
+        // the frame's `client_metadata["x-codex-turn-metadata"]` matches the
+        // `x-codex-turn-metadata` HTTP header on the same handshake — real
+        // CLI sends them both and they carry the same value.
+        const frame = buildCodexRequestFrame(prompt, opts.model, fingerprint, sessionId, turnMetadata, windowGeneration);
+        const frameJson = JSON.stringify(frame);
+        // Build handshake headers to match Codex CLI 0.118's real upgrade
+        // request. Key sources:
+        //   codex-rs/core/src/client.rs:771-798 → build_websocket_headers
+        //     → build_responses_headers + build_conversation_headers +
+        //       build_responses_identity_headers
+        //   codex-rs/login/src/auth/default_client.rs:228 →
+        //     reqwest-level default header `originator`
+        //
+        // Real on-wire set for a /backend-api/codex/responses upgrade:
+        //   originator: codex_cli_rs
+        //   openai-beta: responses_websockets=2026-02-06
+        //   x-codex-turn-metadata: <json>
+        //   x-client-request-id: <conversation_id>
+        //   session_id: <conversation_id>        ← from build_conversation_headers
+        //   x-codex-window-id: <conversation_id>:<window_generation>
+        //   (+ authorization: Bearer, user-agent, and whatever the ws client adds)
+        //
+        // NOTE: `chatgpt-account-id` and `version` are NOT sent on the real
+        // upgrade path — they belong to other code assist endpoints. We leave
+        // them out to shrink the fingerprint delta.
+        const windowId = `${sessionId}:${windowGeneration}`;
         const headers = {
             "authorization": `Bearer ${creds.accessToken}`,
-            "chatgpt-account-id": creds.accountId,
             "originator": fingerprint.originator,
             "openai-beta": fingerprint.openai_beta,
             "session_id": sessionId,
-            "version": fingerprint.cli_version,
-            "x-codex-turn-metadata": turnMetadata,
             "x-client-request-id": sessionId,
+            "x-codex-window-id": windowId,
+            "x-codex-turn-metadata": turnMetadata,
         };
         if (fingerprint.user_agent) {
             headers["user-agent"] = fingerprint.user_agent;

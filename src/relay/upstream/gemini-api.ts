@@ -45,13 +45,20 @@ const OAUTH_CLIENT_ID =
 const OAUTH_CLIENT_SECRET = ["GOCSPX", "4uHgMPm-1o7Sk", "geV6Cu5clXFsxl"].join("-");
 const OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
 
-// Google Code Assist API — what the real `gemini` CLI uses for OAuth calls.
-// Capture of gemini-cli 0.36.0 shows it uses :generateContent for short
-// non-stream calls (complexity scorer) and :streamGenerateContent?alt=sse
-// for the main response. We use the non-stream variant to keep the relay
-// simple — same envelope, same auth, just a single JSON response.
+// Google Code Assist API. Real Gemini CLI's main chat loop is 100% on
+// streamGenerateContent — the non-stream generateContent variant is only
+// used for internal helpers like usePromptCompletion / toolDistillation
+// (web-search / web-fetch / chat-compression). Using non-stream for every
+// user prompt from this account would be a clear statistical signature
+// Google could use to fingerprint relay traffic, so we mirror the real
+// CLI's main path and parse the SSE response inline.
+//
+// Verified against gemini-cli source:
+//   - packages/core/src/core/geminiChat.ts:659   → generateContentStream
+//   - packages/core/src/code_assist/server.ts:115 → 'streamGenerateContent'
+//   - packages/core/src/code_assist/server.ts:456-508 → SSE line framing
 const CODE_ASSIST_BASE_URL = "https://cloudcode-pa.googleapis.com";
-const CODE_ASSIST_GENERATE_PATH = "/v1internal:generateContent";
+const CODE_ASSIST_GENERATE_PATH = "/v1internal:streamGenerateContent?alt=sse";
 
 const GEMINI_CREDS_FILE = join(homedir(), ".gemini", "oauth_creds.json");
 const CLAWMONEY_DIR = join(homedir(), ".clawmoney");
@@ -449,6 +456,18 @@ function parseRetryAfterMs(header: string | null): number | null {
   return null;
 }
 
+// ── Stable per-daemon session id ──
+//
+// Real Gemini CLI generates ONE session id at Config.getSessionId() when
+// the process starts and passes it into CodeAssistServer's constructor
+// (packages/core/src/config/config.ts:1545). Every generateContentStream
+// call in that process lifetime reuses the same id via request body's
+// `session_id` field. If we always send session_id: null (or a fresh id
+// per request), our traffic looks nothing like a real user's session.
+// Mirror the CLI by minting one UUID at module load and reusing it until
+// the daemon process exits.
+const DAEMON_SESSION_ID = randomUUID();
+
 // ── Core upstream call ──
 
 async function doCallGeminiApi(
@@ -463,9 +482,11 @@ async function doCallGeminiApi(
   const userPromptId = getMaskedRequestId();
   const maxTokens = opts.maxTokens ?? 8192;
 
-  // Real envelope observed from gemini-cli 0.36.0 traffic:
-  //   {model, project, user_prompt_id, request}
-  // NOT the Antigravity envelope. user_prompt_id is a UUID stable per session.
+  // Real envelope observed from gemini-cli source (converter.ts:129-178).
+  // The top-level shape is `{model, project, user_prompt_id, request}`,
+  // with the inner VertexGenerateContentRequest containing contents +
+  // (optional) systemInstruction / tools / toolConfig / safetySettings /
+  // generationConfig / session_id. session_id stays stable for a daemon.
   const outerRequest: V1InternalGenerateRequest = {
     model: opts.model,
     project: fingerprint.project_id,
@@ -480,7 +501,7 @@ async function doCallGeminiApi(
       generationConfig: {
         maxOutputTokens: maxTokens,
       },
-      session_id: null,
+      session_id: DAEMON_SESSION_ID,
     },
   };
 
@@ -493,18 +514,19 @@ async function doCallGeminiApi(
   while (true) {
     const creds = await getFreshCreds();
 
-    // Real gemini-cli headers observed in capture:
-    //   authorization: Bearer <token>
-    //   content-type: application/json
-    //   accept: application/json
-    //   user-agent: GeminiCLI/<cli>/<model> (darwin; arm64; terminal) google-api-nodejs-client/9.15.1
-    //   x-goog-api-client: gl-node/<node-version>   <-- NOT gemini-cli/...
+    // Real gemini-cli headers (packages/core/src/code_assist/server.ts:456):
+    //   content-type: application/json       (+ any httpOptions.headers)
+    //   authorization: Bearer <token>        (set by GoogleAuth client)
+    //   user-agent: GeminiCLI/<ver>/<model> (<os>; <arch>; <surface>) google-api-nodejs-client/<ver>
+    //   x-goog-api-client: gl-node/<node-ver>
     //   (NO x-goog-user-project — project lives in the body)
+    // For streaming the server also returns text/event-stream, so we accept
+    // event-stream explicitly.
     const resp = await fetch(url, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "accept": "application/json",
+        "accept": "text/event-stream, application/json",
         "authorization": `Bearer ${creds.access_token}`,
         "user-agent": fingerprint.user_agent,
         "x-goog-api-client": fingerprint.x_goog_api_client,
@@ -513,8 +535,7 @@ async function doCallGeminiApi(
     });
 
     if (resp.ok) {
-      const data = (await resp.json()) as V1InternalGenerateResponse;
-      const parsed = parseGeminiResponse(data, opts.model);
+      const parsed = await parseGeminiSseResponse(resp, opts.model);
       recordGeminiSpend(parsed, opts.model);
       return parsed;
     }
@@ -580,31 +601,124 @@ function recordGeminiSpend(parsed: ParsedOutput, model: string): void {
   rateGuard.recordSpend(cost.apiCost);
 }
 
-function parseGeminiResponse(
-  data: V1InternalGenerateResponse,
+/**
+ * Parse a Gemini Code Assist streamGenerateContent?alt=sse response.
+ *
+ * Wire framing, mirrored from the real gemini-cli at
+ * packages/core/src/code_assist/server.ts:456-508 (requestStreamingPost):
+ *
+ *   - The response body is a series of `data: {json}` lines.
+ *   - If a chunk's JSON spans multiple lines (which happens when Google
+ *     pretty-prints), every line starts with `data: ` and they are all
+ *     joined by `\n` before JSON.parse.
+ *   - A blank line terminates the current chunk and yields it.
+ *   - Malformed JSON chunks are silently skipped (gemini-cli logs an
+ *     InvalidChunkEvent — we just drop them).
+ *
+ * Each decoded chunk shape (CaGenerateContentResponse):
+ *   {
+ *     response: {
+ *       candidates: [{content: {parts: [{text: "..."}]}, finishReason?}],
+ *       usageMetadata: {promptTokenCount, candidatesTokenCount,
+ *                       cachedContentTokenCount}
+ *     },
+ *     traceId?: "...",
+ *   }
+ *
+ * Text accumulates across candidates[0].content.parts[*].text; usage
+ * metadata is on the last chunk(s) (totals update progressively).
+ */
+async function parseGeminiSseResponse(
+  resp: Response,
   fallbackModel: string
-): ParsedOutput {
-  const response = data.response ?? {};
-  const candidates = response.candidates ?? [];
-  const firstCandidate = candidates[0];
+): Promise<ParsedOutput> {
+  const reader = resp.body?.getReader();
+  if (!reader) {
+    throw new Error("Gemini streamGenerateContent returned no body");
+  }
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  let text = "";
+  let model = fallbackModel;
+  let promptTokens = 0;
+  let candidateTokens = 0;
+  let cachedTokens = 0;
 
-  const text = (firstCandidate?.content?.parts ?? [])
-    .map((p) => p.text ?? "")
-    .join("");
+  // A single logical chunk may span several `data: ` lines with a terminal
+  // blank line. We accumulate them in `pending` and flush on blank.
+  let pending: string[] = [];
 
-  const usage = response.usageMetadata ?? {};
-  const cached = usage.cachedContentTokenCount ?? 0;
+  const applyChunk = (chunk: V1InternalGenerateResponse): void => {
+    const inner = chunk.response ?? {};
+    const candidates = inner.candidates ?? [];
+    for (const c of candidates) {
+      for (const p of c.content?.parts ?? []) {
+        if (p.text) text += p.text;
+      }
+    }
+    const usage = inner.usageMetadata;
+    if (usage) {
+      if (typeof usage.promptTokenCount === "number") {
+        promptTokens = usage.promptTokenCount;
+      }
+      if (typeof usage.candidatesTokenCount === "number") {
+        candidateTokens = usage.candidatesTokenCount;
+      }
+      if (typeof usage.cachedContentTokenCount === "number") {
+        cachedTokens = usage.cachedContentTokenCount;
+      }
+    }
+    // Some Code Assist responses surface modelVersion on the outer shape
+    // when the server routes the request (e.g. 1.5 → 2.5 redirect). Use
+    // it over the fallback so billing/analytics see the real served model.
+    const mv = (chunk as { modelVersion?: string }).modelVersion;
+    if (typeof mv === "string" && mv) model = mv;
+  };
+
+  const flushPending = (): void => {
+    if (pending.length === 0) return;
+    const joined = pending.join("\n");
+    pending = [];
+    try {
+      applyChunk(JSON.parse(joined) as V1InternalGenerateResponse);
+    } catch {
+      // Silently drop malformed chunks — gemini-cli does the same
+      // (logInvalidChunk then continue).
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let newlineIdx: number;
+    while ((newlineIdx = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, newlineIdx).replace(/\r$/, "");
+      buffer = buffer.slice(newlineIdx + 1);
+      if (line === "") {
+        flushPending();
+      } else if (line.startsWith("data: ")) {
+        pending.push(line.slice(6).trim());
+      } else if (line.startsWith("data:")) {
+        // Tolerate `data:` without trailing space, though gemini-cli
+        // itself checks for the 6-char `data: ` prefix.
+        pending.push(line.slice(5).trim());
+      }
+      // Ignore other lines (comments, id fields) per gemini-cli.
+    }
+  }
+  flushPending();
 
   return {
     text,
     sessionId: "",
     usage: {
-      input_tokens: Math.max(0, (usage.promptTokenCount ?? 0) - cached),
-      output_tokens: usage.candidatesTokenCount ?? 0,
+      input_tokens: Math.max(0, promptTokens - cachedTokens),
+      output_tokens: candidateTokens,
       cache_creation_tokens: 0,
-      cache_read_tokens: cached,
+      cache_read_tokens: cachedTokens,
     },
-    model: fallbackModel,
+    model,
     costUsd: 0,
   };
 }
