@@ -67,8 +67,21 @@ const DEFAULT_USER_AGENT = `claude-cli/${DEFAULT_CLI_VERSION} (external, ${DEFAU
 // of Anthropic's server-side check that the request came from a real CLI.
 const CLAUDE_FINGERPRINT_SALT = "59cf53e54c78";
 
+// Headers that real Claude Code emits on every /v1/messages call. The
+// Anthropic SDK would inject these automatically; since we bypass the SDK
+// and hand-roll the fetch call we have to include them verbatim.
+//
+// Note the deliberate omissions:
+//   - `anthropic-beta` is NOT static — it is per-request and derived from
+//     the model via pickClaudeBetasForModel(). Real Claude Code passes
+//     the list via the SDK's `betas: [...]` body param and the SDK then
+//     emits it as a comma-joined `anthropic-beta` header. We do the same
+//     thing by building the header inline in doCallClaudeApi so Haiku
+//     requests drop `claude-code-20250219` like the real CLI.
+//   - `accept` is overridden per-request to `text/event-stream` when we
+//     set stream:true (see doCallClaudeApi). Leaving it out of the static
+//     set so we can pick the right value at call time.
 const STATIC_CLAUDE_CODE_HEADERS: Record<string, string> = {
-  "accept": "application/json",
   "x-stainless-retry-count": "0",
   "x-stainless-timeout": "600",
   "x-stainless-lang": "js",
@@ -81,11 +94,6 @@ const STATIC_CLAUDE_CODE_HEADERS: Record<string, string> = {
   "anthropic-version": "2023-06-01",
   "x-app": "cli",
   "content-type": "application/json",
-  // Minimal beta set that Max-tier subscriptions always accept. Adding
-  // context-1m or context-management here will get rejected as "long
-  // context beta not available for this subscription" on non-Enterprise tiers.
-  "anthropic-beta":
-    "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14",
 };
 
 // System prompt captured from real Claude Code ≥ 2.1.x. The first marker line
@@ -108,6 +116,97 @@ const MODEL_ID_OVERRIDES: Record<string, string> = {
 
 function normalizeModel(model: string): string {
   return MODEL_ID_OVERRIDES[model] ?? model;
+}
+
+// ── Per-model thinking + betas selection (mirrors real Claude Code) ──
+//
+// Real Claude Code ALWAYS sends a `thinking` body field for Claude 4+
+// models, and the shape depends on whether the model supports adaptive
+// thinking. Source: claude-code-best/src/utils/thinking.ts:
+//   - modelSupportsThinking() → any canonical name NOT matching "claude-3-"
+//   - modelSupportsAdaptiveThinking() → only canonical names containing
+//     "opus-4-6" or "sonnet-4-6"
+//
+// If we send requests to Anthropic without this field but with Claude 4+
+// models, the per-account traffic pattern is "zero thinking on every
+// message" which is a clear relay-farm fingerprint (real users on these
+// tiers get adaptive thinking automatically and have no way to turn it
+// off short of setting alwaysThinkingEnabled=false).
+
+function modelSupportsThinking(model: string): boolean {
+  return !normalizeModel(model).includes("claude-3-");
+}
+
+function modelSupportsAdaptiveThinking(model: string): boolean {
+  const m = normalizeModel(model);
+  return m.includes("opus-4-6") || m.includes("sonnet-4-6");
+}
+
+type ClaudeThinkingParam =
+  | { type: "adaptive" }
+  | { type: "enabled"; budget_tokens: number };
+
+// Anthropic's /v1/messages rejects thinking.enabled.budget_tokens < 1024.
+const CLAUDE_MIN_THINKING_BUDGET = 1024;
+
+function pickClaudeThinkingConfig(
+  model: string,
+  maxTokens: number
+): { config: ClaudeThinkingParam | undefined; adjustedMaxTokens: number } {
+  if (!modelSupportsThinking(model)) {
+    return { config: undefined, adjustedMaxTokens: maxTokens };
+  }
+  if (modelSupportsAdaptiveThinking(model)) {
+    // Adaptive has no fixed budget — the API internally picks. Don't
+    // inflate max_tokens; keep caller's cap.
+    return { config: { type: "adaptive" }, adjustedMaxTokens: maxTokens };
+  }
+  // Budget thinking (4-5 / haiku-4-5): budget_tokens must be >= 1024 AND
+  // strictly less than max_tokens. If caller's max_tokens is too low to
+  // fit the 1024 floor + 1, bump max_tokens so we can send a valid
+  // thinking block. Real Claude Code uses `getMaxThinkingTokensForModel
+  // = getModelMaxOutputTokens(model).upperLimit - 1` which is usually
+  // many thousands, but for a relay we want to respect the caller's cap
+  // unless it would force an invalid request.
+  const requiredMax = CLAUDE_MIN_THINKING_BUDGET + 1;
+  const adjustedMaxTokens = Math.max(maxTokens, requiredMax);
+  const budget = Math.max(CLAUDE_MIN_THINKING_BUDGET, adjustedMaxTokens - 1);
+  return {
+    config: { type: "enabled", budget_tokens: budget },
+    adjustedMaxTokens,
+  };
+}
+
+/**
+ * Assemble the `betas` array that goes into the /v1/messages body. Real
+ * Claude Code constructs this dynamically per-request from
+ * getAllModelBetas() — the key branches are:
+ *   1. non-haiku → push `claude-code-20250219`
+ *   2. OAuth subscriber → push `oauth-2025-04-20`
+ *   3. model supports interleaved-source-processing (ISP, i.e. any 4+) →
+ *      push `interleaved-thinking-2025-05-14`
+ * Source: claude-code-best/src/utils/betas.ts:233-261 (getAllModelBetas).
+ *
+ * The Anthropic SDK later materializes this array into the
+ * `anthropic-beta` HTTP header as a comma-separated list. Sending it via
+ * the body instead of a static header is indistinguishable from the SDK
+ * wire format (we are literally doing the same thing the SDK does), but
+ * making it dynamic per-model avoids the Haiku mismatch where real CLI
+ * drops `claude-code-20250219` but our old static header always sent it.
+ */
+function pickClaudeBetasForModel(model: string): string[] {
+  const m = normalizeModel(model);
+  const isHaiku = m.includes("haiku");
+  const betas: string[] = [];
+  if (!isHaiku) betas.push("claude-code-20250219");
+  // OAuth subscriber — always true for us since we only serve relay from
+  // Max-tier OAuth tokens.
+  betas.push("oauth-2025-04-20");
+  // Interleaved thinking — all Claude 4+ models support it.
+  if (modelSupportsThinking(model)) {
+    betas.push("interleaved-thinking-2025-05-14");
+  }
+  return betas;
 }
 
 // ── Types ──
@@ -799,9 +898,19 @@ async function doCallClaudeApi(opts: CallClaudeApiOptions): Promise<ParsedOutput
     fingerprint.cc_entrypoint
   );
 
-  const body = {
+  // Per-request betas + thinking config, picked from the real CLI's
+  // per-model logic (see pickClaudeBetasForModel / pickClaudeThinkingConfig).
+  // These are two of the strongest fingerprint signals Anthropic could use
+  // to distinguish relay traffic from genuine CLI traffic.
+  const betasForRequest = pickClaudeBetasForModel(opts.model);
+  const { config: thinkingConfig, adjustedMaxTokens } = pickClaudeThinkingConfig(
+    opts.model,
+    maxTokens
+  );
+
+  const body: Record<string, unknown> = {
     model: normalizeModel(opts.model),
-    max_tokens: maxTokens,
+    max_tokens: adjustedMaxTokens,
     system: [
       {
         type: "text",
@@ -840,7 +949,18 @@ async function doCallClaudeApi(opts: CallClaudeApiOptions): Promise<ParsedOutput
     // entire account's traffic would be the opposite polarity of what the
     // CLI ever emits. Switch to streaming to match.
     stream: true,
+    // NOTE: `betas` is a client-side SDK-only param — the Anthropic SDK
+    // strips it out of the body and emits it as the `anthropic-beta`
+    // HTTP header. Anthropic's API rejects requests that carry `betas`
+    // in the wire body with `betas: Extra inputs are not permitted`.
+    // The header is set on the fetch call below, so don't put it here.
   };
+  // `thinking` is always set on Claude 4+ models by real CLI. Omitting it
+  // would be an account-wide zero-thinking anomaly. Adaptive for 4-6
+  // models, enabled+budget for 4-5 / haiku.
+  if (thinkingConfig) {
+    body.thinking = thinkingConfig;
+  }
   const bodyJson = JSON.stringify(body);
 
   let transientAttempt = 0;
@@ -852,6 +972,15 @@ async function doCallClaudeApi(opts: CallClaudeApiOptions): Promise<ParsedOutput
       method: "POST",
       headers: {
         ...STATIC_CLAUDE_CODE_HEADERS,
+        // SSE streaming — Anthropic returns event-stream body when
+        // stream:true is set in the body. The SDK default sets an accept
+        // that includes text/event-stream; we match that exactly.
+        "accept": "application/json, text/event-stream",
+        // `anthropic-beta` is what the Anthropic SDK generates from the
+        // body's `betas` array. We could leave body.betas and drop this
+        // header, but some Anthropic deploys check header presence too,
+        // so we send both for safety. The values must match.
+        "anthropic-beta": betasForRequest.join(","),
         "user-agent": fingerprint.user_agent,
         "authorization": `Bearer ${creds.accessToken}`,
         "x-claude-code-session-id": sessionId,
