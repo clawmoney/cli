@@ -97,7 +97,29 @@ function loadRelayConfig(cliOverride) {
         agent_id: raw.agent_id,
         agent_slug: raw.agent_slug,
         relay,
+        proxy: typeof raw.proxy === "string" ? raw.proxy : undefined,
     };
+}
+/**
+ * Export the config's `proxy` setting into process.env so every downstream
+ * module (claude-api, codex-api, gemini-api, antigravity-api) that already
+ * reads HTTPS_PROXY at startup picks it up without any per-module changes.
+ * Silently no-ops if the env var is already set by the user's shell.
+ */
+function applyProxyFromConfig(config) {
+    if (!config.proxy)
+        return;
+    const alreadySet = process.env.HTTPS_PROXY ||
+        process.env.https_proxy ||
+        process.env.HTTP_PROXY ||
+        process.env.http_proxy;
+    if (alreadySet) {
+        logger.info(`[provider] shell HTTPS_PROXY=${alreadySet} overrides config.yaml proxy=${config.proxy}`);
+        return;
+    }
+    process.env.HTTPS_PROXY = config.proxy;
+    process.env.HTTP_PROXY = config.proxy;
+    logger.info(`[provider] using config.yaml proxy=${config.proxy}`);
 }
 // ── Request handler ──
 function messagesToPrompt(messages) {
@@ -239,6 +261,10 @@ export function runRelayProvider(cliOverride) {
         process.exit(1);
     }
     const config = loadRelayConfig(cliOverride);
+    // Make the config-level proxy visible to every upstream module that reads
+    // process.env.HTTPS_PROXY / http_proxy at init time. Must run BEFORE any
+    // preflight call so the first outbound request already goes through it.
+    applyProxyFromConfig(config);
     // Prepare relay sandbox assets once at startup.
     ensureEmptyMcpConfig();
     ensureSandboxDir();

@@ -65,8 +65,12 @@ export const API_PRICES: Record<string, ModelPricing> = {
   "antigravity-gemini-3-pro":           { input: 2,    output: 12 },
   "antigravity-gemini-3.1-pro":         { input: 2,    output: 12 },
   "antigravity-gemini-3-flash":         { input: 0.50, output: 3 },
-  "antigravity-claude-sonnet-4-6":      { input: 3,    output: 15 },
+  "antigravity-gemini-2.5-pro":         { input: 1.25, output: 10 },
+  "antigravity-gemini-2.5-flash":       { input: 0.30, output: 2.50 },
+  "antigravity-claude-opus-4-6":        { input: 5,    output: 25 },
   "antigravity-claude-opus-4-6-thinking": { input: 5,  output: 25 },
+  "antigravity-claude-sonnet-4-6":      { input: 3,    output: 15 },
+  "antigravity-claude-sonnet-4-5":      { input: 3,    output: 15 },
 
   // ── Google (Gemini) ──
   // Verified against LiteLLM pricing DB.

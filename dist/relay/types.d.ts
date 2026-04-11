@@ -87,4 +87,14 @@ export interface RelayProviderConfig {
     agent_id?: string;
     agent_slug?: string;
     relay: RelayProviderSettings;
+    /**
+     * Upstream HTTPS proxy. When set, the daemon exports HTTPS_PROXY /
+     * HTTP_PROXY before running any fetch, so providers on GFW-side machines
+     * don't have to remember to `export https_proxy=` in every shell. Only
+     * plain HTTP(S) proxies are supported (SOCKS is ignored with a warning).
+     *
+     * Example:
+     *     proxy: http://127.0.0.1:7897
+     */
+    proxy?: string;
 }
