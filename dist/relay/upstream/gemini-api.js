@@ -253,13 +253,70 @@ export function getGeminiRateGuardSnapshot() {
     return rateGuard?.currentLoad() ?? null;
 }
 // ── Preflight ──
+//
+// Real Gemini CLI's startup sequence (packages/core/src/code_assist/
+// setup.ts:164) ALWAYS calls loadCodeAssist once at launch, before any
+// user prompt hits generateContentStream. That call:
+//   - registers the client instance with Code Assist
+//   - warms any server-side caches tied to the project
+//   - establishes the "this account has a normal CLI session" pattern
+//     that the fraud pipeline uses to distinguish genuine CLI users
+//     from bare-API abusers
+// Our daemon used to jump straight to streamGenerateContent, which on
+// a cold account looks like "first request is a raw model call, no
+// setup ceremony" — a distinctive bot fingerprint. Mirror the real CLI
+// by calling loadCodeAssist exactly once per daemon boot. Silently
+// swallow any error so a flaky setup call doesn't tank the daemon.
+async function warmupLoadCodeAssist(projectId, accessToken, userAgent, xGoogApiClient) {
+    const url = `${CODE_ASSIST_BASE_URL}/v1internal:loadCodeAssist`;
+    const body = JSON.stringify({
+        cloudaicompanionProject: projectId,
+        metadata: {
+            // Matches real CLI constant set from setup.ts:154-158. Note
+            // `ideType: IDE_UNSPECIFIED` — that's the CLI default, Antigravity
+            // uses a different value and we must NOT leak the two signals.
+            ideType: "IDE_UNSPECIFIED",
+            platform: "PLATFORM_UNSPECIFIED",
+            pluginType: "GEMINI",
+            duetProject: projectId,
+        },
+    });
+    try {
+        const resp = await fetch(url, {
+            method: "POST",
+            headers: {
+                "content-type": "application/json",
+                "accept": "application/json",
+                "authorization": `Bearer ${accessToken}`,
+                "user-agent": userAgent,
+                "x-goog-api-client": xGoogApiClient,
+            },
+            body,
+        });
+        if (!resp.ok) {
+            logger.warn(`[gemini-api] warmup loadCodeAssist non-OK (${resp.status}) — continuing`);
+            // Drain body to release the connection.
+            await resp.text().catch(() => "");
+            return;
+        }
+        await resp.text().catch(() => "");
+        logger.info("[gemini-api] warmup loadCodeAssist OK");
+    }
+    catch (err) {
+        logger.warn(`[gemini-api] warmup loadCodeAssist error — continuing: ${err.message}`);
+    }
+}
 export async function preflightGeminiApi(config) {
     configureDispatcher();
     configureGeminiRateGuard(config);
-    loadFingerprint();
-    await getFreshCreds();
+    const fingerprint = loadFingerprint();
+    const creds = await getFreshCreds();
     logger.info(`[gemini-api] preflight OK (project=${cachedFingerprint?.project_id ?? "?"}, ` +
         `ua=${cachedFingerprint?.user_agent ?? "?"})`);
+    // Warmup call — mirror real CLI startup before the first user prompt.
+    // Done after token refresh so the request goes out with a fresh access
+    // token (expired-token warmups would look like another bot signal).
+    await warmupLoadCodeAssist(fingerprint.project_id, creds.access_token, fingerprint.user_agent, fingerprint.x_goog_api_client);
 }
 export async function callGeminiApi(opts) {
     configureDispatcher();
