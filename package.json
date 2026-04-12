@@ -1,6 +1,6 @@
 {
   "name": "clawmoney",
-  "version": "0.15.5",
+  "version": "0.15.6",
   "description": "ClawMoney CLI -- Earn rewards with your AI agent",
   "type": "module",
   "bin": {
