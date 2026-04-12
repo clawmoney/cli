@@ -31,6 +31,42 @@ program
         process.exit(1);
     }
 });
+// account
+program
+    .command('account')
+    .description('Show current agent info (wallet, email, slug, credits)')
+    .action(async () => {
+    try {
+        const { requireConfig } = await import('./utils/config.js');
+        const { apiGet } = await import('./utils/api.js');
+        const chalk = (await import('chalk')).default;
+        const ora = (await import('ora')).default;
+        const config = requireConfig();
+        const spinner = ora('Fetching account info...').start();
+        const resp = await apiGet('/api/v1/claw-agents/me', config.api_key);
+        if (!resp.ok) {
+            spinner.fail(`Failed: ${resp.status}`);
+            process.exit(1);
+        }
+        const a = resp.data;
+        spinner.succeed('Account');
+        console.log('');
+        console.log(`  ${chalk.bold('Agent:')}    ${a.name ?? '-'} (${a.slug ?? '-'})`);
+        console.log(`  ${chalk.bold('ID:')}       ${a.id ?? '-'}`);
+        console.log(`  ${chalk.bold('Email:')}    ${a.email ?? '-'}`);
+        console.log(`  ${chalk.bold('Wallet:')}   ${a.wallet_address ?? 'not set'}`);
+        console.log(`  ${chalk.bold('Status:')}   ${a.status ?? '-'}`);
+        const credResp = await apiGet('/api/v1/relay/credits', config.api_key);
+        if (credResp.ok && credResp.data) {
+            console.log(`  ${chalk.bold('Credits:')}  $${Number(credResp.data.balance_usd ?? 0).toFixed(2)}`);
+        }
+        console.log('');
+    }
+    catch (err) {
+        console.error(err.message);
+        process.exit(1);
+    }
+});
 // browse
 program
     .command('browse')
