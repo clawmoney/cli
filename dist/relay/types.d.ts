@@ -1,10 +1,15 @@
+export interface RelayContentBlock {
+    type: string;
+    text?: string;
+}
+export type RelayMessageContent = string | RelayContentBlock[] | null;
 export interface RelayRequest {
     event: "relay_request";
     request_id: string;
     prompt?: string;
     messages?: Array<{
         role: string;
-        content: string;
+        content: RelayMessageContent;
     }>;
     cli_type?: string;
     session_id?: string;

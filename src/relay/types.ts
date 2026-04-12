@@ -1,10 +1,22 @@
 // ── Relay request from server ──
 
+// A content block as Anthropic/Claude Code sends it. We only care about
+// text blocks; other types (image, tool_use, tool_result) are ignored when
+// flattening to a string prompt.
+export interface RelayContentBlock {
+  type: string;
+  text?: string;
+}
+
+// Message content can be either a plain string (OpenAI-style, legacy Claude)
+// or an array of content blocks (Claude Code / real Anthropic API shape).
+export type RelayMessageContent = string | RelayContentBlock[] | null;
+
 export interface RelayRequest {
   event: "relay_request";
   request_id: string;
   prompt?: string;
-  messages?: Array<{ role: string; content: string }>;
+  messages?: Array<{ role: string; content: RelayMessageContent }>;
   cli_type?: string;
   session_id?: string;           // relay session UUID
   cli_session_id?: string | null; // CLI-side session id (for --resume)

@@ -134,8 +134,32 @@ function applyProxyFromConfig(config) {
     logger.info(`[provider] using config.yaml proxy=${config.proxy}`);
 }
 // ── Request handler ──
+// Flatten a Claude/OpenAI message `content` field into a plain string.
+// Content may be either a string (OpenAI-style) or an array of content
+// blocks (Claude Code / real Anthropic API shape: [{type:"text",text:"..."}]).
+// String(array) would produce "[object Object],[object Object]" which the
+// model then echoes back as garbage — hence the explicit block walk.
+function extractMessageText(content) {
+    if (content == null)
+        return "";
+    if (typeof content === "string")
+        return content;
+    if (Array.isArray(content)) {
+        const parts = [];
+        for (const block of content) {
+            if (block && typeof block === "object") {
+                const b = block;
+                if (b.type === "text" && typeof b.text === "string" && b.text) {
+                    parts.push(b.text);
+                }
+            }
+        }
+        return parts.join("\n");
+    }
+    return "";
+}
 function messagesToPrompt(messages) {
-    return messages.map((m) => String(m.content ?? "")).join("\n");
+    return messages.map((m) => extractMessageText(m.content)).join("\n");
 }
 async function executeRelayRequest(request, config) {
     const { request_id, max_budget_usd } = request;
@@ -148,7 +172,7 @@ async function executeRelayRequest(request, config) {
         ? messagesToPrompt(request.messages)
         : request.prompt ?? "";
     const lastUserMsg = request.messages
-        ? [...request.messages].reverse().find((m) => m.role === "user")?.content ?? ""
+        ? extractMessageText([...request.messages].reverse().find((m) => m.role === "user")?.content)
         : prompt;
     const turns = request.messages
         ? request.messages.filter((m) => m.role === "user").length
