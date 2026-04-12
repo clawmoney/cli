@@ -60,36 +60,39 @@ program
         if (credResp.ok && credResp.data) {
             console.log(`  ${chalk.bold('Credits:')}  $${Number(credResp.data.balance_usd ?? 0).toFixed(2)}`);
         }
-        // Query on-chain wallet balance via awal
-        if (a.wallet_address) {
+        // Query Base mainnet USDC balance directly via JSON-RPC (no awal
+        // dependency — works even if awal wallet bridge is down). Base USDC
+        // is 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913, balanceOf(address)
+        // selector = 0x70a08231.
+        if (a.wallet_address && typeof a.wallet_address === 'string') {
             try {
-                const { awalExec } = await import('./utils/awal.js');
-                const balResult = await awalExec(['balance']);
-                const balData = balResult.data;
-                if (balData && typeof balData === 'object') {
-                    const lines = [];
-                    for (const [chain, assets] of Object.entries(balData)) {
-                        if (assets && typeof assets === 'object' && !Array.isArray(assets)) {
-                            const parts = Object.entries(assets)
-                                .filter(([, v]) => v && String(v) !== '0')
-                                .map(([token, amount]) => `${amount} ${token}`);
-                            if (parts.length > 0)
-                                lines.push(`${chain}: ${parts.join(', ')}`);
-                        }
-                        else if (assets && String(assets) !== '0') {
-                            lines.push(`${chain}: ${assets}`);
-                        }
-                    }
-                    if (lines.length > 0) {
-                        console.log(`  ${chalk.bold('On-chain:')} ${lines[0]}`);
-                        for (let i = 1; i < lines.length; i++) {
-                            console.log(`             ${lines[i]}`);
-                        }
-                    }
+                const walletLower = a.wallet_address.toLowerCase().replace(/^0x/, '').padStart(64, '0');
+                const data = '0x70a08231' + walletLower;
+                const rpcResp = await fetch('https://mainnet.base.org', {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({
+                        jsonrpc: '2.0',
+                        id: 1,
+                        method: 'eth_call',
+                        params: [
+                            {
+                                to: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+                                data,
+                            },
+                            'latest',
+                        ],
+                    }),
+                });
+                const rpcData = (await rpcResp.json());
+                if (rpcData.result) {
+                    const atomic = BigInt(rpcData.result);
+                    const usdc = Number(atomic) / 1_000_000;
+                    console.log(`  ${chalk.bold('On-chain:')} $${usdc.toFixed(2)} USDC (Base)`);
                 }
             }
-            catch {
-                // awal not installed or not configured — skip silently
+            catch (err) {
+                console.log(`  ${chalk.bold('On-chain:')} ${chalk.dim('(fetch failed)')}`);
             }
         }
         console.log('');
