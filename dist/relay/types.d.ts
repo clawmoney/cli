@@ -51,7 +51,12 @@ export interface RelayResponse {
     error?: string;
     session_window?: RelayResponseSessionWindow;
 }
-export type RelayOutgoingEvent = RelayResponse;
+export interface RelayStreamChunkEvent {
+    event: "relay_stream_chunk";
+    request_id: string;
+    sse: string;
+}
+export type RelayOutgoingEvent = RelayResponse | RelayStreamChunkEvent;
 export interface ParsedOutput {
     text: string;
     sessionId: string;

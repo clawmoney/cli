@@ -820,7 +820,10 @@ async function doCallClaudeApi(opts) {
             // Stream parser — real Claude Code's main path uses stream:true; see
             // body construction above. parseClaudeSseResponse aggregates text
             // deltas + usage until message_stop, matching SDK semantics.
-            const parsed = await parseClaudeSseResponse(resp, opts.model);
+            // When opts.onRawEvent is set, each SSE frame is also forwarded
+            // verbatim so the Hub can stream it through to the end client in
+            // real time instead of waiting for the whole response.
+            const parsed = await parseClaudeSseResponse(resp, opts.model, opts.onRawEvent);
             recordSpendFromUsage(parsed, opts.model);
             return parsed;
         }
@@ -911,7 +914,7 @@ function recordSpendFromUsage(parsed, model) {
  *   event: error           (upstream error — throw)
  *   data: {"type":"error","error":{"type":"overloaded_error","message":"..."}}
  */
-async function parseClaudeSseResponse(resp, fallbackModel) {
+async function parseClaudeSseResponse(resp, fallbackModel, onRawFrame) {
     const reader = resp.body?.getReader();
     if (!reader) {
         throw new Error("Claude streamGenerateContent returned no body");
@@ -925,6 +928,10 @@ async function parseClaudeSseResponse(resp, fallbackModel) {
     let cacheCreation = 0;
     let cacheRead = 0;
     let streamError;
+    // Accumulates one SSE frame (everything between blank lines) so we can
+    // emit the full `event: X\ndata: Y\n\n` block via onRawFrame. SSE frames
+    // are terminated by an empty line per the spec.
+    let frameLines = [];
     const processChunk = (jsonStr) => {
         const trimmed = jsonStr.trim();
         if (!trimmed)
@@ -992,6 +999,22 @@ async function parseClaudeSseResponse(resp, fallbackModel) {
                 break;
         }
     };
+    const flushFrame = () => {
+        if (frameLines.length === 0)
+            return;
+        // Forward the raw SSE frame verbatim so consumers see it exactly as
+        // Anthropic emitted it (including the event: name line, which Claude
+        // Code's SDK parser uses as the dispatch key).
+        if (onRawFrame) {
+            onRawFrame(frameLines.join("\n") + "\n\n");
+        }
+        for (const line of frameLines) {
+            if (line.startsWith("data:")) {
+                processChunk(line.slice(5));
+            }
+        }
+        frameLines = [];
+    };
     while (true) {
         const { value, done } = await reader.read();
         if (done)
@@ -1001,19 +1024,18 @@ async function parseClaudeSseResponse(resp, fallbackModel) {
         while ((newlineIdx = buffer.indexOf("\n")) >= 0) {
             const line = buffer.slice(0, newlineIdx).replace(/\r$/, "");
             buffer = buffer.slice(newlineIdx + 1);
-            if (!line)
-                continue;
-            // SSE dispatches on `data: ...` lines. `event: ...` names are
-            // informational (the chunk JSON's `type` field is authoritative).
-            if (line.startsWith("data:")) {
-                processChunk(line.slice(5));
+            if (line === "") {
+                // Blank line = end of SSE frame.
+                flushFrame();
+            }
+            else {
+                frameLines.push(line);
             }
         }
     }
-    // Flush trailing line (rare — most servers end with a \n\n).
-    if (buffer.startsWith("data:")) {
-        processChunk(buffer.slice(5));
-    }
+    // Flush any trailing frame without a final blank line. Rare, but SSE
+    // allows a stream to end without a terminating \n\n.
+    flushFrame();
     if (streamError) {
         throw new Error(`Anthropic stream error: ${streamError.type ?? "unknown"} — ${streamError.message ?? ""}`);
     }

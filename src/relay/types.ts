@@ -77,7 +77,18 @@ export interface RelayResponse {
   session_window?: RelayResponseSessionWindow;
 }
 
-export type RelayOutgoingEvent = RelayResponse;
+// Intermediate streaming frame — one raw Anthropic SSE frame forwarded
+// from the daemon to the Hub while the upstream response is still being
+// generated. Hubs that want real streaming forward the `sse` payload
+// verbatim to the end client; Hubs that don't, ignore these events and
+// use the final relay_response.content instead.
+export interface RelayStreamChunkEvent {
+  event: "relay_stream_chunk";
+  request_id: string;
+  sse: string;
+}
+
+export type RelayOutgoingEvent = RelayResponse | RelayStreamChunkEvent;
 
 // ── Parsed CLI output ──
 

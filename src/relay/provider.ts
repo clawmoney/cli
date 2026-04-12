@@ -207,7 +207,8 @@ function messagesToPrompt(
 
 async function executeRelayRequest(
   request: RelayRequest,
-  config: RelayProviderConfig
+  config: RelayProviderConfig,
+  sendChunk?: (sse: string) => void
 ): Promise<RelayResponse> {
   const { request_id, max_budget_usd } = request;
   const cliType = request.cli_type ?? config.relay.cli_type;
@@ -268,6 +269,12 @@ async function executeRelayRequest(
         prompt,
         model,
         maxTokens: max_budget_usd ? undefined : 4096,
+        // Forward each raw Anthropic SSE frame to the Hub in real time
+        // so the end client sees tokens as they're generated (instead of
+        // waiting for the whole response to arrive). Only claude-api has
+        // true pass-through streaming today — codex/gemini/antigravity
+        // still buffer the full response upstream and emit a single frame.
+        onRawEvent: sendChunk,
       });
     }
 
@@ -410,7 +417,21 @@ export function runRelayProvider(cliOverride?: string): void {
       `Processing relay request=${request.request_id} (active=${activeTasks.size}/${config.relay.concurrency})`
     );
 
-    executeRelayRequest(request, config)
+    // Per-request SSE chunk forwarder. Each raw Anthropic SSE frame is sent
+    // to the Hub as its own WS event so the Hub can relay it straight to the
+    // buyer — drops TTFT from "whole response" to "first-token-from-upstream".
+    // WS sends are fire-and-forget here; the final relay_response still
+    // carries the fully aggregated content as a fallback for Hubs that
+    // haven't wired up chunk forwarding yet.
+    const sendChunk = (sse: string): void => {
+      wsClient.send({
+        event: "relay_stream_chunk",
+        request_id: request.request_id,
+        sse,
+      });
+    };
+
+    executeRelayRequest(request, config, sendChunk)
       .then((response) => {
         const sent = wsClient.send(response);
         if (sent) {

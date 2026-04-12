@@ -27,5 +27,6 @@ export interface CallClaudeApiOptions {
     prompt: string;
     model: string;
     maxTokens?: number;
+    onRawEvent?: (rawFrame: string) => void;
 }
 export declare function callClaudeApi(opts: CallClaudeApiOptions): Promise<ParsedOutput>;
