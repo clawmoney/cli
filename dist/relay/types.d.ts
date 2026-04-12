@@ -69,7 +69,6 @@ export interface RelayRateGuardConfig {
 }
 export interface RelayProviderSettings {
     cli_type: string;
-    execution_mode?: "cli" | "api";
     rate_guard?: RelayRateGuardConfig;
     model: string;
     mode: string;

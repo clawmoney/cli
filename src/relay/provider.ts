@@ -4,13 +4,6 @@ import { homedir } from "node:os";
 import YAML from "yaml";
 import { RelayWsClient } from "./ws-client.js";
 import {
-  spawnCli,
-  buildCliArgs,
-  parseCliOutput,
-  ensureEmptyMcpConfig,
-  ensureSandboxDir,
-} from "./executor.js";
-import {
   callClaudeApi,
   preflightClaudeApi,
   getRateGuardSnapshot as getClaudeRateGuardSnapshot,
@@ -67,25 +60,8 @@ const CONFIG_DIR = join(homedir(), ".clawmoney");
 const CONFIG_FILE = join(CONFIG_DIR, "config.yaml");
 const PID_FILE = join(CONFIG_DIR, "relay.pid");
 
-// Default execution mode is `api` as of 0.14.7. The `cli` fallback is still
-// supported — set `relay.execution_mode: cli` in ~/.clawmoney/config.yaml
-// or export CLAWMONEY_RELAY_EXECUTION_MODE=cli at launch — but new
-// providers get the direct-API path by default because:
-//   - Every spawnCli() round-trip burns 2-5 seconds of cold start, which
-//     is far too much for a request/response relay where buyers expect
-//     sub-second handoff.
-//   - Each subprocess consumes its own RAM + file handles; API mode runs
-//     hundreds of concurrent calls out of one Node process.
-//   - The fingerprint gap that used to make CLI mode "safer" is now
-//     closed — 0.14.0–0.14.6 ported the real CLI's attribution hash,
-//     streaming transport, thinking config, dynamic beta header, session
-//     masking, Gemini startup warmup, and Codex per-turn prewarm. API
-//     mode now matches real-CLI wire shape on every upstream.
-// CLI mode will be removed entirely in 0.15.0 once we've observed a
-// week of API-mode-default in production.
 const DEFAULT_RELAY: RelayProviderSettings = {
   cli_type: "claude",
-  execution_mode: "api",
   model: "claude-opus-4-6",
   mode: "chat",
   concurrency: 5,
@@ -151,17 +127,8 @@ function loadRelayConfig(cliOverride?: string): RelayProviderConfig {
 
   const userRelay = (raw.relay ?? {}) as Partial<RelayProviderSettings>;
 
-  // Env override lets `CLAWMONEY_RELAY_EXECUTION_MODE=api` flip the mode
-  // without editing config.yaml — useful for quick A/B and testing.
-  const envMode = process.env.CLAWMONEY_RELAY_EXECUTION_MODE as
-    | "cli"
-    | "api"
-    | undefined;
-  const executionMode = envMode ?? userRelay.execution_mode ?? DEFAULT_RELAY.execution_mode;
-
   const relay: RelayProviderSettings = {
     cli_type: cliOverride ?? userRelay.cli_type ?? DEFAULT_RELAY.cli_type,
-    execution_mode: executionMode,
     model: userRelay.model ?? DEFAULT_RELAY.model,
     mode: userRelay.mode ?? DEFAULT_RELAY.mode,
     concurrency: userRelay.concurrency ?? DEFAULT_RELAY.concurrency,
@@ -222,15 +189,6 @@ async function executeRelayRequest(
   const model = request.model ?? config.relay.model;
   const stateful = request.stateful ?? false;
   const cliSessionId = request.cli_session_id ?? undefined;
-  // api mode is supported for claude / codex / gemini / antigravity; anything
-  // else falls back to spawning the local CLI subprocess. Antigravity is
-  // api-only (there is no local CLI to spawn) so execution_mode is ignored
-  // for it and we always route through the direct upstream handler.
-  const useApiMode =
-    (config.relay.execution_mode === "api" &&
-      (cliType === "claude" || cliType === "codex" || cliType === "gemini")) ||
-    cliType === "antigravity";
-
   // Build prompt from messages
   const prompt = request.messages
     ? messagesToPrompt(request.messages)
@@ -246,10 +204,9 @@ async function executeRelayRequest(
   const modeLabel = stateful
     ? (cliSessionId ? `stateful[resume ${cliSessionId.slice(0, 8)}]` : "stateful[new]")
     : "stateless";
-  const execLabel = useApiMode ? "api" : "cli";
 
   logger.info(`  ┌─ Request ${request_id.slice(0, 8)}`);
-  logger.info(`  │ CLI:    ${cliType} / ${model} (${modeLabel}, exec=${execLabel})`);
+  logger.info(`  │ CLI:    ${cliType} / ${model} (${modeLabel})`);
   logger.info(`  │ Turns:  ${turns}`);
   logger.info(`  │ Prompt: ${String(lastUserMsg).slice(0, 80)}`);
 
@@ -257,46 +214,34 @@ async function executeRelayRequest(
     const startMs = Date.now();
     let parsed: ParsedOutput;
 
-    if (useApiMode) {
-      // Direct upstream HTTPS call — no subprocess, no sandbox needed because
-      // the only thing the upstream sees is the prompt text we pass in. The
-      // right handler is picked by cli_type (claude → Anthropic, codex →
-      // chatgpt.com, gemini → cloudcode-pa). Each handler has its own
-      // fingerprint file and rate-guard instance.
-      if (cliType === "codex") {
-        parsed = await callCodexApi({
-          prompt,
-          model,
-          maxTokens: max_budget_usd ? undefined : 4096,
-        });
-      } else if (cliType === "gemini") {
-        parsed = await callGeminiApi({
-          prompt,
-          model,
-          maxTokens: max_budget_usd ? undefined : 8192,
-        });
-      } else if (cliType === "antigravity") {
-        parsed = await callAntigravityApi({
-          prompt,
-          model,
-          maxTokens: max_budget_usd ? undefined : 8192,
-        });
-      } else {
-        parsed = await callClaudeApi({
-          prompt,
-          model,
-          maxTokens: max_budget_usd ? undefined : 4096,
-        });
-      }
+    // Direct upstream API call — the right handler is picked by cli_type
+    // (claude → Anthropic, codex → chatgpt.com WS, gemini → cloudcode-pa,
+    // antigravity → daily-cloudcode-pa). Each handler has its own
+    // fingerprint file and rate-guard instance.
+    if (cliType === "codex") {
+      parsed = await callCodexApi({
+        prompt,
+        model,
+        maxTokens: max_budget_usd ? undefined : 4096,
+      });
+    } else if (cliType === "gemini") {
+      parsed = await callGeminiApi({
+        prompt,
+        model,
+        maxTokens: max_budget_usd ? undefined : 8192,
+      });
+    } else if (cliType === "antigravity") {
+      parsed = await callAntigravityApi({
+        prompt,
+        model,
+        maxTokens: max_budget_usd ? undefined : 8192,
+      });
     } else {
-      // In stateful mode, pass cli_session_id so buildCliArgs adds --resume
-      const args = buildCliArgs(cliType, prompt, cliSessionId, max_budget_usd, model);
-      // Spawn from an empty sandbox directory so Claude Code's auto-injected
-      // cwd / CLAUDE.md / git-status context can't leak the provider's real
-      // project data to the consumer.
-      const sandbox = ensureSandboxDir();
-      const raw = await spawnCli(cliType, args, undefined, sandbox);
-      parsed = parseCliOutput(cliType, raw);
+      parsed = await callClaudeApi({
+        prompt,
+        model,
+        maxTokens: max_budget_usd ? undefined : 4096,
+      });
     }
 
     const elapsedMs = Date.now() - startMs;
@@ -313,21 +258,18 @@ async function executeRelayRequest(
     logger.info(`  │ Total:  API $${cost.apiCost.toFixed(4)} → Relay $${cost.relayCost.toFixed(4)} → Earn $${cost.providerEarn.toFixed(4)}`);
     logger.info(`  └─ Done`);
 
-    // When we're running in api mode, piggy-back the provider's current 5h
-    // session-window snapshot onto the response so the Hub can use it for
-    // predictive claim scheduling (avoid routing fresh work to a provider
-    // whose window is already 90%+ saturated). Only populated if upstream
-    // actually surfaced the headers this turn.
+    // Piggy-back the provider's current 5h session-window snapshot onto
+    // the response so the Hub can use it for predictive claim scheduling
+    // (avoid routing fresh work to a provider whose window is already
+    // 90%+ saturated).
     let sessionWindowTelemetry: RelayResponse["session_window"];
-    if (useApiMode) {
-      const snap = getRateGuardSnapshotForCli(cliType);
-      if (snap?.sessionWindow) {
-        sessionWindowTelemetry = {
-          reset_at_ms: snap.sessionWindow.endMs,
-          utilization: snap.sessionWindow.utilization,
-          status: snap.sessionWindow.status,
-        };
-      }
+    const snap = getRateGuardSnapshotForCli(cliType);
+    if (snap?.sessionWindow) {
+      sessionWindowTelemetry = {
+        reset_at_ms: snap.sessionWindow.endMs,
+        utilization: snap.sessionWindow.utilization,
+        status: snap.sessionWindow.status,
+      };
     }
 
     return {
@@ -370,38 +312,27 @@ export function runRelayProvider(cliOverride?: string): void {
   // preflight call so the first outbound request already goes through it.
   applyProxyFromConfig(config);
 
-  // Prepare relay sandbox assets once at startup.
-  ensureEmptyMcpConfig();
-  ensureSandboxDir();
-
-  // If the operator picked api mode, validate the OAuth token + fingerprint
-  // up-front so we fail fast instead of on the first inbound request. Each
-  // cli_type has its own preflight path (different credential file, different
-  // fingerprint schema, different rate-guard instance).
-  // Antigravity is always api mode (no CLI to spawn), so force api execution
-  // even if config.yaml says "cli". For the other CLIs, api mode is opt-in.
-  if (config.relay.cli_type === "antigravity") {
-    config.relay.execution_mode = "api";
-  }
-  if (config.relay.execution_mode === "api") {
-    const preflightFn =
-      config.relay.cli_type === "codex"
-        ? preflightCodexApi
-        : config.relay.cli_type === "gemini"
-        ? preflightGeminiApi
-        : config.relay.cli_type === "claude"
-        ? preflightClaudeApi
-        : config.relay.cli_type === "antigravity"
-        ? preflightAntigravityApi
-        : null;
-    if (preflightFn) {
-      preflightFn(config.relay.rate_guard).catch((err) => {
-        logger.error(
-          `${config.relay.cli_type} API preflight failed — falling back to CLI mode: ${(err as Error).message}`
-        );
-        config.relay.execution_mode = "cli";
-      });
-    }
+  // Validate the OAuth token + fingerprint up-front so we fail fast instead
+  // of on the first inbound request. Each cli_type has its own preflight
+  // path (different credential file, different fingerprint schema, different
+  // rate-guard instance).
+  const preflightFn =
+    config.relay.cli_type === "codex"
+      ? preflightCodexApi
+      : config.relay.cli_type === "gemini"
+      ? preflightGeminiApi
+      : config.relay.cli_type === "claude"
+      ? preflightClaudeApi
+      : config.relay.cli_type === "antigravity"
+      ? preflightAntigravityApi
+      : null;
+  if (preflightFn) {
+    preflightFn(config.relay.rate_guard).catch((err) => {
+      logger.error(
+        `${config.relay.cli_type} API preflight failed: ${(err as Error).message}`
+      );
+      process.exit(1);
+    });
   }
 
   const activeTasks = new Set<string>();
@@ -494,6 +425,6 @@ export function runRelayProvider(cliOverride?: string): void {
 
   logger.info("Relay Provider running. Listening for relay requests...");
   logger.info(
-    `Config: cli=${config.relay.cli_type}, exec=${config.relay.execution_mode ?? "cli"}, model=${config.relay.model}, mode=${config.relay.mode}, concurrency=${config.relay.concurrency}`
+    `Config: cli=${config.relay.cli_type}, model=${config.relay.model}, mode=${config.relay.mode}, concurrency=${config.relay.concurrency}`
   );
 }

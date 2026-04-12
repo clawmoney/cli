@@ -58,10 +58,10 @@ export interface RelayResponse {
   model_used?: string;
   cost_usd?: number;
   error?: string;
-  // Opt-in session-window telemetry piggy-backed on the response envelope.
-  // Only populated in execution_mode="api" when the upstream surfaces its
-  // rolling 5h window reset headers (currently Claude). Hub uses this to
-  // avoid claim-scheduling providers whose window is nearly saturated.
+  // Session-window telemetry piggy-backed on the response envelope.
+  // Populated when the upstream surfaces rolling 5h window reset headers
+  // (currently Claude). Hub uses this to avoid claim-scheduling providers
+  // whose window is nearly saturated.
   session_window?: RelayResponseSessionWindow;
 }
 
@@ -94,14 +94,8 @@ export interface RelayRateGuardConfig {
 }
 
 export interface RelayProviderSettings {
-  cli_type: string;          // "claude", "codex", "gemini"
-  // Execution mode. "cli" spawns the local CLI per request (default, stable,
-  // works for all cli_types). "api" calls the upstream provider's HTTPS API
-  // directly using the locally-cached OAuth token — ~10x faster, supported
-  // for cli_type="claude" | "codex" | "gemini". Each type has its own
-  // fingerprint bootstrap script under scripts/capture-<type>-request.mjs.
-  execution_mode?: "cli" | "api";
-  // Anti-ban rate-guard settings. Only applied in execution_mode="api".
+  cli_type: string;          // "claude", "codex", "gemini", "antigravity"
+  // Anti-ban rate-guard settings for direct upstream API calls.
   rate_guard?: RelayRateGuardConfig;
   model: string;
   mode: string;              // "chat", "search", "code", "full"
