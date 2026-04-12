@@ -114,7 +114,23 @@ program
           const balResult = await awalExec(['balance']);
           const balData = balResult.data as Record<string, unknown>;
           if (balData && typeof balData === 'object') {
-            console.log(`  ${chalk.bold('On-chain:')} ${Object.entries(balData).map(([k, v]) => `${v} ${k}`).join(', ') || '0'}`);
+            const lines: string[] = [];
+            for (const [chain, assets] of Object.entries(balData)) {
+              if (assets && typeof assets === 'object' && !Array.isArray(assets)) {
+                const parts = Object.entries(assets as Record<string, unknown>)
+                  .filter(([, v]) => v && String(v) !== '0')
+                  .map(([token, amount]) => `${amount} ${token}`);
+                if (parts.length > 0) lines.push(`${chain}: ${parts.join(', ')}`);
+              } else if (assets && String(assets) !== '0') {
+                lines.push(`${chain}: ${assets}`);
+              }
+            }
+            if (lines.length > 0) {
+              console.log(`  ${chalk.bold('On-chain:')} ${lines[0]}`);
+              for (let i = 1; i < lines.length; i++) {
+                console.log(`             ${lines[i]}`);
+              }
+            }
           }
         } catch {
           // awal not installed or not configured — skip silently
