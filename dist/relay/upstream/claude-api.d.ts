@@ -30,3 +30,10 @@ export interface CallClaudeApiOptions {
     onRawEvent?: (rawFrame: string) => void;
 }
 export declare function callClaudeApi(opts: CallClaudeApiOptions): Promise<ParsedOutput>;
+export interface CallClaudeApiPassthroughOptions {
+    clientBody: Record<string, unknown>;
+    model: string;
+    clientBeta?: string;
+    onRawEvent?: (rawFrame: string) => void;
+}
+export declare function callClaudeApiPassthrough(opts: CallClaudeApiPassthroughOptions): Promise<ParsedOutput>;

@@ -17,6 +17,8 @@ export interface RelayRequest {
     stateful?: boolean;
     model?: string;
     max_budget_usd?: number;
+    passthrough_body?: Record<string, unknown>;
+    anthropic_beta?: string;
 }
 export interface RelayConnectedEvent {
     event: "connected";

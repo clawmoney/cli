@@ -23,6 +23,16 @@ export interface RelayRequest {
   stateful?: boolean;
   model?: string;
   max_budget_usd?: number;
+  // Passthrough mode — when set, the Hub is forwarding a real Claude
+  // Code request body verbatim and wants the daemon to send it to
+  // Anthropic almost unchanged (only metadata.user_id / billing header /
+  // model normalization applied). Used for drop-in ANTHROPIC_BASE_URL
+  // replacement so tools, multi-turn messages, thinking config, etc.
+  // all survive the relay hop. Ignored for non-claude cli_types.
+  passthrough_body?: Record<string, unknown>;
+  // Buyer's `anthropic-beta` header value, merged with our required
+  // betas when passthrough_body is set. Ignored in template mode.
+  anthropic_beta?: string;
 }
 
 // ── Events received from server ──

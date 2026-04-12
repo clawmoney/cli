@@ -5,6 +5,7 @@ import YAML from "yaml";
 import { RelayWsClient } from "./ws-client.js";
 import {
   callClaudeApi,
+  callClaudeApiPassthrough,
   preflightClaudeApi,
   getRateGuardSnapshot as getClaudeRateGuardSnapshot,
 } from "./upstream/claude-api.js";
@@ -265,17 +266,37 @@ async function executeRelayRequest(
         maxTokens: max_budget_usd ? undefined : 8192,
       });
     } else {
-      parsed = await callClaudeApi({
-        prompt,
-        model,
-        maxTokens: max_budget_usd ? undefined : 4096,
-        // Forward each raw Anthropic SSE frame to the Hub in real time
-        // so the end client sees tokens as they're generated (instead of
-        // waiting for the whole response to arrive). Only claude-api has
-        // true pass-through streaming today — codex/gemini/antigravity
-        // still buffer the full response upstream and emit a single frame.
-        onRawEvent: sendChunk,
-      });
+      // Claude: two modes.
+      //
+      // 1. PASSTHROUGH (preferred when Hub supplies request.passthrough_body):
+      //    the Hub is acting as a transparent ANTHROPIC_BASE_URL proxy for a
+      //    real Claude Code (or anthropic-SDK) client. Forward the buyer's
+      //    actual body — tools, multi-turn messages, thinking, system, etc.
+      //    all preserved — with surgical fingerprint rewrites so Anthropic
+      //    sees a stable per-OAuth-account identity instead of a rotating
+      //    buyer-identity signal.
+      //
+      // 2. TEMPLATE (fallback when no passthrough_body): the legacy
+      //    chat-relay path. Daemon constructs a synthetic single-user-message
+      //    request body that matches the real CC wire fingerprint exactly,
+      //    dropping everything the buyer sent except the concatenated prompt
+      //    text. Used for OpenAI-compatible /v1/chat/completions and any
+      //    other client that doesn't need real agentic support.
+      if (request.passthrough_body) {
+        parsed = await callClaudeApiPassthrough({
+          clientBody: request.passthrough_body,
+          model,
+          clientBeta: request.anthropic_beta,
+          onRawEvent: sendChunk,
+        });
+      } else {
+        parsed = await callClaudeApi({
+          prompt,
+          model,
+          maxTokens: max_budget_usd ? undefined : 4096,
+          onRawEvent: sendChunk,
+        });
+      }
     }
 
     const elapsedMs = Date.now() - startMs;

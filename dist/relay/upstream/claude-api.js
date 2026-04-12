@@ -696,6 +696,12 @@ export async function callClaudeApi(opts) {
         configureRateGuard();
     return rateGuard.run(() => doCallClaudeApi(opts));
 }
+export async function callClaudeApiPassthrough(opts) {
+    configureDispatcher();
+    if (!rateGuard)
+        configureRateGuard();
+    return rateGuard.run(() => doCallClaudeApiPassthrough(opts));
+}
 // Maximum number of automatic retries on transient upstream errors
 // (429 / 5xx). Matches the Anthropic official SDK default. Does NOT count
 // the initial attempt or the one-shot 401-refresh retry.
@@ -871,6 +877,230 @@ async function doCallClaudeApi(opts) {
         }
         // Unrecoverable — bubble up with the upstream status + body so Hub can
         // translate it into a sensible HTTP status for the buyer.
+        throw new Error(`Anthropic ${resp.status}: ${errText.slice(0, 400)}`);
+    }
+}
+// ── Passthrough helpers ──────────────────────────────────────────────────
+// Extract the first user message's text content, regardless of whether
+// content is a plain string (OpenAI-style) or an array of content blocks
+// (real Anthropic shape). Used for computing the attribution header FP3.
+function extractFirstUserMessageText(messages) {
+    if (!Array.isArray(messages))
+        return "";
+    for (const msg of messages) {
+        if (!msg || typeof msg !== "object")
+            continue;
+        const m = msg;
+        if (m.role !== "user")
+            continue;
+        const content = m.content;
+        if (typeof content === "string")
+            return content;
+        if (Array.isArray(content)) {
+            for (const block of content) {
+                if (block &&
+                    typeof block === "object" &&
+                    block.type === "text" &&
+                    typeof block.text === "string") {
+                    return block.text;
+                }
+            }
+        }
+        return "";
+    }
+    return "";
+}
+// Merge the fingerprint-required betas with the buyer's anthropic-beta
+// list. Required betas (oauth, claude-code, interleaved-thinking) are
+// non-negotiable — they must be present for an OAuth token to work. The
+// buyer's extras (context-management, advisor-tool, etc.) are appended so
+// newer Claude Code versions can request features our fingerprint file
+// doesn't know about yet. Deduplicates and preserves order.
+function mergeBetas(required, clientBeta) {
+    const seen = new Set();
+    const out = [];
+    for (const b of required) {
+        const t = b.trim();
+        if (t && !seen.has(t)) {
+            seen.add(t);
+            out.push(t);
+        }
+    }
+    if (clientBeta) {
+        for (const b of clientBeta.split(",")) {
+            const t = b.trim();
+            if (t && !seen.has(t)) {
+                seen.add(t);
+                out.push(t);
+            }
+        }
+    }
+    return out.join(",");
+}
+// Rewrite the first system block's x-anthropic-billing-header (if present)
+// so cc_version and FP3 match OUR fingerprint and the buyer's actual
+// first user message. Real Claude Code always emits this block; sub2api's
+// gateway_service.go mirrors it verbatim but rewrites the version to
+// match the account's pinned UA (syncBillingHeaderVersion, gateway_billing_header.go).
+//
+// Critical because Anthropic's validator expects cc_version.<FP3> where
+// FP3 is a deterministic hash of (message_chars + cli_version). If we
+// leave the buyer's FP3 in place but their UA was a different version
+// from our pinned UA, the FP3 no longer matches cli_version in the header
+// and the validator rejects the request.
+function syncPassthroughBillingHeader(body, fingerprint) {
+    if (!Array.isArray(body.system))
+        return;
+    const system = body.system;
+    if (system.length === 0)
+        return;
+    const firstBlock = system[0];
+    if (!firstBlock ||
+        typeof firstBlock !== "object" ||
+        firstBlock.type !== "text" ||
+        typeof firstBlock.text !== "string") {
+        return;
+    }
+    const currentText = firstBlock.text;
+    if (!currentText.startsWith("x-anthropic-billing-header:")) {
+        // Non-CC client didn't include a billing header — leave system alone.
+        // If we're strict about this we could PREPEND one, but for now we
+        // only touch what exists so non-CC passthrough (e.g. anthropic SDK
+        // direct) works without extra surgery.
+        return;
+    }
+    const firstUserMsg = extractFirstUserMessageText(body.messages);
+    const newHeader = buildClaudeAttributionHeader(firstUserMsg, fingerprint.cc_version, fingerprint.cc_entrypoint);
+    firstBlock.text = newHeader;
+}
+// Walk system text blocks and rewrite third-party identity sentences
+// (OpenCode, etc.) to the Claude Code banner. sub2api does the same thing
+// in gateway_service.go:sanitizeSystemText — without it Anthropic's
+// system-prompt dice-coefficient validator will 403 the request because
+// the system prompt doesn't score high enough against the known real
+// Claude Code templates.
+function sanitizePassthroughSystemArray(body) {
+    if (!Array.isArray(body.system))
+        return;
+    for (const block of body.system) {
+        if (block &&
+            typeof block === "object" &&
+            block.type === "text" &&
+            typeof block.text === "string") {
+            block.text = sanitizePrompt(block.text);
+        }
+    }
+}
+async function doCallClaudeApiPassthrough(opts) {
+    const fingerprint = loadFingerprint();
+    autoBumpFingerprintUaVersion();
+    // Fresh read after any autobump, since it mutates cachedFingerprint in place.
+    const fp = loadFingerprint();
+    const sessionId = getMaskedSessionId();
+    // Shallow clone so we don't mutate the buyer's dict on the way back out
+    // of provider.ts — defensive against the Hub reusing the same dict for
+    // multiple dispatch attempts.
+    const body = { ...opts.clientBody };
+    // Normalize model to canonical long-form. Anthropic OAuth rejects the
+    // short form for some versions (e.g. claude-sonnet-4-5 → must be
+    // claude-sonnet-4-5-20250929).
+    body.model = normalizeModel(opts.model);
+    // Force stream:true. Daemon always needs SSE wire format to drive
+    // parseClaudeSseResponse, regardless of what the buyer asked for.
+    body.stream = true;
+    // sub2api drops these on OAuth (gateway_service.go:1082-1092). Keeping
+    // them in the body risks Anthropic flagging the request shape as
+    // non-Claude-Code, since real CC never sends them.
+    delete body.temperature;
+    delete body.tool_choice;
+    // Rewrite metadata.user_id with our masked-session-bound fingerprint
+    // identity. All other metadata fields are preserved.
+    const metadata = body.metadata && typeof body.metadata === "object"
+        ? body.metadata
+        : {};
+    body.metadata = {
+        ...metadata,
+        user_id: buildMetadataUserID(fp, sessionId),
+    };
+    // Sanitize system: replace third-party identity sentences + sync
+    // billing header cc_version to match our pinned CLI version.
+    sanitizePassthroughSystemArray(body);
+    syncPassthroughBillingHeader(body, fp);
+    // Clamp thinking.budget_tokens to Anthropic's minimum so buyer-chosen
+    // small budgets don't 400. If max_tokens < budget_tokens + 1, bump
+    // max_tokens too so the request stays valid.
+    const thinking = body.thinking;
+    if (thinking && typeof thinking === "object") {
+        const t = thinking;
+        if (t.type === "enabled" && typeof t.budget_tokens === "number") {
+            if (t.budget_tokens < CLAUDE_MIN_THINKING_BUDGET) {
+                t.budget_tokens = CLAUDE_MIN_THINKING_BUDGET;
+            }
+            if (typeof body.max_tokens === "number" &&
+                body.max_tokens <= t.budget_tokens) {
+                body.max_tokens = t.budget_tokens + 1;
+            }
+        }
+    }
+    // Ensure tools is at least an empty array so request shape matches real
+    // CC (which always sends tools even if empty).
+    if (!Array.isArray(body.tools)) {
+        body.tools = [];
+    }
+    const bodyJson = JSON.stringify(body);
+    // Merge required betas with buyer's betas for the header.
+    const requiredBetas = pickClaudeBetasForModel(opts.model);
+    const mergedBetas = mergeBetas(requiredBetas, opts.clientBeta);
+    let transientAttempt = 0;
+    let hasRefreshed = false;
+    while (true) {
+        const creds = await getFreshCreds();
+        const resp = await fetch(ANTHROPIC_MESSAGES_URL, {
+            method: "POST",
+            headers: {
+                ...STATIC_CLAUDE_CODE_HEADERS,
+                "accept": "application/json, text/event-stream",
+                "anthropic-beta": mergedBetas,
+                "user-agent": fp.user_agent,
+                "authorization": `Bearer ${creds.accessToken}`,
+                "x-claude-code-session-id": sessionId,
+            },
+            body: bodyJson,
+        });
+        const sessionWin = extractSessionWindowFromHeaders(resp.headers);
+        if (sessionWin)
+            rateGuard?.setSessionWindow(sessionWin);
+        if (resp.ok) {
+            const parsed = await parseClaudeSseResponse(resp, opts.model, opts.onRawEvent);
+            recordSpendFromUsage(parsed, opts.model);
+            return parsed;
+        }
+        const errText = await resp.text();
+        if (resp.status === 429) {
+            const cooldown = extractCooldownUntilFromHeaders(resp.headers);
+            if (cooldown && rateGuard) {
+                rateGuard.triggerCooldown(cooldown.untilMs, cooldown.reason);
+            }
+            else if (rateGuard) {
+                rateGuard.triggerCooldown(Date.now() + 5 * 60_000, "fallback 5m (no reset header)");
+            }
+            throw new Error(`Anthropic 429 rate-limited: ${errText.slice(0, 300)}`);
+        }
+        if (resp.status === 401 && !hasRefreshed) {
+            logger.warn("[claude-api] 401 from upstream (passthrough), refreshing token + retry");
+            hasRefreshed = true;
+            cachedCreds = null;
+            continue;
+        }
+        const isTransient = resp.status >= 500 && resp.status <= 599;
+        if (isTransient && transientAttempt < MAX_TRANSIENT_RETRIES) {
+            const retryAfter = parseRetryAfterMs(resp.headers.get("retry-after"));
+            const backoffMs = retryAfter ?? 500 * Math.pow(2, transientAttempt) + Math.random() * 500;
+            logger.warn(`[claude-api] ${resp.status} from upstream (passthrough attempt ${transientAttempt + 1}/${MAX_TRANSIENT_RETRIES + 1}), retrying in ${Math.round(backoffMs)}ms — ${errText.slice(0, 200)}`);
+            await new Promise((r) => setTimeout(r, backoffMs));
+            transientAttempt++;
+            continue;
+        }
         throw new Error(`Anthropic ${resp.status}: ${errText.slice(0, 400)}`);
     }
 }
