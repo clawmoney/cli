@@ -103,8 +103,8 @@ const DEFAULT_PRICING: ModelPricing = { input: 5, output: 25 };
 // Concretely, for a 1M-token Claude Sonnet input+output at default rates:
 //   API price            = 1M × ($3 input + $15 output) = $18
 //   Buyer pays (20%)     = $3.60
-//   Platform fee (5%)    = $0.18
-//   Provider earns       = $3.42
+//   Platform fee (10%)   = $0.36
+//   Provider earns       = $3.24
 //
 // Why 20% flat across all platforms:
 //   - The Provider's subscription fee is a sunk cost; their marginal cost
@@ -120,8 +120,11 @@ const DEFAULT_PRICING: ModelPricing = { input: 5, output: 25 };
 // Relay discount: consumers pay this fraction of API price
 export const RELAY_DISCOUNT = 0.20;  // 20% of API price (buyer saves 80%)
 
-// Platform fee: this fraction of what the buyer pays goes to the platform
-export const PLATFORM_FEE = 0.05;    // 5%
+// Platform fee: this fraction of what the buyer pays goes to the platform.
+// On-chain this is enforced by the PaySplitter contract (feeBps = 1000 = 10%
+// on Base mainnet 0x998f7F6D22ac38cf1196c62f628c6a3956Ff97Db). This constant
+// is display-only for the CLI; the real split happens in the contract.
+export const PLATFORM_FEE = 0.10;    // 10%
 
 export function getModelPricing(model: string): ModelPricing {
   return API_PRICES[model] ?? DEFAULT_PRICING;

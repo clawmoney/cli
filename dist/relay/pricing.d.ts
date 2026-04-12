@@ -21,7 +21,7 @@ export interface ModelPricing {
 }
 export declare const API_PRICES: Record<string, ModelPricing>;
 export declare const RELAY_DISCOUNT = 0.2;
-export declare const PLATFORM_FEE = 0.05;
+export declare const PLATFORM_FEE = 0.1;
 export declare function getModelPricing(model: string): ModelPricing;
 export interface CostBreakdown {
     inputCost: number;
