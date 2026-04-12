@@ -106,6 +106,20 @@ program
       if (credResp.ok && credResp.data) {
         console.log(`  ${chalk.bold('Credits:')}  $${Number(credResp.data.balance_usd ?? 0).toFixed(2)}`);
       }
+
+      // Query on-chain wallet balance via awal
+      if (a.wallet_address) {
+        try {
+          const { awalExec } = await import('./utils/awal.js');
+          const balResult = await awalExec(['balance']);
+          const balData = balResult.data as Record<string, unknown>;
+          if (balData && typeof balData === 'object') {
+            console.log(`  ${chalk.bold('On-chain:')} ${Object.entries(balData).map(([k, v]) => `${v} ${k}`).join(', ') || '0'}`);
+          }
+        } catch {
+          // awal not installed or not configured — skip silently
+        }
+      }
       console.log('');
     } catch (err) {
       console.error((err as Error).message);
