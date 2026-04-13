@@ -156,18 +156,19 @@ export async function relaySetupCommand() {
     detectSpin.start("Scanning for installed CLI clients...");
     const detected = detectInstalledClis();
     detectSpin.stop("Scan complete");
-    // Collapse per-CLI rows into one (or two) summary lines — users only
-    // care about "which ones can I lend" at this point, not the per-binary
-    // hint strings. If everything's present it's a single green line; any
-    // misses get their own warn line with a short hint.
+    // Collapse per-CLI rows into one summary line — users only care
+    // about "which ones can I lend" at this step, not per-binary hints.
+    // When the user is missing some families we don't name them (negative
+    // framing — they came to provide what they have, not hear what they
+    // lack); instead we add a soft note that ClawMoney supports more
+    // platforms than what was detected locally.
     const available = detected.filter((d) => d.available);
-    const missing = detected.filter((d) => !d.available);
+    const hasMissing = detected.some((d) => !d.available);
     if (available.length > 0) {
         log.success(`Found: ${chalk.bold(available.map((d) => d.cli).join(", "))}`);
-    }
-    if (missing.length > 0) {
-        log.warn(`Missing: ${chalk.bold(missing.map((d) => d.cli).join(", "))} ` +
-            chalk.dim(`(install the CLI, or run \`clawmoney antigravity login\` for antigravity)`));
+        if (hasMissing) {
+            log.message(chalk.dim("(ClawMoney supports more platforms — only these were detected on this machine)"));
+        }
     }
     if (available.length === 0) {
         log.error("No supported CLI clients found locally. Install at least one of: " +
