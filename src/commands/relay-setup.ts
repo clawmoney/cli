@@ -326,27 +326,27 @@ export async function relaySetupCommand(): Promise<void> {
       "Daily quota share per model? (applies independently to each model you register)",
     options: [
       {
-        value: 6,
-        label: "~10%  ·  Minimal",
-        hint: "barely touches your subscription, leaves nearly all of it for personal use",
-      },
-      {
         value: 15,
-        label: "~25%  ·  Balanced  (recommended)",
-        hint: "shares a quarter of each model's quota, leaves 75% for your own use",
+        label: "~25%  ·  Light",
+        hint: "share a quarter, leaves 75% for your personal use",
       },
       {
         value: 30,
-        label: "~50%  ·  Heavy",
+        label: "~50%  ·  Balanced  (recommended)",
         hint: "splits each model's quota evenly between you and the relay",
+      },
+      {
+        value: 45,
+        label: "~75%  ·  Heavy",
+        hint: "most of your subscription goes to relay, 25% reserved for personal use",
       },
       {
         value: 60,
         label: "~100% ·  Full",
-        hint: "dedicates your subscription to relay use — best for accounts you don't use personally",
+        hint: "dedicates your subscription to relay — best for accounts you don't use personally",
       },
     ],
-    initialValue: 15,
+    initialValue: 30,
   });
 
   if (isCancel(dailyLimitChoice)) {
@@ -361,9 +361,9 @@ export async function relaySetupCommand(): Promise<void> {
   // label the user picked, so what they see in the summary matches what
   // they answered in the prompt.
   const limitLabel: Record<number, string> = {
-    6: "~10% (Minimal)",
-    15: "~25% (Balanced)",
-    30: "~50% (Heavy)",
+    15: "~25% (Light)",
+    30: "~50% (Balanced)",
+    45: "~75% (Heavy)",
     60: "~100% (Full)",
   };
 
