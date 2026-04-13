@@ -201,10 +201,7 @@ export async function relaySetupCommand() {
             log.warn(`${cli}: no recommended models found — skipping`);
             continue;
         }
-        log.step(`${chalk.bold(cli)}: auto-registering ${recommended.length} recommended models`);
-        for (const m of recommended) {
-            log.message(chalk.dim(`    · ${m}`));
-        }
+        log.step(`${chalk.bold(cli)}: ${recommended.length} models ${chalk.dim("— " + recommended.join(", "))}`);
         for (const model of recommended) {
             const p = API_PRICES[model];
             registrations.push({

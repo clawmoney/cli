@@ -291,11 +291,8 @@ export async function relaySetupCommand(): Promise<void> {
     }
 
     log.step(
-      `${chalk.bold(cli)}: auto-registering ${recommended.length} recommended models`
+      `${chalk.bold(cli)}: ${recommended.length} models ${chalk.dim("— " + recommended.join(", "))}`
     );
-    for (const m of recommended) {
-      log.message(chalk.dim(`    · ${m}`));
-    }
 
     for (const model of recommended) {
       const p = API_PRICES[model];
