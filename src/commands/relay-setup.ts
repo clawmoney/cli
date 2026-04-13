@@ -461,7 +461,53 @@ export async function relaySetupCommand(): Promise<void> {
     }
   }
 
-  // ── Step 7: auto-start the daemon ──
+  // ── Step 7: prune — implement "pick-what-you-run" semantics ──
+  //
+  // setup is meant to be declarative: the cli_types the user just picked
+  // are the complete set of what the daemon should serve. Earlier test
+  // runs that registered different subscriptions (antigravity, gemini,
+  // etc.) would otherwise linger in the DB and get preflighted every
+  // daemon start, confusing the user who just picked claude+codex.
+  //
+  // We only prune AFTER registration succeeds, so a failed batch doesn't
+  // wipe the user's existing state. And we only send the selected
+  // cli_types as keep_cli_types — the backend handles the "delete what's
+  // not in the list" part.
+  try {
+    const pruneResp = await apiPost<{
+      deleted: Array<{ id: string; cli_type: string; model: string }>;
+      kept: number;
+    }>(
+      "/api/v1/relay/providers/prune",
+      { keep_cli_types: Array.from(new Set(selectedClis)) },
+      config.api_key
+    );
+    if (
+      pruneResp.ok &&
+      pruneResp.data?.deleted &&
+      pruneResp.data.deleted.length > 0
+    ) {
+      log.success(
+        `Cleaned up ${pruneResp.data.deleted.length} provider(s) from earlier runs ` +
+          chalk.dim(
+            "(" +
+              Array.from(
+                new Set(pruneResp.data.deleted.map((d) => d.cli_type))
+              ).join(", ") +
+              ")"
+          )
+      );
+    }
+  } catch (err) {
+    // Non-fatal: worst case is the daemon preflights extra cli_types,
+    // which is annoying but doesn't break anything.
+    log.warn(
+      `Could not prune old providers: ${(err as Error).message} — ` +
+        `run \`clawmoney relay status\` and clean manually if needed`
+    );
+  }
+
+  // ── Step 8: auto-start the daemon ──
   //
   // The daemon now runs in multi-cli auto mode by default: it fetches
   // every provider this agent has registered, preflights each distinct
