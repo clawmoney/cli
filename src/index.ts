@@ -510,6 +510,19 @@ const relay = program
   .description('Relay marketplace: sell idle AI subscription capacity');
 
 relay
+  .command('setup')
+  .description('Interactive: detect installed CLIs, pick models, register all in one go (recommended for first-time setup)')
+  .action(async () => {
+    try {
+      const { relaySetupCommand } = await import('./commands/relay-setup.js');
+      await relaySetupCommand();
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+relay
   .command('register')
   .description('Register as a relay provider')
   .requiredOption('--cli <type>', 'Backend CLI: claude, codex, gemini, antigravity')
