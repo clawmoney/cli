@@ -39,6 +39,7 @@ import {
   relayStatusCommand,
   relayModelsCommand,
   relayCreditsCommand,
+  relayLogsCommand,
 } from './commands/relay.js';
 import {
   antigravityLoginCommand,
@@ -572,6 +573,20 @@ relay
   .action(async () => {
     try {
       await relayStatusCommand();
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+relay
+  .command('logs')
+  .description('Tail the daemon log in real time (like `tail -f ~/.clawmoney/relay.log`)')
+  .option('-n, --lines <n>', 'Lines of history to show before following', '50')
+  .option('--no-follow', "Print and exit instead of following")
+  .action(async (options) => {
+    try {
+      await relayLogsCommand(options);
     } catch (err) {
       console.error((err as Error).message);
       process.exit(1);

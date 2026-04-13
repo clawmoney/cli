@@ -280,7 +280,7 @@ export async function relaySetupCommand(): Promise<void> {
       continue;
     }
 
-    log.step(
+    log.success(
       `${chalk.bold(cli)}: ${recommended.length} models ${chalk.dim("— " + recommended.join(", "))}`
     );
 
@@ -381,6 +381,11 @@ export async function relaySetupCommand(): Promise<void> {
   };
   const earnPct = Math.round((1 - PLATFORM_FEE) * 100);
 
+  // Single batch POST — one round-trip, one DB session, no
+  // client-side fan-out. The earlier sequential loop paid 7× the
+  // TLS/bcrypt/CF overhead, and parallelizing with Promise.all
+  // tripped over client- or proxy-level concurrency limits on some
+  // machines. Batch endpoint is the right architecture.
   let succeeded = 0;
   let failed = 0;
   const failures: Array<{ cli: string; model: string; error: string }> = [];
@@ -388,51 +393,49 @@ export async function relaySetupCommand(): Promise<void> {
   const regSpin = spinner();
   regSpin.start(`Registering ${registrations.length} providers...`);
 
-  // Parallel registration — each request creates a distinct RelayProvider
-  // row so there's no write contention, and the backend's insert path is
-  // idempotent on (agent_id, cli_type, model). Sequential registration
-  // was costing ~1 RTT per row, which on a high-latency link (e.g. from
-  // China) added up to 7-10s of visible wait for 7 providers.
-  await Promise.all(
-    registrations.map(async (r) => {
-      const body = {
-        cli_type: r.cli,
-        model: r.model,
-        mode: "chat",
-        concurrency,
-        daily_limit_usd: dailyLimit,
-        price_input_per_m: r.input,
-        price_output_per_m: r.output,
-      };
-      try {
-        const resp = await apiPost<Record<string, unknown>>(
-          "/api/v1/relay/providers",
-          body,
-          config.api_key
-        );
-        if (resp.ok) {
-          succeeded++;
-          return;
-        }
-        const raw =
-          resp.data && typeof resp.data === "object" && "detail" in resp.data
-            ? (resp.data as Record<string, unknown>).detail
-            : resp.data;
-        const detail = typeof raw === "string" ? raw : JSON.stringify(raw);
-        // Already-registered is a soft success — idempotent re-run.
-        if (detail.includes("Already registered")) {
-          succeeded++;
-        } else {
-          failed++;
-          failures.push({ cli: r.cli, model: r.model, error: detail });
-        }
-      } catch (err) {
-        const msg = (err as Error).message;
-        failed++;
-        failures.push({ cli: r.cli, model: r.model, error: msg });
-      }
-    })
-  );
+  const batchBody = {
+    providers: registrations.map((r) => ({
+      cli_type: r.cli,
+      model: r.model,
+      mode: "chat",
+      concurrency,
+      daily_limit_usd: dailyLimit,
+      price_input_per_m: r.input,
+      price_output_per_m: r.output,
+    })),
+  };
+
+  try {
+    const resp = await apiPost<{
+      created: Array<Record<string, unknown>>;
+      skipped: Array<{ cli_type: string; model: string; reason: string }>;
+      failed: Array<{ cli_type: string; model: string; error: string }>;
+    }>("/api/v1/relay/providers/batch", batchBody, config.api_key);
+
+    if (!resp.ok) {
+      const raw =
+        resp.data && typeof resp.data === "object" && "detail" in resp.data
+          ? (resp.data as Record<string, unknown>).detail
+          : resp.data;
+      const detail = typeof raw === "string" ? raw : JSON.stringify(raw);
+      regSpin.stop(chalk.red(`✗ Batch registration failed: ${detail}`));
+      cancel("Setup aborted");
+      process.exit(1);
+    }
+
+    // Per-row counts from the batch result.
+    succeeded = (resp.data.created?.length ?? 0) + (resp.data.skipped?.length ?? 0);
+    failed = resp.data.failed?.length ?? 0;
+    for (const f of resp.data.failed ?? []) {
+      failures.push({ cli: f.cli_type, model: f.model, error: f.error });
+    }
+  } catch (err) {
+    regSpin.stop(
+      chalk.red(`✗ Batch registration failed: ${(err as Error).message}`)
+    );
+    cancel("Setup aborted");
+    process.exit(1);
+  }
 
   if (failed === 0) {
     regSpin.stop(

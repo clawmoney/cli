@@ -292,6 +292,40 @@ export async function relayStopCommand(): Promise<void> {
   removeRelayPid();
 }
 
+// ── relay logs ──
+
+export async function relayLogsCommand(options: {
+  follow?: boolean;
+  lines?: string;
+}): Promise<void> {
+  const { existsSync } = await import("node:fs");
+  const { spawn } = await import("node:child_process");
+
+  if (!existsSync(LOG_FILE)) {
+    console.log(chalk.dim(`No log file yet at ${LOG_FILE}`));
+    console.log(chalk.dim("Start the daemon first: clawmoney relay start"));
+    return;
+  }
+
+  // Default: tail -f the last 50 lines. Use system `tail` rather than
+  // reimplementing it in Node — it's just a debug helper, not worth
+  // a pure-JS reinvention.
+  const nLines = options.lines ?? "50";
+  const args = ["-n", nLines];
+  if (options.follow !== false) {
+    args.push("-f");
+  }
+  args.push(LOG_FILE);
+
+  const child = spawn("tail", args, { stdio: "inherit" });
+  child.on("exit", (code) => {
+    process.exit(code ?? 0);
+  });
+  // Ctrl-C inside `tail -f` kills tail but returns us here; propagate
+  // the exit code so the wrapper looks transparent.
+  process.on("SIGINT", () => child.kill("SIGINT"));
+}
+
 // ── relay status ──
 
 interface ProviderStatus {
@@ -366,6 +400,19 @@ export async function relayStatusCommand(): Promise<void> {
       console.log(chalk.dim(`  Run "clawmoney relay setup" to get started.`));
       return;
     }
+
+    // Group rows by cli_type so `claude-*` lines stay together, then
+    // `codex-*`, then `gemini-*`, then `antigravity-*`. Within a family
+    // we sort by model name so the ordering is stable across calls.
+    const CLI_ORDER = ["claude", "codex", "gemini", "antigravity"];
+    providers.sort((a, b) => {
+      const ai = CLI_ORDER.indexOf(a.cli_type ?? "");
+      const bi = CLI_ORDER.indexOf(b.cli_type ?? "");
+      const aRank = ai === -1 ? CLI_ORDER.length : ai;
+      const bRank = bi === -1 ? CLI_ORDER.length : bi;
+      if (aRank !== bRank) return aRank - bRank;
+      return (a.model ?? "").localeCompare(b.model ?? "");
+    });
 
     spinner.succeed(`Relay Providers (${providers.length})`);
     console.log("");

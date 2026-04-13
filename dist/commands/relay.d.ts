@@ -12,6 +12,10 @@ export declare function relayStartCommand(options: {
     cli?: string;
 }): Promise<void>;
 export declare function relayStopCommand(): Promise<void>;
+export declare function relayLogsCommand(options: {
+    follow?: boolean;
+    lines?: string;
+}): Promise<void>;
 export declare function relayStatusCommand(): Promise<void>;
 export declare function relayModelsCommand(): Promise<void>;
 export declare function relayCreditsCommand(): Promise<void>;
