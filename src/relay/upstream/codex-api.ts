@@ -807,12 +807,59 @@ export interface CallCodexApiOptions {
   prompt: string;
   model: string;
   maxTokens?: number;
+  // If set, called once per WS frame from ChatGPT backend as the stream
+  // progresses. Each frame is pre-serialized as an Anthropic-style SSE
+  // block — `event: <frame.type>\ndata: <raw frame json>\n\n` — ready
+  // for direct forwarding to an SSE consumer on the Hub. Only fires on
+  // the "real" phase (warmup-phase frames are suppressed). Aggregation
+  // for the ParsedOutput return still happens in parallel.
+  onRawEvent?: (sse: string) => void;
 }
 
 export async function callCodexApi(opts: CallCodexApiOptions): Promise<ParsedOutput> {
   configureDispatcher();
   if (!rateGuard) configureRateGuard();
   return rateGuard!.run(() => doCallCodexApi(opts));
+}
+
+// ── Passthrough mode ──────────────────────────────────────────────────────
+//
+// When the Hub is forwarding a real Codex CLI (or OpenAI SDK) request body
+// targeting the Responses API format (wire_api = "responses" in the
+// client's ~/.codex/config.toml), the daemon takes the client's body
+// verbatim and only injects the daemon-controlled fingerprint fields
+// before dispatching it to ChatGPT's internal backend-api/codex/responses
+// WebSocket. This mirrors the Claude passthrough strategy — keeps tools,
+// multi-turn input, reasoning, and instructions intact so Codex CLI
+// works as a drop-in OPENAI_BASE_URL replacement.
+//
+// Only supports the Responses API wire format (input[] + instructions,
+// etc.), NOT the classic Chat Completions format (messages[]). Users
+// must set `wire_api = "responses"` in their Codex config. Converting
+// chat → responses is a Phase 2 task.
+
+export interface CallCodexApiPassthroughOptions {
+  // Full buyer request body in OpenAI Responses API shape. Must contain
+  // at minimum `input` (array) and `model`. Fields like `instructions`,
+  // `tools`, `tool_choice`, `reasoning`, `parallel_tool_calls` are
+  // preserved verbatim. Daemon-controlled fields (`type`,
+  // `client_metadata`, `store`, `stream`, `include`, `generate`) are
+  // always overwritten.
+  clientBody: Record<string, unknown>;
+  // Routing + rate-guard model. Must match clientBody.model.
+  model: string;
+  // Same streaming callback as template mode — forward each raw ChatGPT
+  // WS frame as a pre-serialized SSE block for real-time pass-through
+  // to the end client.
+  onRawEvent?: (sse: string) => void;
+}
+
+export async function callCodexApiPassthrough(
+  opts: CallCodexApiPassthroughOptions
+): Promise<ParsedOutput> {
+  configureDispatcher();
+  if (!rateGuard) configureRateGuard();
+  return rateGuard!.run(() => doCallCodexApiPassthrough(opts));
 }
 
 async function doCallCodexApi(opts: CallCodexApiOptions): Promise<ParsedOutput> {
@@ -1063,6 +1110,22 @@ async function doCallCodexApi(opts: CallCodexApiOptions): Promise<ParsedOutput> 
           : Buffer.from(data as ArrayBuffer).toString("utf-8");
         // Frames are individual JSON objects (no newline framing).
         const target = phase === "warmup" ? warmupAcc : acc;
+        // Forward raw frames to the caller (when streaming is requested)
+        // only for the real phase — warmup frames are daemon-internal and
+        // never reach the end client. Each frame is re-emitted as an
+        // Anthropic-style SSE block where `event:` is the frame type
+        // (response.output_text.delta, response.completed, etc.), which
+        // matches OpenAI's public Responses API SSE wire format exactly.
+        if (phase === "real" && opts.onRawEvent) {
+          try {
+            const parsedFrame = JSON.parse(text) as { type?: unknown };
+            const frameType = typeof parsedFrame.type === "string" ? parsedFrame.type : "message";
+            opts.onRawEvent(`event: ${frameType}\ndata: ${text}\n\n`);
+          } catch {
+            // Non-JSON frame — forward as a plain data event.
+            opts.onRawEvent(`event: message\ndata: ${text}\n\n`);
+          }
+        }
         const outcome = handleFrame(text, target);
         if (outcome.rateLimit && rateGuard) {
           // Soft hint — record but don't kill this request. Next request will
@@ -1151,6 +1214,367 @@ async function doCallCodexApi(opts: CallCodexApiOptions): Promise<ParsedOutput> 
     }
     logger.info(
       `[codex-api] OK model=${acc.model} in=${acc.inputTokens} out=${acc.outputTokens} cache_read=${acc.cacheReadTokens}`
+    );
+    return parsed;
+  }
+}
+
+// ── Passthrough frame builder ─────────────────────────────────────────────
+
+// Build a ChatGPT backend-api/codex/responses WS frame from the buyer's
+// raw Responses API body. Daemon-controlled fields (type, client_metadata,
+// store, stream, include, generate, model) are always overwritten; every
+// other field — input, instructions, tools, tool_choice, reasoning,
+// parallel_tool_calls, etc. — is preserved verbatim so the end client's
+// agentic loop works end-to-end.
+function buildCodexPassthroughFrame(
+  clientBody: Record<string, unknown>,
+  model: string,
+  fingerprint: ResolvedFingerprint,
+  sessionId: string,
+  turnMetadataHeader: string,
+  windowGeneration: number,
+  warmup: boolean
+): Record<string, unknown> {
+  // Shallow clone so we don't mutate the buyer's dict across retries.
+  const frame: Record<string, unknown> = { ...clientBody };
+
+  // Daemon-controlled envelope fields — always forced.
+  frame.type = "response.create";
+  frame.model = model;
+  frame.store = false;
+  frame.stream = true;
+  // Real CLI sends include: ["reasoning.encrypted_content"] when reasoning
+  // is enabled. We set reasoning below (from client or default), so include
+  // it for fingerprint parity.
+  frame.include = ["reasoning.encrypted_content"];
+
+  // Daemon fingerprint injection — client_metadata is how the upstream
+  // ties traffic to a device+window identity. Buyers never see this
+  // field; always set it from our fingerprint.
+  frame.client_metadata = {
+    "x-codex-installation-id": fingerprint.installation_id,
+    "x-codex-window-id": `${sessionId}:${windowGeneration}`,
+    "x-codex-turn-metadata": turnMetadataHeader,
+  };
+
+  // Reasoning: if buyer sent their own reasoning config, preserve it;
+  // otherwise inject the real-CLI default `{effort: "medium", summary: "auto"}`
+  // so the request shape matches typical CLI traffic.
+  if (!frame.reasoning || typeof frame.reasoning !== "object") {
+    frame.reasoning = { effort: "medium", summary: "auto" };
+  }
+
+  // Ensure tools is an array (real CLI always sends tools, even if empty).
+  if (!Array.isArray(frame.tools)) {
+    frame.tools = [];
+  }
+
+  // Default tool_choice if not set.
+  if (frame.tool_choice === undefined || frame.tool_choice === null) {
+    frame.tool_choice = "auto";
+  }
+
+  // Default parallel_tool_calls to false (matches current template).
+  if (frame.parallel_tool_calls === undefined) {
+    frame.parallel_tool_calls = false;
+  }
+
+  // Instructions: if buyer didn't send one, fall back to the template
+  // mode's RELAY_INSTRUCTIONS so the model still has guidance.
+  if (typeof frame.instructions !== "string" || !frame.instructions) {
+    frame.instructions = RELAY_INSTRUCTIONS;
+  }
+
+  if (warmup) {
+    // Real CLI's prewarm flow: first frame of each turn has generate:false.
+    frame.generate = false;
+  } else {
+    // Explicitly unset any leftover generate:false (buyer's body shouldn't
+    // carry it, but defensive).
+    delete frame.generate;
+  }
+
+  return frame;
+}
+
+// ── Passthrough entry point ───────────────────────────────────────────────
+//
+// Copy-pasted from doCallCodexApi (with frame-building swapped for
+// buildCodexPassthroughFrame). Duplicated rather than refactored so we
+// can iterate on passthrough-specific bugs without risking a regression
+// in the battle-tested template path. When passthrough stabilizes we
+// can merge the two via a frame-builder parameter.
+
+async function doCallCodexApiPassthrough(
+  opts: CallCodexApiPassthroughOptions
+): Promise<ParsedOutput> {
+  // Minimal body validation — we need at least `input` (array) and the
+  // model. Everything else is optional per the Responses API spec.
+  const input = opts.clientBody.input;
+  if (!Array.isArray(input) || input.length === 0) {
+    throw new Error("Passthrough body missing `input` array");
+  }
+
+  const fingerprint = loadCodexFingerprint();
+  const sessionId = getMaskedSessionId();
+
+  let transientAttempt = 0;
+  let hasRefreshed = false;
+  const windowGeneration = 0;
+
+  while (true) {
+    const creds = await getFreshCreds();
+
+    const platformSandboxTag =
+      process.platform === "darwin"
+        ? "seatbelt"
+        : process.platform === "linux"
+          ? "seccomp"
+          : process.platform === "win32"
+            ? "windows_sandbox"
+            : "none";
+    const turnMetadata = JSON.stringify({
+      session_id: sessionId,
+      turn_id: randomUUID(),
+      sandbox: platformSandboxTag,
+    });
+
+    const warmupFrame = buildCodexPassthroughFrame(
+      opts.clientBody,
+      opts.model,
+      fingerprint,
+      sessionId,
+      turnMetadata,
+      windowGeneration,
+      /*warmup*/ true
+    );
+    const realFrame = buildCodexPassthroughFrame(
+      opts.clientBody,
+      opts.model,
+      fingerprint,
+      sessionId,
+      turnMetadata,
+      windowGeneration,
+      /*warmup*/ false
+    );
+    const warmupFrameJson = JSON.stringify(warmupFrame);
+    const realFrameJson = JSON.stringify(realFrame);
+
+    const windowId = `${sessionId}:${windowGeneration}`;
+    const headers: Record<string, string> = {
+      "authorization": `Bearer ${creds.accessToken}`,
+      "originator": fingerprint.originator,
+      "openai-beta": fingerprint.openai_beta,
+      "session_id": sessionId,
+      "x-client-request-id": sessionId,
+      "x-codex-window-id": windowId,
+      "x-codex-turn-metadata": turnMetadata,
+    };
+    if (fingerprint.user_agent) {
+      headers["user-agent"] = fingerprint.user_agent;
+    }
+
+    let dialed: DialResult;
+    try {
+      dialed = await dialCodexWebSocket(headers);
+    } catch (err) {
+      if (err instanceof WsDialError) {
+        const status = err.statusCode;
+
+        if (status === 429) {
+          const cooldown = cooldownFromHttpHeaders(err.headers);
+          if (cooldown && rateGuard) {
+            rateGuard.triggerCooldown(cooldown.ms, cooldown.reason);
+          } else if (rateGuard) {
+            rateGuard.triggerCooldown(Date.now() + 5 * 60_000, "fallback 5m (no reset header)");
+          }
+          throw new Error(`Codex 429 rate-limited: ${err.bodySnippet.slice(0, 300)}`);
+        }
+
+        if (status === 401 && !hasRefreshed) {
+          logger.warn("[codex-api] 401 from upgrade (passthrough), refreshing token + retry");
+          hasRefreshed = true;
+          cachedCreds = null;
+          continue;
+        }
+
+        const isTransient = status >= 500 && status <= 599;
+        if (isTransient && transientAttempt < MAX_TRANSIENT_RETRIES) {
+          const backoffMs = 500 * Math.pow(2, transientAttempt) + Math.random() * 500;
+          logger.warn(
+            `[codex-api] upgrade ${status} (passthrough attempt ${transientAttempt + 1}/${MAX_TRANSIENT_RETRIES + 1}), retrying in ${Math.round(backoffMs)}ms — ${err.bodySnippet.slice(0, 200)}`
+          );
+          await new Promise((r) => setTimeout(r, backoffMs));
+          transientAttempt++;
+          continue;
+        }
+
+        throw new Error(`Codex upgrade ${status}: ${err.bodySnippet.slice(0, 400)}`);
+      }
+      if (transientAttempt < MAX_TRANSIENT_RETRIES) {
+        const backoffMs = 500 * Math.pow(2, transientAttempt) + Math.random() * 500;
+        logger.warn(
+          `[codex-api] transport error (passthrough attempt ${transientAttempt + 1}/${MAX_TRANSIENT_RETRIES + 1}), retrying in ${Math.round(backoffMs)}ms — ${(err as Error).message}`
+        );
+        await new Promise((r) => setTimeout(r, backoffMs));
+        transientAttempt++;
+        continue;
+      }
+      throw err;
+    }
+
+    const { ws } = dialed;
+
+    const acc: ParsedFrameResult = {
+      text: "",
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      model: opts.model,
+      terminal: false,
+    };
+
+    let resolved = false;
+    const result = await new Promise<{ ok: true } | { ok: false; retriable: boolean; error: Error }>((resolve) => {
+      let phase: "warmup" | "real" = "warmup";
+      const finish = (r: { ok: true } | { ok: false; retriable: boolean; error: Error }) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+        try {
+          ws.close(1000, "done");
+        } catch {
+          // ignore
+        }
+        resolve(r);
+      };
+
+      const timer = setTimeout(() => {
+        finish({
+          ok: false,
+          retriable: false,
+          error: new Error(`Codex WS timed out after ${WS_OVERALL_TIMEOUT_MS}ms waiting for response.completed`),
+        });
+      }, WS_OVERALL_TIMEOUT_MS);
+
+      const warmupAcc: ParsedFrameResult = {
+        text: "",
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        model: opts.model,
+        terminal: false,
+      };
+
+      const sendFrame = (frameJson: string) => {
+        try {
+          ws.send(frameJson, (sendErr?: Error) => {
+            if (sendErr) {
+              finish({ ok: false, retriable: true, error: sendErr });
+            }
+          });
+        } catch (err) {
+          finish({ ok: false, retriable: true, error: err as Error });
+        }
+      };
+
+      ws.on("message", (data: WebSocket.RawData, _isBinary: boolean) => {
+        const text = Buffer.isBuffer(data)
+          ? data.toString("utf-8")
+          : Array.isArray(data)
+          ? Buffer.concat(data).toString("utf-8")
+          : Buffer.from(data as ArrayBuffer).toString("utf-8");
+        const target = phase === "warmup" ? warmupAcc : acc;
+        // Forward raw frames to the Hub for real-time SSE streaming to
+        // the end client. Same rules as template mode — only real phase,
+        // wrap as `event: <type>\ndata: <json>\n\n`.
+        if (phase === "real" && opts.onRawEvent) {
+          try {
+            const parsedFrame = JSON.parse(text) as { type?: unknown };
+            const frameType = typeof parsedFrame.type === "string" ? parsedFrame.type : "message";
+            opts.onRawEvent(`event: ${frameType}\ndata: ${text}\n\n`);
+          } catch {
+            opts.onRawEvent(`event: message\ndata: ${text}\n\n`);
+          }
+        }
+        const outcome = handleFrame(text, target);
+        if (outcome.rateLimit && rateGuard) {
+          rateGuard.triggerCooldown(outcome.rateLimit.ms, outcome.rateLimit.reason);
+        }
+        if (outcome.terminal) {
+          if (outcome.error) {
+            finish({
+              ok: false,
+              retriable: false,
+              error: new Error(`Codex upstream error: ${outcome.error}`),
+            });
+            return;
+          }
+          if (phase === "warmup") {
+            phase = "real";
+            sendFrame(realFrameJson);
+            return;
+          }
+          acc.terminal = true;
+          finish({ ok: true });
+        }
+      });
+
+      ws.on("close", (code: number, reason: Buffer) => {
+        if (acc.terminal) return;
+        finish({
+          ok: false,
+          retriable: true,
+          error: new Error(`Codex WS closed early (code=${code}, reason=${reason.toString().slice(0, 200)})`),
+        });
+      });
+
+      ws.on("error", (err: Error) => {
+        finish({ ok: false, retriable: true, error: err });
+      });
+
+      sendFrame(warmupFrameJson);
+    });
+
+    if (!result.ok) {
+      if (result.retriable && transientAttempt < MAX_TRANSIENT_RETRIES) {
+        const backoffMs = 500 * Math.pow(2, transientAttempt) + Math.random() * 500;
+        logger.warn(
+          `[codex-api] mid-session ws error (passthrough attempt ${transientAttempt + 1}/${MAX_TRANSIENT_RETRIES + 1}), retrying in ${Math.round(backoffMs)}ms — ${result.error.message}`
+        );
+        await new Promise((r) => setTimeout(r, backoffMs));
+        transientAttempt++;
+        continue;
+      }
+      throw result.error;
+    }
+
+    const parsed: ParsedOutput = {
+      text: acc.text,
+      sessionId,
+      usage: {
+        input_tokens: acc.inputTokens,
+        output_tokens: acc.outputTokens,
+        cache_creation_tokens: 0,
+        cache_read_tokens: acc.cacheReadTokens,
+      },
+      model: acc.model,
+      costUsd: 0,
+    };
+    if (rateGuard) {
+      const cost = calculateCost(
+        opts.model,
+        parsed.usage.input_tokens,
+        parsed.usage.output_tokens,
+        parsed.usage.cache_creation_tokens,
+        parsed.usage.cache_read_tokens,
+      );
+      rateGuard.recordSpend(cost.apiCost);
+      parsed.costUsd = cost.apiCost;
+    }
+    logger.info(
+      `[codex-api] passthrough OK model=${acc.model} in=${acc.inputTokens} out=${acc.outputTokens} cache_read=${acc.cacheReadTokens}`
     );
     return parsed;
   }

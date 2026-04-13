@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import YAML from "yaml";
 import { RelayWsClient } from "./ws-client.js";
 import { callClaudeApi, callClaudeApiPassthrough, preflightClaudeApi, getRateGuardSnapshot as getClaudeRateGuardSnapshot, } from "./upstream/claude-api.js";
-import { callCodexApi, preflightCodexApi, getRateGuardSnapshot as getCodexRateGuardSnapshot, } from "./upstream/codex-api.js";
+import { callCodexApi, callCodexApiPassthrough, preflightCodexApi, getRateGuardSnapshot as getCodexRateGuardSnapshot, } from "./upstream/codex-api.js";
 import { callGeminiApi, preflightGeminiApi, getGeminiRateGuardSnapshot, } from "./upstream/gemini-api.js";
 import { callAntigravityApi, preflightAntigravityApi, getAntigravityRateGuardSnapshot, } from "./upstream/antigravity-api.js";
 /**
@@ -192,11 +192,25 @@ async function executeRelayRequest(request, config, sendChunk) {
         // antigravity → daily-cloudcode-pa). Each handler has its own
         // fingerprint file and rate-guard instance.
         if (cliType === "codex") {
-            parsed = await callCodexApi({
-                prompt,
-                model,
-                maxTokens: max_budget_usd ? undefined : 4096,
-            });
+            // Same two-mode pattern as claude: passthrough when the Hub forwards
+            // a real Responses API body (used by /v1/responses endpoint for
+            // Codex CLI drop-in replacement), template mode otherwise (used by
+            // the OpenAI-compat /v1/chat/completions classic endpoint).
+            if (request.passthrough_body) {
+                parsed = await callCodexApiPassthrough({
+                    clientBody: request.passthrough_body,
+                    model,
+                    onRawEvent: sendChunk,
+                });
+            }
+            else {
+                parsed = await callCodexApi({
+                    prompt,
+                    model,
+                    maxTokens: max_budget_usd ? undefined : 4096,
+                    onRawEvent: sendChunk,
+                });
+            }
         }
         else if (cliType === "gemini") {
             parsed = await callGeminiApi({

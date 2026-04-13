@@ -38,5 +38,12 @@ export interface CallCodexApiOptions {
     prompt: string;
     model: string;
     maxTokens?: number;
+    onRawEvent?: (sse: string) => void;
 }
 export declare function callCodexApi(opts: CallCodexApiOptions): Promise<ParsedOutput>;
+export interface CallCodexApiPassthroughOptions {
+    clientBody: Record<string, unknown>;
+    model: string;
+    onRawEvent?: (sse: string) => void;
+}
+export declare function callCodexApiPassthrough(opts: CallCodexApiPassthroughOptions): Promise<ParsedOutput>;
