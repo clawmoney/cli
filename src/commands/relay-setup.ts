@@ -23,23 +23,53 @@ import { API_PRICES, RELAY_DISCOUNT, PLATFORM_FEE } from "../relay/pricing.js";
 // ── Per-cli_type model catalogs ──
 //
 // `RECOMMENDED_MODELS` is what gets registered when the user picks "all
-// recommended" — it's a curated subset of API_PRICES that maps to the
-// models a typical end-user actually wants to expose. Old / preview /
-// niche models are intentionally excluded from the default; the user
-// can pick them via "select individually" if needed.
+// recommended" — it's a curated subset of API_PRICES that mirrors what
+// each CLI's NATIVE /model picker exposes by default. Cross-checked
+// against:
+//   - Claude Code 2.1.x /model menu (4 entries → 3 unique IDs;
+//     Sonnet 1M is the same model + context-1m beta header)
+//   - Codex CLI 0.117.x /model menu (4 entries: gpt-5.4 current,
+//     gpt-5.4-mini, gpt-5.3-codex, gpt-5.2)
+//   - sub2api backend/internal/pkg/gemini/models.go DefaultModels()
+//     for the Gemini CLI catalog
+//   - sub2api backend/internal/pkg/antigravity/claude_types.go
+//     claudeModels + geminiModels for the Antigravity catalog
 //
-// `modelsForCli` returns the full set per cli_type drawn directly from
-// API_PRICES so every priced model is available in the manual picker.
+// The "manual select" path (when the user says no to recommended)
+// falls through to modelsForCli(cli) which returns EVERY priced
+// model in that family.
 
 const RECOMMENDED_MODELS: Record<string, string[]> = {
+  // Claude Code /model menu: Default(Sonnet 4.6) / Sonnet(1M) / Opus(1M) / Haiku
+  // → 3 unique model IDs (Sonnet 1M = same model + context-1m beta)
   claude: ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"],
-  codex: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"],
-  antigravity: [
-    "antigravity-gemini-3-pro",
-    "antigravity-claude-opus-4-6",
-    "antigravity-claude-sonnet-4-6",
+
+  // Codex CLI /model menu: gpt-5.4 (current frontier) / gpt-5.4-mini /
+  // gpt-5.3-codex (Codex-optimized) / gpt-5.2 (long-running pro)
+  codex: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2"],
+
+  // Gemini CLI exposes a long list; mainstream picks are the production-
+  // stable 2.5 line (pro + flash) and the latest 3.x preview (pro + flash).
+  // Image / thinking variants and lite/customtools are intentionally
+  // skipped from the recommended set — users can pick them manually.
+  gemini: [
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-3-pro-preview",
+    "gemini-3-flash-preview",
   ],
-  gemini: ["gemini-2.5-pro", "gemini-2.5-flash"],
+
+  // Antigravity exposes Claude Opus/Sonnet AND Gemini Pro/Flash via the
+  // SAME Google Antigravity OAuth token (one of its main selling points
+  // for providers). Recommended set spans both halves so a single
+  // antigravity provider serves both Anthropic and Google buyers.
+  antigravity: [
+    "antigravity-claude-sonnet-4-6",
+    "antigravity-claude-opus-4-6",
+    "antigravity-gemini-3-pro",
+    "antigravity-gemini-3-flash",
+    "antigravity-gemini-2.5-pro",
+  ],
 };
 
 function modelsForCli(cli: string): string[] {
@@ -48,10 +78,11 @@ function modelsForCli(cli: string): string[] {
     return all.filter((m) => m.startsWith("claude-"));
   }
   if (cli === "codex") {
-    return all.filter(
-      (m) =>
-        m.startsWith("gpt-") || m.startsWith("o3") || m.startsWith("o4")
-    );
+    // Only gpt-5.x family — o3/o4 reasoning models are public Responses
+    // API only, NOT served by Codex CLI's internal ChatGPT WS path.
+    // They're in API_PRICES for OpenAI SDK callers via /v1/chat/completions
+    // but a `codex` daemon can't actually serve them.
+    return all.filter((m) => m.startsWith("gpt-"));
   }
   if (cli === "antigravity") {
     return all.filter((m) => m.startsWith("antigravity-"));
