@@ -120,9 +120,6 @@ function detectInstalledClis() {
     return results;
 }
 // ── Helpers ──
-function formatPrice(input, output) {
-    return `$${input}/$${output} per 1M`;
-}
 function formatBuyerPrice(input, output) {
     const buyerInput = (input * RELAY_DISCOUNT).toFixed(3);
     const buyerOutput = (output * RELAY_DISCOUNT).toFixed(3);
@@ -195,44 +192,15 @@ export async function relaySetupCommand() {
     for (const cli of selectedClis) {
         const allModels = modelsForCli(cli);
         const recommended = (RECOMMENDED_MODELS[cli] ?? []).filter((m) => allModels.includes(m));
-        if (allModels.length === 0) {
-            log.warn(`${cli}: no models found in pricing table — skipping`);
+        if (allModels.length === 0 || recommended.length === 0) {
+            log.warn(`${cli}: no recommended models found — skipping`);
             continue;
         }
-        log.step(`${chalk.bold(cli)}: choose models`);
-        const useRecommended = await confirm({
-            message: `Register the ${recommended.length} recommended ${cli} models? (${recommended.join(", ")})`,
-            initialValue: true,
-        });
-        if (isCancel(useRecommended)) {
-            cancel("Setup cancelled");
-            process.exit(0);
+        log.step(`${chalk.bold(cli)}: auto-registering ${recommended.length} recommended models`);
+        for (const m of recommended) {
+            log.message(chalk.dim(`    · ${m}`));
         }
-        let chosen;
-        if (useRecommended) {
-            chosen = recommended;
-        }
-        else {
-            const picked = await multiselect({
-                message: `Pick ${cli} models to register:`,
-                options: allModels.map((m) => {
-                    const p = API_PRICES[m];
-                    return {
-                        value: m,
-                        label: m,
-                        hint: formatPrice(p.input, p.output),
-                    };
-                }),
-                initialValues: recommended,
-                required: true,
-            });
-            if (isCancel(picked)) {
-                cancel("Setup cancelled");
-                process.exit(0);
-            }
-            chosen = picked;
-        }
-        for (const model of chosen) {
+        for (const model of recommended) {
             const p = API_PRICES[model];
             registrations.push({
                 cli,

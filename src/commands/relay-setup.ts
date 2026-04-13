@@ -158,10 +158,6 @@ function detectInstalledClis(): CliDetection[] {
 
 // ── Helpers ──
 
-function formatPrice(input: number, output: number): string {
-  return `$${input}/$${output} per 1M`;
-}
-
 function formatBuyerPrice(input: number, output: number): string {
   const buyerInput = (input * RELAY_DISCOUNT).toFixed(3);
   const buyerOutput = (output * RELAY_DISCOUNT).toFixed(3);
@@ -255,7 +251,20 @@ export async function relaySetupCommand(): Promise<void> {
 
   const selectedClis = familyChoice as string[];
 
-  // ── Step 3: per-family model selection ──
+  // ── Step 3: auto-register recommended models per family ──
+  //
+  // We deliberately don't ask the user to pick individual models here.
+  // Providers care about lending their subscription's quota to earn,
+  // not about which model IDs are registered — from their POV it's
+  // all just "Claude Max tokens" or "ChatGPT Pro tokens". Registering
+  // the curated recommended set per CLI covers the models that each
+  // CLI's own /model picker actually exposes, so buyer traffic lines
+  // up naturally with what the provider's subscription can serve.
+  //
+  // Advanced users who want a narrower set can edit
+  // ~/.clawmoney/config.yaml or call `clawmoney relay register`
+  // manually after setup — we don't expose a selector here because
+  // it was pure friction for the common case.
   type Registration = { cli: string; model: string; input: number; output: number };
   const registrations: Registration[] = [];
 
@@ -265,51 +274,19 @@ export async function relaySetupCommand(): Promise<void> {
       allModels.includes(m)
     );
 
-    if (allModels.length === 0) {
-      log.warn(`${cli}: no models found in pricing table — skipping`);
+    if (allModels.length === 0 || recommended.length === 0) {
+      log.warn(`${cli}: no recommended models found — skipping`);
       continue;
     }
 
-    log.step(`${chalk.bold(cli)}: choose models`);
-
-    const useRecommended = await confirm({
-      message: `Register the ${recommended.length} recommended ${cli} models? (${recommended.join(
-        ", "
-      )})`,
-      initialValue: true,
-    });
-
-    if (isCancel(useRecommended)) {
-      cancel("Setup cancelled");
-      process.exit(0);
+    log.step(
+      `${chalk.bold(cli)}: auto-registering ${recommended.length} recommended models`
+    );
+    for (const m of recommended) {
+      log.message(chalk.dim(`    · ${m}`));
     }
 
-    let chosen: string[];
-    if (useRecommended) {
-      chosen = recommended;
-    } else {
-      const picked = await multiselect({
-        message: `Pick ${cli} models to register:`,
-        options: allModels.map((m) => {
-          const p = API_PRICES[m];
-          return {
-            value: m,
-            label: m,
-            hint: formatPrice(p.input, p.output),
-          };
-        }),
-        initialValues: recommended,
-        required: true,
-      });
-
-      if (isCancel(picked)) {
-        cancel("Setup cancelled");
-        process.exit(0);
-      }
-      chosen = picked as string[];
-    }
-
-    for (const model of chosen) {
+    for (const model of recommended) {
       const p = API_PRICES[model];
       registrations.push({
         cli,
