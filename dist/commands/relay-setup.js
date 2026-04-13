@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { intro, outro, multiselect, confirm, select, spinner, isCancel, cancel, log, } from "@clack/prompts";
+import { intro, outro, multiselect, select, spinner, isCancel, cancel, log, } from "@clack/prompts";
 import chalk from "chalk";
 import { apiPost } from "../utils/api.js";
 import { loadConfig, requireConfig } from "../utils/config.js";
@@ -288,15 +288,13 @@ export async function relaySetupCommand() {
     log.message(chalk.dim(`  ${registrations.length} provider(s) · ${limitLabel[dailyLimit] ?? `$${dailyLimit}/day cap`} per model`));
     log.message(chalk.dim(`  You earn ~${Math.round((1 - PLATFORM_FEE) * 100)}% of what buyers pay (after platform fee)`));
     log.message(chalk.dim(`  To customize: edit ~/.clawmoney/config.yaml after start`));
-    const proceed = await confirm({
-        message: `Register all ${registrations.length} providers now?`,
-        initialValue: true,
-    });
-    if (isCancel(proceed) || !proceed) {
-        cancel("Setup cancelled");
-        process.exit(0);
-    }
     // ── Step 6: register each (idempotent — "already registered" counts as success) ──
+    //
+    // No "Register all N providers now?" confirm — the user already
+    // picked subscriptions + daily quota share. Seeing the summary and
+    // immediately going into registration is the expected flow. Ctrl-C
+    // still aborts, and registrations are idempotent so a mid-way abort
+    // is recoverable by re-running.
     let succeeded = 0;
     let failed = 0;
     const failures = [];

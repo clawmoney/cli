@@ -7,7 +7,6 @@ import {
   intro,
   outro,
   multiselect,
-  confirm,
   select,
   spinner,
   isCancel,
@@ -401,17 +400,13 @@ export async function relaySetupCommand(): Promise<void> {
     )
   );
 
-  const proceed = await confirm({
-    message: `Register all ${registrations.length} providers now?`,
-    initialValue: true,
-  });
-
-  if (isCancel(proceed) || !proceed) {
-    cancel("Setup cancelled");
-    process.exit(0);
-  }
-
   // ── Step 6: register each (idempotent — "already registered" counts as success) ──
+  //
+  // No "Register all N providers now?" confirm — the user already
+  // picked subscriptions + daily quota share. Seeing the summary and
+  // immediately going into registration is the expected flow. Ctrl-C
+  // still aborts, and registrations are idempotent so a mid-way abort
+  // is recoverable by re-running.
   let succeeded = 0;
   let failed = 0;
   const failures: Array<{ cli: string; model: string; error: string }> = [];
