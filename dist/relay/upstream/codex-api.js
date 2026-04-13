@@ -449,6 +449,47 @@ function buildCodexRequestFrame(prompt, model, fingerprint, sessionId, turnMetad
     }
     return frame;
 }
+// Patch a raw ChatGPT WS frame before we forward it to the Hub as SSE.
+// ChatGPT's internal response.completed frames come from a proprietary
+// backend that does NOT populate usage.total_tokens — the Codex CLI Rust
+// parser is strict about this field (stream disconnected before completion:
+// failed to parse ResponseCompleted: missing field `total_tokens`), so we
+// inject it here when we can compute it from input_tokens + output_tokens.
+// Returns the possibly-rewritten frame JSON; on parse/shape error returns
+// the original untouched so a malformed input never turns into a crash.
+function patchCodexFrameForForwarding(raw) {
+    try {
+        const evt = JSON.parse(raw);
+        const type = evt["type"];
+        if (type !== "response.completed" && type !== "response.done") {
+            return raw;
+        }
+        const resp = evt["response"];
+        if (!resp || typeof resp !== "object")
+            return raw;
+        const usage = resp["usage"];
+        if (!usage || typeof usage !== "object")
+            return raw;
+        if (typeof usage["total_tokens"] === "number")
+            return raw;
+        const input = Number(usage["input_tokens"] ?? 0);
+        const output = Number(usage["output_tokens"] ?? 0);
+        usage["total_tokens"] = input + output;
+        // Also ensure the nested *_details objects exist — Codex CLI's
+        // schema checks for them on the response.completed frame.
+        if (!usage["input_tokens_details"] || typeof usage["input_tokens_details"] !== "object") {
+            const cached = Number(usage.cache_read_input_tokens ?? 0);
+            usage["input_tokens_details"] = { cached_tokens: cached };
+        }
+        if (!usage["output_tokens_details"] || typeof usage["output_tokens_details"] !== "object") {
+            usage["output_tokens_details"] = { reasoning_tokens: 0 };
+        }
+        return JSON.stringify(evt);
+    }
+    catch {
+        return raw;
+    }
+}
 function handleFrame(raw, acc) {
     let evt;
     try {
@@ -877,7 +918,10 @@ async function doCallCodexApi(opts) {
                     try {
                         const parsedFrame = JSON.parse(text);
                         const frameType = typeof parsedFrame.type === "string" ? parsedFrame.type : "message";
-                        opts.onRawEvent(`event: ${frameType}\ndata: ${text}\n\n`);
+                        // Inject usage.total_tokens on response.completed frames so
+                        // the end client's strict parser doesn't abort the stream.
+                        const patched = patchCodexFrameForForwarding(text);
+                        opts.onRawEvent(`event: ${frameType}\ndata: ${patched}\n\n`);
                     }
                     catch {
                         // Non-JSON frame — forward as a plain data event.
@@ -1183,7 +1227,8 @@ async function doCallCodexApiPassthrough(opts) {
                     try {
                         const parsedFrame = JSON.parse(text);
                         const frameType = typeof parsedFrame.type === "string" ? parsedFrame.type : "message";
-                        opts.onRawEvent(`event: ${frameType}\ndata: ${text}\n\n`);
+                        const patched = patchCodexFrameForForwarding(text);
+                        opts.onRawEvent(`event: ${frameType}\ndata: ${patched}\n\n`);
                     }
                     catch {
                         opts.onRawEvent(`event: message\ndata: ${text}\n\n`);
