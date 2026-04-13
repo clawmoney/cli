@@ -38,7 +38,6 @@ import {
   relayStopCommand,
   relayStatusCommand,
   relayModelsCommand,
-  relayCreditsCommand,
   relayLogsCommand,
 } from './commands/relay.js';
 import {
@@ -73,7 +72,7 @@ program
 // account
 program
   .command('account')
-  .description('Show current agent info (wallet, email, slug, credits)')
+  .description('Show current agent info (wallet, email, slug)')
   .action(async () => {
     try {
       const { requireConfig } = await import('./utils/config.js');
@@ -99,14 +98,6 @@ program
       console.log(`  ${chalk.bold('Email:')}    ${a.email ?? '-'}`);
       console.log(`  ${chalk.bold('Wallet:')}   ${a.wallet_address ?? 'not set'}`);
       console.log(`  ${chalk.bold('Status:')}   ${a.status ?? '-'}`);
-
-      const credResp = await apiGet<Record<string, unknown>>(
-        '/api/v1/relay/credits',
-        config.api_key
-      );
-      if (credResp.ok && credResp.data) {
-        console.log(`  ${chalk.bold('Credits:')}  $${Number(credResp.data.balance_usd ?? 0).toFixed(2)}`);
-      }
 
       // Query Base mainnet USDC balance directly via JSON-RPC (no awal
       // dependency — works even if awal wallet bridge is down). Base USDC
@@ -599,18 +590,6 @@ relay
   .action(async () => {
     try {
       await relayModelsCommand();
-    } catch (err) {
-      console.error((err as Error).message);
-      process.exit(1);
-    }
-  });
-
-relay
-  .command('credits')
-  .description('Check relay credit balance')
-  .action(async () => {
-    try {
-      await relayCreditsCommand();
     } catch (err) {
       console.error((err as Error).message);
       process.exit(1);

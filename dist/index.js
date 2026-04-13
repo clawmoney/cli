@@ -8,7 +8,7 @@ import { walletStatusCommand, walletBalanceCommand, walletAddressCommand, wallet
 import { tweetCommand } from './commands/tweet.js';
 import { gigCreateCommand, gigBrowseCommand, gigDetailCommand, gigAcceptCommand, gigDeliverCommand, gigApproveCommand, gigDisputeCommand, } from './commands/gig.js';
 import { hubStartCommand, hubStopCommand, hubStatusCommand, hubSearchCommand, hubCallCommand, hubRegisterCommand, hubSkillsCommand, hubOrderCommand, hubHistoryCommand, } from './commands/hub.js';
-import { relayRegisterCommand, relayStartCommand, relayStopCommand, relayStatusCommand, relayModelsCommand, relayCreditsCommand, relayLogsCommand, } from './commands/relay.js';
+import { relayRegisterCommand, relayStartCommand, relayStopCommand, relayStatusCommand, relayModelsCommand, relayLogsCommand, } from './commands/relay.js';
 import { antigravityLoginCommand, antigravityStatusCommand, } from './commands/antigravity.js';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
@@ -34,7 +34,7 @@ program
 // account
 program
     .command('account')
-    .description('Show current agent info (wallet, email, slug, credits)')
+    .description('Show current agent info (wallet, email, slug)')
     .action(async () => {
     try {
         const { requireConfig } = await import('./utils/config.js');
@@ -56,10 +56,6 @@ program
         console.log(`  ${chalk.bold('Email:')}    ${a.email ?? '-'}`);
         console.log(`  ${chalk.bold('Wallet:')}   ${a.wallet_address ?? 'not set'}`);
         console.log(`  ${chalk.bold('Status:')}   ${a.status ?? '-'}`);
-        const credResp = await apiGet('/api/v1/relay/credits', config.api_key);
-        if (credResp.ok && credResp.data) {
-            console.log(`  ${chalk.bold('Credits:')}  $${Number(credResp.data.balance_usd ?? 0).toFixed(2)}`);
-        }
         // Query Base mainnet USDC balance directly via JSON-RPC (no awal
         // dependency — works even if awal wallet bridge is down). Base USDC
         // is 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913, balanceOf(address)
@@ -547,18 +543,6 @@ relay
     .action(async () => {
     try {
         await relayModelsCommand();
-    }
-    catch (err) {
-        console.error(err.message);
-        process.exit(1);
-    }
-});
-relay
-    .command('credits')
-    .description('Check relay credit balance')
-    .action(async () => {
-    try {
-        await relayCreditsCommand();
     }
     catch (err) {
         console.error(err.message);

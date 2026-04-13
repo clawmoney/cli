@@ -399,8 +399,8 @@ export async function relaySetupCommand() {
     // instead of 6.
     log.message(chalk.dim("Next:") +
         "\n" +
-        `  ${chalk.cyan("clawmoney relay status")}   daemon health + providers\n` +
-        `  ${chalk.cyan("clawmoney relay credits")}  earnings + balance\n` +
+        `  ${chalk.cyan("clawmoney relay status")}   daemon + provider list\n` +
+        `  ${chalk.cyan("clawmoney wallet balance")} on-chain + relay earnings\n` +
         `  ${chalk.cyan("clawmoney relay stop")}     stop daemon`);
     const cliLabel = uniqueClis.length === 1
         ? `${uniqueClis[0]} daemon running`

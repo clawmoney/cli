@@ -535,8 +535,8 @@ export async function relaySetupCommand(): Promise<void> {
   log.message(
     chalk.dim("Next:") +
       "\n" +
-      `  ${chalk.cyan("clawmoney relay status")}   daemon health + providers\n` +
-      `  ${chalk.cyan("clawmoney relay credits")}  earnings + balance\n` +
+      `  ${chalk.cyan("clawmoney relay status")}   daemon + provider list\n` +
+      `  ${chalk.cyan("clawmoney wallet balance")} on-chain + relay earnings\n` +
       `  ${chalk.cyan("clawmoney relay stop")}     stop daemon`
   );
   const cliLabel =

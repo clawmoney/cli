@@ -344,28 +344,3 @@ export async function relayModelsCommand() {
         throw err;
     }
 }
-export async function relayCreditsCommand() {
-    const config = requireConfig();
-    const spinner = ora("Fetching relay credits...").start();
-    try {
-        const resp = await apiGet("/api/v1/relay/credits", config.api_key);
-        if (!resp.ok) {
-            const detail = resp.data?.detail ?? resp.status;
-            spinner.fail(chalk.red(`Failed to fetch credits: ${detail}`));
-            process.exit(1);
-        }
-        const data = resp.data;
-        spinner.succeed("Relay Credits");
-        console.log("");
-        console.log(`  ${chalk.bold("Balance:")}        $${(data.balance_usd ?? 0).toFixed(2)}`);
-        console.log(`  ${chalk.bold("Total Spent:")}    $${(data.total_spent_usd ?? 0).toFixed(2)}`);
-        console.log(`  ${chalk.bold("Total Requests:")} ${data.total_requests ?? 0}`);
-        if (data.last_used_at) {
-            console.log(`  ${chalk.bold("Last Used:")}      ${data.last_used_at}`);
-        }
-    }
-    catch (err) {
-        spinner.fail(chalk.red("Failed to fetch credits"));
-        throw err;
-    }
-}
