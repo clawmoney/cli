@@ -25,6 +25,7 @@ import {
   preflightAntigravityApi,
   getAntigravityRateGuardSnapshot,
 } from "./upstream/antigravity-api.js";
+import { apiGet } from "../utils/api.js";
 
 /**
  * Pick the rate-guard snapshot matching this request's cli_type. Fixes a
@@ -362,6 +363,51 @@ async function executeRelayRequest(
   }
 }
 
+// ── Preflight helpers ──
+
+// Map a cli_type string to its preflight function. Returns null for
+// unknown types so the caller can skip them gracefully instead of
+// crashing the daemon.
+function getPreflightFn(cliType: string) {
+  switch (cliType) {
+    case "claude":
+      return preflightClaudeApi;
+    case "codex":
+      return preflightCodexApi;
+    case "gemini":
+      return preflightGeminiApi;
+    case "antigravity":
+      return preflightAntigravityApi;
+    default:
+      return null;
+  }
+}
+
+// Query the Hub for the full set of cli_types the current agent has
+// registered as relay providers. Used by the multi-cli daemon to decide
+// which upstream preflights to run. Returns null on any network / auth
+// failure — caller falls back to single-cli mode.
+async function fetchRegisteredCliTypes(
+  config: RelayProviderConfig
+): Promise<string[] | null> {
+  try {
+    const resp = await apiGet<Array<{ cli_type?: string }>>(
+      "/api/v1/relay/providers/me",
+      config.api_key
+    );
+    if (!resp.ok || !Array.isArray(resp.data)) {
+      return null;
+    }
+    const seen = new Set<string>();
+    for (const p of resp.data) {
+      if (typeof p.cli_type === "string" && p.cli_type) seen.add(p.cli_type);
+    }
+    return Array.from(seen);
+  } catch {
+    return null;
+  }
+}
+
 // ── Main daemon entry point ──
 
 export function runRelayProvider(cliOverride?: string): void {
@@ -381,26 +427,85 @@ export function runRelayProvider(cliOverride?: string): void {
   // preflight call so the first outbound request already goes through it.
   applyProxyFromConfig(config);
 
-  // Validate the OAuth token + fingerprint up-front so we fail fast instead
-  // of on the first inbound request. Each cli_type has its own preflight
-  // path (different credential file, different fingerprint schema, different
-  // rate-guard instance).
-  const preflightFn =
-    config.relay.cli_type === "codex"
-      ? preflightCodexApi
-      : config.relay.cli_type === "gemini"
-      ? preflightGeminiApi
-      : config.relay.cli_type === "claude"
-      ? preflightClaudeApi
-      : config.relay.cli_type === "antigravity"
-      ? preflightAntigravityApi
-      : null;
-  if (preflightFn) {
-    preflightFn(config.relay.rate_guard).catch((err) => {
-      logger.error(
-        `${config.relay.cli_type} API preflight failed: ${(err as Error).message}`
+  // Validate OAuth tokens + fingerprints up front so we fail fast on the
+  // happy path instead of on the first inbound request.
+  //
+  // Two modes:
+  //
+  // 1. Single-cli legacy mode — `--cli X` passed explicitly. Run only
+  //    that one preflight and fail-fast on error (preserves the old
+  //    behavior when the user knows exactly what they're starting).
+  //
+  // 2. Multi-cli auto mode — no `--cli` override. Query the Hub for the
+  //    full list of registered providers, collect their distinct
+  //    cli_types, and run each preflight in parallel. Per-cli failures
+  //    are tolerated (logged as a warning) so a broken codex OAuth
+  //    doesn't take down the claude half of the daemon.
+  //
+  // The Hub already dispatches requests by agent_id and stamps each
+  // relay_request with its target `cli_type` — provider.ts's request
+  // handler (`executeRelayRequest`) routes to the right upstream module
+  // based on that field. So from the Hub's point of view, a daemon that
+  // has preflighted multiple cli_types is just "a more capable provider".
+  if (cliOverride) {
+    // Legacy single-cli path.
+    const preflightFn = getPreflightFn(cliOverride);
+    if (preflightFn) {
+      preflightFn(config.relay.rate_guard).catch((err) => {
+        logger.error(
+          `${cliOverride} API preflight failed: ${(err as Error).message}`
+        );
+        process.exit(1);
+      });
+    }
+  } else {
+    // Multi-cli auto mode — fire-and-forget, don't block startup on the
+    // HTTP round-trip. The WS connection can come up in parallel; the
+    // preflights only gate the FIRST call of each family, not the WS
+    // handshake.
+    (async () => {
+      const registered = await fetchRegisteredCliTypes(config);
+      if (!registered || registered.length === 0) {
+        logger.warn(
+          "Could not determine registered cli_types from Hub. " +
+            "Falling back to config cli_type for preflight."
+        );
+        const fallback = config.relay.cli_type;
+        const fn = getPreflightFn(fallback);
+        if (fn) {
+          try {
+            await fn(config.relay.rate_guard);
+          } catch (err) {
+            logger.warn(
+              `${fallback} preflight failed: ${(err as Error).message}`
+            );
+          }
+        }
+        return;
+      }
+      logger.info(
+        `Preflighting ${registered.length} registered cli_type(s): ${registered.join(", ")}`
       );
-      process.exit(1);
+      await Promise.all(
+        registered.map(async (ct) => {
+          const fn = getPreflightFn(ct);
+          if (!fn) {
+            logger.warn(`Unknown cli_type ${ct} — skipping preflight`);
+            return;
+          }
+          try {
+            await fn(config.relay.rate_guard);
+            logger.info(`  ${ct} preflight OK`);
+          } catch (err) {
+            logger.warn(
+              `  ${ct} preflight failed: ${(err as Error).message} — ` +
+                `that family will NOT be able to serve requests until fixed`
+            );
+          }
+        })
+      );
+    })().catch((err) => {
+      logger.warn(`Multi-cli preflight driver error: ${(err as Error).message}`);
     });
   }
 
@@ -507,7 +612,13 @@ export function runRelayProvider(cliOverride?: string): void {
   wsClient.start();
 
   logger.info("Relay Provider running. Listening for relay requests...");
-  logger.info(
-    `Config: cli=${config.relay.cli_type}, model=${config.relay.model}, mode=${config.relay.mode}, concurrency=${config.relay.concurrency}`
-  );
+  if (cliOverride) {
+    logger.info(
+      `Config: cli=${cliOverride} (single), mode=${config.relay.mode}, concurrency=${config.relay.concurrency}`
+    );
+  } else {
+    logger.info(
+      `Config: cli=auto (multi), mode=${config.relay.mode}, concurrency=${config.relay.concurrency}`
+    );
+  }
 }

@@ -233,7 +233,15 @@ export async function relayStartCommand(options: { cli?: string }): Promise<void
     if (pid && isRelayPidAlive(pid)) {
       spinner.succeed(chalk.green(`Relay Provider started (PID ${pid})`));
       console.log(chalk.dim(`  Log file: ${LOG_FILE}`));
-      console.log(chalk.dim(`  CLI: ${options.cli || "claude (default)"}`));
+      if (options.cli) {
+        console.log(chalk.dim(`  CLI: ${options.cli} (single)`));
+      } else {
+        console.log(
+          chalk.dim(
+            `  CLI: auto (serving all registered cli_types for this agent)`
+          )
+        );
+      }
       console.log(chalk.dim(`  API key: ${config.api_key.slice(0, 8)}...`));
     } else {
       spinner.fail(
