@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { intro, outro, multiselect, confirm, text, spinner, isCancel, cancel, log, } from "@clack/prompts";
+import { intro, outro, multiselect, confirm, spinner, isCancel, cancel, log, } from "@clack/prompts";
 import chalk from "chalk";
 import { apiPost } from "../utils/api.js";
 import { requireConfig } from "../utils/config.js";
@@ -224,48 +224,34 @@ export async function relaySetupCommand() {
         cancel("No models selected — nothing to register");
         process.exit(0);
     }
-    // ── Step 4: global concurrency + daily budget ──
-    const concurrencyAns = await text({
-        message: "Concurrency cap per provider? (1-5 recommended; higher looks less like a single power user to upstream fingerprint detection)",
-        placeholder: "5",
-        defaultValue: "5",
-        validate: (v) => {
-            const n = parseInt(v || "5", 10);
-            if (Number.isNaN(n) || n < 1 || n > 20) {
-                return "Must be a number between 1 and 20";
-            }
-            return undefined;
-        },
-    });
-    if (isCancel(concurrencyAns)) {
-        cancel("Setup cancelled");
-        process.exit(0);
-    }
-    const dailyLimitAns = await text({
-        message: "Daily API spend cap per provider in USD? (the daemon stops accepting requests when exceeded)",
-        placeholder: "15",
-        defaultValue: "15",
-        validate: (v) => {
-            const n = parseFloat(v || "15");
-            if (Number.isNaN(n) || n < 0) {
-                return "Must be a non-negative number";
-            }
-            return undefined;
-        },
-    });
-    if (isCancel(dailyLimitAns)) {
-        cancel("Setup cancelled");
-        process.exit(0);
-    }
-    const concurrency = parseInt(concurrencyAns, 10);
-    const dailyLimit = parseFloat(dailyLimitAns);
+    // ── Step 4: defaults that don't need user input ──
+    //
+    // We deliberately don't prompt for these:
+    //
+    // - Concurrency (5): the right value is "looks like a single power
+    //   user". 3-5 is the sweet spot — high enough that one person with
+    //   multiple terminals is plausible, low enough that Anthropic's
+    //   per-account behavioral profiler can't easily distinguish from
+    //   real CC traffic. Asking the user creates friction and an option
+    //   they can't confidently judge.
+    //
+    // - Daily limit ($15): roughly what a heavy individual user spends
+    //   on Claude API in a day. Hard cap that protects against runaway
+    //   buyer abuse hitting the OAuth account's quota.
+    //
+    // Both can be overridden later via:
+    //   clawmoney relay register --cli X --model Y --concurrency N --daily-limit M
+    //   (or just edit ~/.clawmoney/config.yaml after start)
+    const concurrency = 5;
+    const dailyLimit = 15;
     // ── Step 5: confirmation summary ──
     log.step(chalk.bold("Summary"));
     for (const r of registrations) {
         log.message(`  ${chalk.cyan(r.cli + "/" + r.model).padEnd(50)} ${chalk.dim(formatBuyerPrice(r.input, r.output))}`);
     }
-    log.message(chalk.dim(`  ${registrations.length} providers · concurrency=${concurrency} · daily_limit=$${dailyLimit}`));
+    log.message(chalk.dim(`  ${registrations.length} provider(s) · concurrency=${concurrency}/provider · daily_limit=$${dailyLimit}/provider`));
     log.message(chalk.dim(`  You earn ~${Math.round((1 - PLATFORM_FEE) * 100)}% of what buyers pay (after platform fee)`));
+    log.message(chalk.dim(`  To customize: edit ~/.clawmoney/config.yaml after start, or re-register a single model via "clawmoney relay register --cli X --model Y --concurrency N --daily-limit M"`));
     const proceed = await confirm({
         message: `Register all ${registrations.length} providers now?`,
         initialValue: true,
