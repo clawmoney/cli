@@ -92,10 +92,20 @@ const MAX_TRANSIENT_RETRIES = 2;
 // ceiling to tolerate slow tokens without hanging the daemon forever.
 const WS_OVERALL_TIMEOUT_MS = 180 * 1000;
 
-// Default relay instructions for Codex. Upstream treats `instructions` as
-// the system prompt. Keep minimal so the buyer's prompt gets full focus.
+// Default instructions for Codex template mode. Template mode flattens
+// messages into a single prompt and drops buyer's tools — the "plain
+// text only" hint aligns model behavior with what template can actually
+// deliver.
 const RELAY_INSTRUCTIONS =
   "You are a helpful AI assistant operating in relay mode. Respond to the user's message with plain text only. Be concise.";
+
+// Neutral fallback for Codex passthrough mode when the buyer did NOT
+// supply their own instructions. Unlike the template-mode string, this
+// one does NOT forbid tool use — if the buyer sent a tools array we
+// want the model to use them. Kept intentionally vague so it doesn't
+// bias the model's behavior when the buyer's intent is unspecified.
+const CODEX_PASSTHROUGH_FALLBACK_INSTRUCTIONS =
+  "You are a helpful coding assistant. Use the available tools when appropriate to answer the user.";
 
 // ── Types ──
 
@@ -1321,10 +1331,13 @@ function buildCodexPassthroughFrame(
     frame.parallel_tool_calls = false;
   }
 
-  // Instructions: if buyer didn't send one, fall back to the template
-  // mode's RELAY_INSTRUCTIONS so the model still has guidance.
+  // Instructions: if buyer didn't send one, fall back to a neutral
+  // tool-friendly default so the model still has guidance while not
+  // forbidding tool use (unlike template mode's RELAY_INSTRUCTIONS,
+  // which says "plain text only" — wrong fit for passthrough where
+  // buyer's tools should actually be used).
   if (typeof frame.instructions !== "string" || !frame.instructions) {
-    frame.instructions = RELAY_INSTRUCTIONS;
+    frame.instructions = CODEX_PASSTHROUGH_FALLBACK_INSTRUCTIONS;
   }
 
   if (warmup) {

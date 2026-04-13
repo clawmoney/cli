@@ -1192,48 +1192,134 @@ function mergeBetas(required: string[], clientBeta: string | undefined): string 
   return out.join(",");
 }
 
-// Rewrite the first system block's x-anthropic-billing-header (if present)
-// so cc_version and FP3 match OUR fingerprint and the buyer's actual
-// first user message. Real Claude Code always emits this block; sub2api's
-// gateway_service.go mirrors it verbatim but rewrites the version to
-// match the account's pinned UA (syncBillingHeaderVersion, gateway_billing_header.go).
+// Ensure a passthrough body carries the full Claude Code fingerprint
+// shell that Anthropic's OAuth-endpoint validator expects. Called from
+// doCallClaudeApiPassthrough as the last body-munging step before the
+// HTTP request goes out.
 //
-// Critical because Anthropic's validator expects cc_version.<FP3> where
-// FP3 is a deterministic hash of (message_chars + cli_version). If we
-// leave the buyer's FP3 in place but their UA was a different version
-// from our pinned UA, the FP3 no longer matches cli_version in the header
-// and the validator rejects the request.
-function syncPassthroughBillingHeader(
+// The three fingerprint-sensitive fields that MUST be present on every
+// real Claude Code /v1/messages request:
+//
+//   1. system[0] = {type:"text", text:"x-anthropic-billing-header: ..."}
+//      — always the FIRST block. Contains cc_version.<FP3> where FP3 is
+//      SHA256(SALT + chars_from_first_user_msg + cli_version).hex[:3].
+//   2. system[i] = {type:"text", text:"You are a Claude agent, built on
+//      Anthropic's Claude Agent SDK..."} with cache_control ephemeral.
+//      — the template-mode "CC identity marker" that passes the dice-
+//      coefficient validator.
+//   3. thinking: {type, budget_tokens?} — on Claude 4+ models real CLI
+//      always sends this; zero-thinking accounts stand out.
+//   4. tools: array (empty [] is fine) — real CLI always sends the
+//      field, missing means the request shape doesn't match.
+//
+// For real Claude Code / anthropic SDK clients that already send a full
+// body (via /v1/messages passthrough path), every check here no-ops —
+// the body is already in CC shape and we don't touch it.
+//
+// For OpenAI-SDK-style clients going through /v1/chat/completions (the
+// Hub's chat→anthropic converter produces a minimal body), we augment
+// with the missing shell fields so the outbound request is
+// indistinguishable from a real CC request that happens to have a
+// user-provided system prompt and no local tools.
+//
+// All buyer content (messages, their own system text, their own tools,
+// thinking config if they sent one) is preserved.
+function ensureClaudeCodeShell(
   body: Record<string, unknown>,
   fingerprint: ResolvedFingerprint
 ): void {
-  if (!Array.isArray(body.system)) return;
-  const system = body.system as unknown[];
-  if (system.length === 0) return;
+  // ── Normalize system to an array of content blocks ──
+  if (!Array.isArray(body.system)) {
+    if (typeof body.system === "string" && body.system.length > 0) {
+      // String-shaped system (anthropic SDK convenience form) →
+      // wrap in a single text block so we can prepend.
+      body.system = [{ type: "text", text: body.system }];
+    } else {
+      body.system = [];
+    }
+  }
+  const system = body.system as Array<{ type?: string; text?: string; cache_control?: unknown }>;
+
+  // ── Detect CC identity marker anywhere in system ──
+  const hasCcMarker = system.some(
+    (b) =>
+      b &&
+      typeof b === "object" &&
+      b.type === "text" &&
+      typeof b.text === "string" &&
+      b.text.includes(CLAUDE_CODE_SYSTEM_PROMPT_LEAD)
+  );
+
+  // ── Detect billing header in system[0] ──
   const firstBlock = system[0];
-  if (
-    !firstBlock ||
-    typeof firstBlock !== "object" ||
-    (firstBlock as { type?: string }).type !== "text" ||
-    typeof (firstBlock as { text?: string }).text !== "string"
-  ) {
-    return;
-  }
-  const currentText = (firstBlock as { text: string }).text;
-  if (!currentText.startsWith("x-anthropic-billing-header:")) {
-    // Non-CC client didn't include a billing header — leave system alone.
-    // If we're strict about this we could PREPEND one, but for now we
-    // only touch what exists so non-CC passthrough (e.g. anthropic SDK
-    // direct) works without extra surgery.
-    return;
-  }
+  const hasBillingHeaderFirst =
+    !!firstBlock &&
+    typeof firstBlock === "object" &&
+    firstBlock.type === "text" &&
+    typeof firstBlock.text === "string" &&
+    firstBlock.text.startsWith("x-anthropic-billing-header:");
+
+  // ── Build the attribution header (always recompute so cc_version + FP3
+  // match OUR fingerprint and the buyer's actual first user message) ──
   const firstUserMsg = extractFirstUserMessageText(body.messages);
-  const newHeader = buildClaudeAttributionHeader(
+  const freshHeader = buildClaudeAttributionHeader(
     firstUserMsg,
     fingerprint.cc_version,
     fingerprint.cc_entrypoint
   );
-  (firstBlock as { text: string }).text = newHeader;
+
+  // ── Inject CC marker if missing ──
+  // Position: right after the billing header slot (idx 1), or right
+  // after any buyer-prefixed system blocks (at head) if we're also
+  // inserting the billing header.
+  if (!hasCcMarker) {
+    const markerBlock = {
+      type: "text",
+      text: `${CLAUDE_CODE_SYSTEM_PROMPT_LEAD}\n\n${RELAY_INSTRUCTIONS}`,
+      cache_control: { type: "ephemeral" as const },
+    };
+    // Insert at index 1 (slot after billing header), or 0 if we'll be
+    // unshifting the billing header next.
+    if (hasBillingHeaderFirst) {
+      system.splice(1, 0, markerBlock);
+    } else {
+      system.unshift(markerBlock);
+    }
+  }
+
+  // ── Update or inject billing header at index 0 ──
+  if (hasBillingHeaderFirst) {
+    // Rewrite in place so cc_version reflects OUR fingerprint, not the
+    // buyer's original (which might have been from a different CLI
+    // version than our pinned fingerprint).
+    (firstBlock as { text: string }).text = freshHeader;
+  } else {
+    system.unshift({ type: "text", text: freshHeader });
+  }
+
+  // ── Ensure tools array exists ──
+  if (!Array.isArray(body.tools)) {
+    body.tools = [];
+  }
+
+  // ── Inject thinking config if missing ──
+  // Real CLI always sends this for Claude 4+ models; zero-thinking
+  // accounts are a relay-farm tell. pickClaudeThinkingConfig picks the
+  // right shape (adaptive for 4-6, enabled-with-budget for 4-5/haiku).
+  if (!body.thinking || typeof body.thinking !== "object") {
+    const rawMaxTokens =
+      typeof body.max_tokens === "number" && body.max_tokens > 0
+        ? (body.max_tokens as number)
+        : 4096;
+    const { config, adjustedMaxTokens } = pickClaudeThinkingConfig(
+      (body.model as string) ?? "",
+      rawMaxTokens
+    );
+    if (config) {
+      body.thinking = config;
+      body.max_tokens = adjustedMaxTokens;
+    }
+  }
 }
 
 // Walk system text blocks and rewrite third-party identity sentences
@@ -1300,7 +1386,7 @@ async function doCallClaudeApiPassthrough(
   // Sanitize system: replace third-party identity sentences + sync
   // billing header cc_version to match our pinned CLI version.
   sanitizePassthroughSystemArray(body);
-  syncPassthroughBillingHeader(body, fp);
+  ensureClaudeCodeShell(body, fp);
 
   // Clamp thinking.budget_tokens to Anthropic's minimum so buyer-chosen
   // small budgets don't 400. If max_tokens < budget_tokens + 1, bump
