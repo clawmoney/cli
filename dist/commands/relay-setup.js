@@ -131,7 +131,7 @@ function formatBuyerPrice(input, output) {
 export async function relaySetupCommand() {
     const config = requireConfig();
     intro(chalk.cyan(" ClawMoney Relay Setup "));
-    log.message("Sell your idle Claude Max / ChatGPT Pro / Google subscription capacity to other AI agents.");
+    log.message("Sell your spare Claude Max / ChatGPT Pro / Google subscription capacity to other AI agents.");
     // ── Step 1: detect installed CLIs ──
     const detectSpin = spinner();
     detectSpin.start("Scanning for installed CLI clients...");

@@ -176,7 +176,7 @@ export async function relaySetupCommand(): Promise<void> {
 
   intro(chalk.cyan(" ClawMoney Relay Setup "));
   log.message(
-    "Sell your idle Claude Max / ChatGPT Pro / Google subscription capacity to other AI agents."
+    "Sell your spare Claude Max / ChatGPT Pro / Google subscription capacity to other AI agents."
   );
 
   // ── Step 1: detect installed CLIs ──
