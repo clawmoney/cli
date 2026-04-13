@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { intro, outro, multiselect, confirm, spinner, isCancel, cancel, log, } from "@clack/prompts";
+import { intro, outro, multiselect, confirm, select, spinner, isCancel, cancel, log, } from "@clack/prompts";
 import chalk from "chalk";
 import { apiPost } from "../utils/api.js";
 import { requireConfig } from "../utils/config.js";
@@ -224,26 +224,53 @@ export async function relaySetupCommand() {
         cancel("No models selected — nothing to register");
         process.exit(0);
     }
-    // ── Step 4: defaults that don't need user input ──
+    // ── Step 4: daily budget (the only product-level decision) ──
     //
-    // We deliberately don't prompt for these:
+    // Concurrency is silent (5, the "single power user" cap — explained
+    // in the file header). daily_limit is the one variable that's a
+    // product decision, not a technical one: it directly controls how
+    // much you can earn (and how much subscription quota the relay
+    // burns through per day). We offer three presets calibrated to
+    // common provider postures, plus the implicit fall-through of
+    // editing config.yaml after start for advanced overrides.
     //
-    // - Concurrency (5): the right value is "looks like a single power
-    //   user". 3-5 is the sweet spot — high enough that one person with
-    //   multiple terminals is plausible, low enough that Anthropic's
-    //   per-account behavioral profiler can't easily distinguish from
-    //   real CC traffic. Asking the user creates friction and an option
-    //   they can't confidently judge.
-    //
-    // - Daily limit ($15): roughly what a heavy individual user spends
-    //   on Claude API in a day. Hard cap that protects against runaway
-    //   buyer abuse hitting the OAuth account's quota.
-    //
-    // Both can be overridden later via:
-    //   clawmoney relay register --cli X --model Y --concurrency N --daily-limit M
-    //   (or just edit ~/.clawmoney/config.yaml after start)
+    // Earning math per provider (assuming 100% utilization):
+    //   max_earn_per_day = daily_limit × RELAY_DISCOUNT × (1 - PLATFORM_FEE)
+    //                    = daily_limit × 0.20 × 0.90 = daily_limit × 0.18
+    //   max_earn_per_month ≈ max_earn_per_day × 30
     const concurrency = 5;
-    const dailyLimit = 15;
+    const earnPerMonth = (cap) => Math.round(cap * RELAY_DISCOUNT * (1 - PLATFORM_FEE) * 30);
+    const dailyLimitChoice = await select({
+        message: "Daily API budget per provider? (caps how much subscription quota the relay burns through per day; higher = more earnings, but closer to relay-farm signal)",
+        options: [
+            {
+                value: 5,
+                label: "Conservative — $5/day cap",
+                hint: `up to ~$${earnPerMonth(5)}/month earnings · safest fingerprint, near-zero ban risk`,
+            },
+            {
+                value: 15,
+                label: "Balanced — $15/day cap",
+                hint: `up to ~$${earnPerMonth(15)}/month earnings · matches a heavy individual user · low ban risk (recommended)`,
+            },
+            {
+                value: 30,
+                label: "Aggressive — $30/day cap",
+                hint: `up to ~$${earnPerMonth(30)}/month earnings · power-user upper bound · moderate ban risk`,
+            },
+            {
+                value: 60,
+                label: "Maximize — $60/day cap",
+                hint: `up to ~$${earnPerMonth(60)}/month earnings · clearly above single-user usage · higher ban risk, recommended only if you're willing to rotate accounts`,
+            },
+        ],
+        initialValue: 15,
+    });
+    if (isCancel(dailyLimitChoice)) {
+        cancel("Setup cancelled");
+        process.exit(0);
+    }
+    const dailyLimit = dailyLimitChoice;
     // ── Step 5: confirmation summary ──
     log.step(chalk.bold("Summary"));
     for (const r of registrations) {
