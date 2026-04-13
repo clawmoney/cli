@@ -227,7 +227,7 @@ export async function relaySetupCommand(): Promise<void> {
     if (hasMissing) {
       log.message(
         chalk.dim(
-          "(ClawMoney supports more platforms — only these were detected on this machine)"
+          "(ClawMoney supports claude, codex, gemini, and antigravity — only these were detected on this machine)"
         )
       );
     }

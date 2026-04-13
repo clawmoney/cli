@@ -167,7 +167,7 @@ export async function relaySetupCommand() {
     if (available.length > 0) {
         log.success(`Found: ${chalk.bold(available.map((d) => d.cli).join(", "))}`);
         if (hasMissing) {
-            log.message(chalk.dim("(ClawMoney supports more platforms — only these were detected on this machine)"));
+            log.message(chalk.dim("(ClawMoney supports claude, codex, gemini, and antigravity — only these were detected on this machine)"));
         }
     }
     if (available.length === 0) {
