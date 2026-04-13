@@ -7,7 +7,7 @@ import chalk from "chalk";
 import { apiPost } from "../utils/api.js";
 import { loadConfig, requireConfig } from "../utils/config.js";
 import { setupCommand } from "./setup.js";
-import { API_PRICES, RELAY_DISCOUNT, PLATFORM_FEE } from "../relay/pricing.js";
+import { API_PRICES, PLATFORM_FEE } from "../relay/pricing.js";
 // ── Per-cli_type model catalogs ──
 //
 // `RECOMMENDED_MODELS` is what gets registered when the user picks "all
@@ -118,12 +118,6 @@ function detectInstalledClis() {
             : "no Google OAuth linked (run `clawmoney antigravity login` first)",
     });
     return results;
-}
-// ── Helpers ──
-function formatBuyerPrice(input, output) {
-    const buyerInput = (input * RELAY_DISCOUNT).toFixed(3);
-    const buyerOutput = (output * RELAY_DISCOUNT).toFixed(3);
-    return `$${buyerInput}/$${buyerOutput} per 1M (after ${Math.round((1 - RELAY_DISCOUNT) * 100)}% relay discount)`;
 }
 // ── Main command ──
 export async function relaySetupCommand() {
@@ -273,36 +267,30 @@ export async function relaySetupCommand() {
         process.exit(0);
     }
     const dailyLimit = dailyLimitChoice;
-    // ── Step 5: confirmation summary ──
-    // Translate the chosen daily-limit USD value back into the percentage
-    // label the user picked, so what they see in the summary matches what
-    // they answered in the prompt.
-    const limitLabel = {
-        15: "~25% (Light)",
-        30: "~50% (Balanced)",
-        45: "~75% (Heavy)",
-        60: "~100% (Full)",
-    };
-    log.step(chalk.bold("Summary"));
-    for (const r of registrations) {
-        log.message(`  ${chalk.cyan(r.cli + "/" + r.model).padEnd(50)} ${chalk.dim(formatBuyerPrice(r.input, r.output))}`);
-    }
-    log.message(chalk.dim(`  ${registrations.length} provider(s) · ${limitLabel[dailyLimit] ?? `$${dailyLimit}/day cap`} per model`));
-    log.message(chalk.dim(`  You earn ~${Math.round((1 - PLATFORM_FEE) * 100)}% of what buyers pay (after platform fee)`));
-    log.message(chalk.dim(`  To customize: edit ~/.clawmoney/config.yaml after start`));
-    // ── Step 6: register each (idempotent — "already registered" counts as success) ──
+    // ── Step 5: register everything under one spinner ──
     //
-    // No "Register all N providers now?" confirm — the user already
-    // picked subscriptions + daily quota share. Seeing the summary and
-    // immediately going into registration is the expected flow. Ctrl-C
-    // still aborts, and registrations are idempotent so a mid-way abort
-    // is recoverable by re-running.
+    // We deliberately skip the old per-model Summary block: pricing is on
+    // the website, and Step 3 already listed which models were queued per
+    // subscription. The remaining signal (quota share + earn %) goes into
+    // the spinner's final message so users see it exactly once.
+    //
+    // Also: one spinner for the whole batch, not N. Sequential per-model
+    // spinners produced 7+ rows of clack vertical whitespace for what's
+    // really a single bulk action.
+    //
+    // No "Register all N providers now?" confirm either — the user picked
+    // subscriptions + quota share above; Ctrl-C still aborts, and the
+    // backend is idempotent so mid-way aborts are safe to re-run.
+    const limitLabel = {
+        15: "~25%", 30: "~50%", 45: "~75%", 60: "~100%",
+    };
+    const earnPct = Math.round((1 - PLATFORM_FEE) * 100);
     let succeeded = 0;
     let failed = 0;
     const failures = [];
+    const regSpin = spinner();
+    regSpin.start(`Registering ${registrations.length} providers...`);
     for (const r of registrations) {
-        const regSpin = spinner();
-        regSpin.start(`Registering ${r.cli}/${r.model}...`);
         try {
             const body = {
                 cli_type: r.cli,
@@ -315,7 +303,6 @@ export async function relaySetupCommand() {
             };
             const resp = await apiPost("/api/v1/relay/providers", body, config.api_key);
             if (resp.ok) {
-                regSpin.stop(`${chalk.green("✓")} ${r.cli}/${r.model}`);
                 succeeded++;
             }
             else {
@@ -325,11 +312,9 @@ export async function relaySetupCommand() {
                 const detail = typeof raw === "string" ? raw : JSON.stringify(raw);
                 // Already-registered is a soft success — idempotent re-run.
                 if (detail.includes("Already registered")) {
-                    regSpin.stop(`${chalk.yellow("~")} ${r.cli}/${r.model} ${chalk.dim("(already registered, no change)")}`);
                     succeeded++;
                 }
                 else {
-                    regSpin.stop(`${chalk.red("✗")} ${r.cli}/${r.model} ${chalk.dim("(" + detail.slice(0, 80) + ")")}`);
                     failed++;
                     failures.push({ cli: r.cli, model: r.model, error: detail });
                 }
@@ -337,21 +322,28 @@ export async function relaySetupCommand() {
         }
         catch (err) {
             const msg = err.message;
-            regSpin.stop(`${chalk.red("✗")} ${r.cli}/${r.model} ${chalk.dim("(" + msg + ")")}`);
             failed++;
             failures.push({ cli: r.cli, model: r.model, error: msg });
         }
     }
-    // ── Step 7: registration done, offer to auto-start ──
-    log.step(chalk.bold("Registered"));
-    log.message(`${chalk.green(succeeded.toString())} provider(s) registered`);
+    if (failed === 0) {
+        regSpin.stop(`${chalk.green(`✓ ${succeeded} providers registered`)}  ` +
+            chalk.dim(`(${limitLabel[dailyLimit] ?? `$${dailyLimit}`} quota share · you earn ~${earnPct}%)`));
+    }
+    else {
+        regSpin.stop(`${chalk.yellow(`${succeeded} registered, ${failed} failed`)}`);
+    }
+    // ── Step 6: on failure, list which ones broke ──
+    //
+    // On success we say nothing — the spinner's final message is already
+    // the "registered" summary. On failure we dump a per-row detail line
+    // so the user can tell what to fix.
     if (failed > 0) {
-        log.warn(`${failed} registrations failed`);
         for (const f of failures) {
-            log.message(chalk.dim(`  ${f.cli}/${f.model}: ${f.error.slice(0, 120)}`));
+            log.warn(`${f.cli}/${f.model}: ${chalk.dim(f.error.slice(0, 120))}`);
         }
     }
-    // ── Step 8: auto-start the daemon ──
+    // ── Step 7: auto-start the daemon ──
     //
     // The daemon now runs in multi-cli auto mode by default: it fetches
     // every provider this agent has registered, preflights each distinct
