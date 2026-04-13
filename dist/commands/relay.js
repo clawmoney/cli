@@ -206,36 +206,65 @@ export async function relayStatusCommand() {
     else {
         console.log(chalk.dim("  Local process: not running"));
     }
-    // Remote status
+    // Remote status. /api/v1/relay/providers/me returns a LIST of
+    // RelayProviderPublic (one row per registered model), so we can't
+    // treat the body as a single object. For multi-cli providers the
+    // list can easily be 7-10 rows — render them as a table with one
+    // line per row instead of 14 labeled lines for a single picked row.
     const spinner = ora("Fetching relay provider status...").start();
     try {
         const resp = await apiGet("/api/v1/relay/providers/me", config.api_key);
         if (!resp.ok) {
             if (resp.status === 404) {
                 spinner.info("Not registered as relay provider yet.");
-                console.log(chalk.dim(`  Run "clawmoney relay register" to get started.`));
+                console.log(chalk.dim(`  Run "clawmoney relay setup" to get started.`));
                 return;
             }
-            const detail = resp.data?.detail ?? resp.status;
+            const detail = resp.data?.detail ?? String(resp.status);
             spinner.fail(chalk.red(`Failed to fetch status: ${detail}`));
             process.exit(1);
         }
-        const data = resp.data;
-        const statusColor = data.status === "online" ? chalk.green : data.status === "offline" ? chalk.dim : chalk.yellow;
-        spinner.succeed("Relay Provider Status");
+        // Normalize: backend currently returns a list, but guard against
+        // a single-object shape in case someone points the CLI at an older
+        // Hub build.
+        const providers = Array.isArray(resp.data)
+            ? resp.data
+            : resp.data
+                ? [resp.data]
+                : [];
+        if (providers.length === 0) {
+            spinner.info("No providers registered yet.");
+            console.log(chalk.dim(`  Run "clawmoney relay setup" to get started.`));
+            return;
+        }
+        spinner.succeed(`Relay Providers (${providers.length})`);
         console.log("");
-        console.log(`  ${chalk.bold("Provider ID:")}   ${data.id ?? data.provider_id ?? "-"}`);
-        console.log(`  ${chalk.bold("Status:")}        ${statusColor(data.status ?? "-")}`);
-        console.log(`  ${chalk.bold("CLI:")}           ${data.cli_type ?? "-"}`);
-        console.log(`  ${chalk.bold("Model:")}         ${data.model ?? "-"}`);
-        console.log(`  ${chalk.bold("Mode:")}          ${data.mode ?? "-"}`);
-        console.log(`  ${chalk.bold("Concurrency:")}   ${data.concurrency ?? "-"}`);
-        console.log(`  ${chalk.bold("Current Load:")}  ${data.current_load ?? 0}`);
-        console.log(`  ${chalk.bold("Daily Spent:")}   $${(data.daily_spent_usd ?? 0).toFixed(2)} / $${(data.daily_limit_usd ?? 0).toFixed(2)}`);
-        console.log(`  ${chalk.bold("Total Earned:")}  $${(data.total_earned_usd ?? 0).toFixed(2)}`);
-        console.log(`  ${chalk.bold("Total Requests:")} ${data.total_requests ?? 0}`);
-        console.log(`  ${chalk.bold("Input Price:")}   $${data.price_input_per_m ?? "-"}/1M tokens`);
-        console.log(`  ${chalk.bold("Output Price:")}  $${data.price_output_per_m ?? "-"}/1M tokens`);
+        // Aggregate stats across all rows since users think of earnings /
+        // spend as account-level, not per-model.
+        const totalEarned = providers.reduce((s, p) => s + (p.total_earned_usd ?? 0), 0);
+        const totalRequests = providers.reduce((s, p) => s + (p.total_requests ?? 0), 0);
+        const totalDailySpent = providers.reduce((s, p) => s + (p.daily_spent_usd ?? 0), 0);
+        const totalDailyLimit = providers.reduce((s, p) => s + (p.daily_limit_usd ?? 0), 0);
+        // Per-provider rows — compact table with status/cli/model/load.
+        const header = `  ${"STATUS".padEnd(9)} ${"CLI".padEnd(12)} ${"MODEL".padEnd(30)} ${"LOAD".padEnd(8)} ${"EARNED".padEnd(10)}`;
+        console.log(chalk.bold(header));
+        console.log(chalk.dim("  " + "─".repeat(75)));
+        for (const p of providers) {
+            const statusRaw = (p.status ?? "-").padEnd(9);
+            const statusColored = p.status === "online"
+                ? chalk.green(statusRaw)
+                : p.status === "offline"
+                    ? chalk.dim(statusRaw)
+                    : chalk.yellow(statusRaw);
+            const cli = (p.cli_type ?? "-").padEnd(12);
+            const model = (p.model ?? "-").padEnd(30);
+            const load = `${p.current_load ?? 0}/${p.concurrency ?? "-"}`.padEnd(8);
+            const earned = `$${(p.total_earned_usd ?? 0).toFixed(2)}`.padEnd(10);
+            console.log(`  ${statusColored} ${cli} ${model} ${load} ${earned}`);
+        }
+        console.log("");
+        console.log(`  ${chalk.bold("Daily quota:")}  $${totalDailySpent.toFixed(2)} / $${totalDailyLimit.toFixed(2)}`);
+        console.log(`  ${chalk.bold("Total earned:")} $${totalEarned.toFixed(2)} (${totalRequests} requests)`);
     }
     catch (err) {
         spinner.fail(chalk.red("Failed to fetch status"));

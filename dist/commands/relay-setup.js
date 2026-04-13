@@ -290,34 +290,38 @@ export async function relaySetupCommand() {
     const failures = [];
     const regSpin = spinner();
     regSpin.start(`Registering ${registrations.length} providers...`);
-    for (const r of registrations) {
+    // Parallel registration — each request creates a distinct RelayProvider
+    // row so there's no write contention, and the backend's insert path is
+    // idempotent on (agent_id, cli_type, model). Sequential registration
+    // was costing ~1 RTT per row, which on a high-latency link (e.g. from
+    // China) added up to 7-10s of visible wait for 7 providers.
+    await Promise.all(registrations.map(async (r) => {
+        const body = {
+            cli_type: r.cli,
+            model: r.model,
+            mode: "chat",
+            concurrency,
+            daily_limit_usd: dailyLimit,
+            price_input_per_m: r.input,
+            price_output_per_m: r.output,
+        };
         try {
-            const body = {
-                cli_type: r.cli,
-                model: r.model,
-                mode: "chat",
-                concurrency,
-                daily_limit_usd: dailyLimit,
-                price_input_per_m: r.input,
-                price_output_per_m: r.output,
-            };
             const resp = await apiPost("/api/v1/relay/providers", body, config.api_key);
             if (resp.ok) {
                 succeeded++;
+                return;
+            }
+            const raw = resp.data && typeof resp.data === "object" && "detail" in resp.data
+                ? resp.data.detail
+                : resp.data;
+            const detail = typeof raw === "string" ? raw : JSON.stringify(raw);
+            // Already-registered is a soft success — idempotent re-run.
+            if (detail.includes("Already registered")) {
+                succeeded++;
             }
             else {
-                const raw = resp.data && typeof resp.data === "object" && "detail" in resp.data
-                    ? resp.data.detail
-                    : resp.data;
-                const detail = typeof raw === "string" ? raw : JSON.stringify(raw);
-                // Already-registered is a soft success — idempotent re-run.
-                if (detail.includes("Already registered")) {
-                    succeeded++;
-                }
-                else {
-                    failed++;
-                    failures.push({ cli: r.cli, model: r.model, error: detail });
-                }
+                failed++;
+                failures.push({ cli: r.cli, model: r.model, error: detail });
             }
         }
         catch (err) {
@@ -325,7 +329,7 @@ export async function relaySetupCommand() {
             failed++;
             failures.push({ cli: r.cli, model: r.model, error: msg });
         }
-    }
+    }));
     if (failed === 0) {
         regSpin.stop(`${chalk.green(`✓ ${succeeded} providers registered`)}  ` +
             chalk.dim(`(${limitLabel[dailyLimit] ?? `$${dailyLimit}`} quota share · you earn ~${earnPct}%)`));
@@ -362,11 +366,14 @@ export async function relaySetupCommand() {
         outro(chalk.yellow("Setup complete (daemon not started)"));
         return;
     }
-    log.message("");
-    log.message(chalk.dim("Useful follow-up commands:"));
-    log.message(`    ${chalk.cyan("clawmoney relay status")}        # check daemon health + provider list`);
-    log.message(`    ${chalk.cyan("clawmoney relay credits")}       # check earnings + payout balance`);
-    log.message(`    ${chalk.cyan("clawmoney relay stop")}          # stop the daemon`);
+    // One multi-line log.message renders each line with a `│` prefix
+    // but without clack's inter-call gap — 3 bullets fit in 3 lines
+    // instead of 6.
+    log.message(chalk.dim("Next:") +
+        "\n" +
+        `  ${chalk.cyan("clawmoney relay status")}   daemon health + providers\n` +
+        `  ${chalk.cyan("clawmoney relay credits")}  earnings + balance\n` +
+        `  ${chalk.cyan("clawmoney relay stop")}     stop daemon`);
     const cliLabel = uniqueClis.length === 1
         ? `${uniqueClis[0]} daemon running`
         : `daemon serving ${uniqueClis.join(" + ")}`;

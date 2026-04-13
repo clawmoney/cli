@@ -388,8 +388,13 @@ export async function relaySetupCommand(): Promise<void> {
   const regSpin = spinner();
   regSpin.start(`Registering ${registrations.length} providers...`);
 
-  for (const r of registrations) {
-    try {
+  // Parallel registration — each request creates a distinct RelayProvider
+  // row so there's no write contention, and the backend's insert path is
+  // idempotent on (agent_id, cli_type, model). Sequential registration
+  // was costing ~1 RTT per row, which on a high-latency link (e.g. from
+  // China) added up to 7-10s of visible wait for 7 providers.
+  await Promise.all(
+    registrations.map(async (r) => {
       const body = {
         cli_type: r.cli,
         model: r.model,
@@ -399,16 +404,16 @@ export async function relaySetupCommand(): Promise<void> {
         price_input_per_m: r.input,
         price_output_per_m: r.output,
       };
-
-      const resp = await apiPost<Record<string, unknown>>(
-        "/api/v1/relay/providers",
-        body,
-        config.api_key
-      );
-
-      if (resp.ok) {
-        succeeded++;
-      } else {
+      try {
+        const resp = await apiPost<Record<string, unknown>>(
+          "/api/v1/relay/providers",
+          body,
+          config.api_key
+        );
+        if (resp.ok) {
+          succeeded++;
+          return;
+        }
         const raw =
           resp.data && typeof resp.data === "object" && "detail" in resp.data
             ? (resp.data as Record<string, unknown>).detail
@@ -421,13 +426,13 @@ export async function relaySetupCommand(): Promise<void> {
           failed++;
           failures.push({ cli: r.cli, model: r.model, error: detail });
         }
+      } catch (err) {
+        const msg = (err as Error).message;
+        failed++;
+        failures.push({ cli: r.cli, model: r.model, error: msg });
       }
-    } catch (err) {
-      const msg = (err as Error).message;
-      failed++;
-      failures.push({ cli: r.cli, model: r.model, error: msg });
-    }
-  }
+    })
+  );
 
   if (failed === 0) {
     regSpin.stop(
@@ -475,16 +480,15 @@ export async function relaySetupCommand(): Promise<void> {
     return;
   }
 
-  log.message("");
-  log.message(chalk.dim("Useful follow-up commands:"));
+  // One multi-line log.message renders each line with a `│` prefix
+  // but without clack's inter-call gap — 3 bullets fit in 3 lines
+  // instead of 6.
   log.message(
-    `    ${chalk.cyan("clawmoney relay status")}        # check daemon health + provider list`
-  );
-  log.message(
-    `    ${chalk.cyan("clawmoney relay credits")}       # check earnings + payout balance`
-  );
-  log.message(
-    `    ${chalk.cyan("clawmoney relay stop")}          # stop the daemon`
+    chalk.dim("Next:") +
+      "\n" +
+      `  ${chalk.cyan("clawmoney relay status")}   daemon health + providers\n` +
+      `  ${chalk.cyan("clawmoney relay credits")}  earnings + balance\n` +
+      `  ${chalk.cyan("clawmoney relay stop")}     stop daemon`
   );
   const cliLabel =
     uniqueClis.length === 1
