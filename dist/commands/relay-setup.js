@@ -172,9 +172,9 @@ export async function relaySetupCommand() {
         cancel("Setup aborted");
         process.exit(1);
     }
-    // ── Step 2: pick which families to register ──
+    // ── Step 2: pick which subscriptions to register ──
     const familyChoice = await multiselect({
-        message: "Which CLI families do you want to provide? (space to toggle, enter to confirm)",
+        message: "Which subscriptions do you want to provide? (space to toggle, enter to confirm)",
         options: available.map((d) => ({
             value: d.cli,
             label: d.cli,
