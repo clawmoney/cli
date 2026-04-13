@@ -370,21 +370,10 @@ export async function relaySetupCommand() {
     // separately as a daemon refactor task.
     const uniqueClis = Array.from(new Set(selectedClis));
     if (uniqueClis.length === 1) {
-        // Single cli_type — straightforward auto-start.
+        // Single cli_type — go straight into the daemon. The user already
+        // confirmed "Register all N providers?" above, so asking a second
+        // time just adds friction.
         const cli = uniqueClis[0];
-        const startNow = await confirm({
-            message: `Start the ${chalk.cyan(cli)} relay daemon now?`,
-            initialValue: true,
-        });
-        if (isCancel(startNow) || !startNow) {
-            log.message("");
-            log.message(chalk.dim("You can start it later with:"));
-            log.message(`    ${chalk.cyan(`clawmoney relay start --cli ${cli}`)}`);
-            outro(chalk.green("Setup complete"));
-            return;
-        }
-        // Hand off to the existing relay start command. Importing lazily
-        // to keep the wizard's startup time down.
         const { relayStartCommand } = await import("./relay.js");
         try {
             await relayStartCommand({ cli });
@@ -403,45 +392,25 @@ export async function relaySetupCommand() {
         outro(chalk.green("Setup complete · daemon running"));
         return;
     }
-    // Multi cli_type — daemon can only host one at a time. Let the user
-    // pick which one to start now; explain the limitation honestly.
+    // Multi cli_type — daemon can only host one at a time today. Start
+    // the first registered cli_type directly and tell the user how to
+    // switch to the others later.
+    const firstCli = uniqueClis[0];
     log.warn(`You registered providers across ${uniqueClis.length} CLI families ` +
-        `(${uniqueClis.join(", ")}). The daemon currently can only serve ONE ` +
-        `cli_type per process — pick which one to start first.`);
-    const startChoice = await select({
-        message: "Which cli_type's daemon to start now?",
-        options: [
-            ...uniqueClis.map((cli) => ({
-                value: cli,
-                label: `Start ${chalk.cyan(cli)} daemon`,
-                hint: undefined,
-            })),
-            { value: "__none__", label: "Don't start anything yet (I'll start manually)", hint: undefined },
-        ],
-        initialValue: uniqueClis[0],
-    });
-    if (isCancel(startChoice) || startChoice === "__none__") {
-        log.message("");
-        log.message(chalk.dim("Manual start commands:"));
-        for (const cli of uniqueClis) {
-            log.message(`    ${chalk.cyan(`clawmoney relay start --cli ${cli}`)}`);
-        }
-        log.message(chalk.dim("  (only one can run at a time today — switch with `clawmoney relay stop` first)"));
-        outro(chalk.green("Setup complete"));
-        return;
-    }
+        `(${uniqueClis.join(", ")}). The daemon currently serves ONE cli_type ` +
+        `per process — starting ${chalk.cyan(firstCli)} first.`);
     const { relayStartCommand } = await import("./relay.js");
     try {
-        await relayStartCommand({ cli: startChoice });
+        await relayStartCommand({ cli: firstCli });
     }
     catch (err) {
         log.error(`Failed to start daemon: ${err.message}\n` +
-            `Try manually: ${chalk.cyan(`clawmoney relay start --cli ${startChoice}`)}`);
+            `Try manually: ${chalk.cyan(`clawmoney relay start --cli ${firstCli}`)}`);
         outro(chalk.yellow("Setup complete (daemon not started)"));
         return;
     }
     log.message("");
-    log.message(chalk.dim(`To switch to a different cli_type later:`));
-    log.message(chalk.dim(`    ${chalk.cyan("clawmoney relay stop")} && ${chalk.cyan(`clawmoney relay start --cli <other-cli>`)}`));
-    outro(chalk.green(`Setup complete · ${startChoice} daemon running`));
+    log.message(chalk.dim("To switch to a different cli_type later:"));
+    log.message(chalk.dim(`    ${chalk.cyan("clawmoney relay stop")} && ${chalk.cyan("clawmoney relay start --cli <other-cli>")}`));
+    outro(chalk.green(`Setup complete · ${firstCli} daemon running`));
 }
