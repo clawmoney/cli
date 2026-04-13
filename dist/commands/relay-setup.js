@@ -352,25 +352,96 @@ export async function relaySetupCommand() {
             failures.push({ cli: r.cli, model: r.model, error: msg });
         }
     }
-    // ── Step 7: next steps ──
-    log.step(chalk.bold("Done"));
-    log.message(`${chalk.green(succeeded.toString())} providers registered`);
+    // ── Step 7: registration done, offer to auto-start ──
+    log.step(chalk.bold("Registered"));
+    log.message(`${chalk.green(succeeded.toString())} provider(s) registered`);
     if (failed > 0) {
         log.warn(`${failed} registrations failed`);
         for (const f of failures) {
             log.message(chalk.dim(`  ${f.cli}/${f.model}: ${f.error.slice(0, 120)}`));
         }
     }
-    log.message("");
-    log.message(chalk.bold("Next steps"));
-    log.message("  Start the daemon for each cli_type you registered:");
-    for (const cli of selectedClis) {
-        log.message(`    ${chalk.cyan(`clawmoney relay start --cli ${cli}`)}`);
+    // ── Step 8: auto-start the daemon ──
+    //
+    // Daemon limitation: a single clawmoney process can only serve ONE
+    // cli_type today (single ~/.clawmoney/relay.pid file). When the user
+    // registered providers across multiple cli_types we can still
+    // auto-start ONE of them and tell them how to switch later. Tracked
+    // separately as a daemon refactor task.
+    const uniqueClis = Array.from(new Set(selectedClis));
+    if (uniqueClis.length === 1) {
+        // Single cli_type — straightforward auto-start.
+        const cli = uniqueClis[0];
+        const startNow = await confirm({
+            message: `Start the ${chalk.cyan(cli)} relay daemon now?`,
+            initialValue: true,
+        });
+        if (isCancel(startNow) || !startNow) {
+            log.message("");
+            log.message(chalk.dim("You can start it later with:"));
+            log.message(`    ${chalk.cyan(`clawmoney relay start --cli ${cli}`)}`);
+            outro(chalk.green("Setup complete"));
+            return;
+        }
+        // Hand off to the existing relay start command. Importing lazily
+        // to keep the wizard's startup time down.
+        const { relayStartCommand } = await import("./relay.js");
+        try {
+            await relayStartCommand({ cli });
+        }
+        catch (err) {
+            log.error(`Failed to start daemon: ${err.message}\n` +
+                `Try manually: ${chalk.cyan(`clawmoney relay start --cli ${cli}`)}`);
+            outro(chalk.yellow("Setup complete (daemon not started)"));
+            return;
+        }
+        log.message("");
+        log.message(chalk.dim("Useful follow-up commands:"));
+        log.message(`    ${chalk.cyan("clawmoney relay status")}        # check daemon health + provider list`);
+        log.message(`    ${chalk.cyan("clawmoney relay credits")}       # check earnings + payout balance`);
+        log.message(`    ${chalk.cyan("clawmoney relay stop")}          # stop the daemon`);
+        outro(chalk.green("Setup complete · daemon running"));
+        return;
+    }
+    // Multi cli_type — daemon can only host one at a time. Let the user
+    // pick which one to start now; explain the limitation honestly.
+    log.warn(`You registered providers across ${uniqueClis.length} CLI families ` +
+        `(${uniqueClis.join(", ")}). The daemon currently can only serve ONE ` +
+        `cli_type per process — pick which one to start first.`);
+    const startChoice = await select({
+        message: "Which cli_type's daemon to start now?",
+        options: [
+            ...uniqueClis.map((cli) => ({
+                value: cli,
+                label: `Start ${chalk.cyan(cli)} daemon`,
+                hint: undefined,
+            })),
+            { value: "__none__", label: "Don't start anything yet (I'll start manually)", hint: undefined },
+        ],
+        initialValue: uniqueClis[0],
+    });
+    if (isCancel(startChoice) || startChoice === "__none__") {
+        log.message("");
+        log.message(chalk.dim("Manual start commands:"));
+        for (const cli of uniqueClis) {
+            log.message(`    ${chalk.cyan(`clawmoney relay start --cli ${cli}`)}`);
+        }
+        log.message(chalk.dim("  (only one can run at a time today — switch with `clawmoney relay stop` first)"));
+        outro(chalk.green("Setup complete"));
+        return;
+    }
+    const { relayStartCommand } = await import("./relay.js");
+    try {
+        await relayStartCommand({ cli: startChoice });
+    }
+    catch (err) {
+        log.error(`Failed to start daemon: ${err.message}\n` +
+            `Try manually: ${chalk.cyan(`clawmoney relay start --cli ${startChoice}`)}`);
+        outro(chalk.yellow("Setup complete (daemon not started)"));
+        return;
     }
     log.message("");
-    log.message("  Useful follow-up commands:");
-    log.message(`    ${chalk.cyan("clawmoney relay status")}        # check daemon health + provider list`);
-    log.message(`    ${chalk.cyan("clawmoney relay credits")}       # check earnings + payout balance`);
-    log.message(`    ${chalk.cyan("clawmoney relay stop")}          # stop the daemon`);
-    outro(chalk.green("Setup complete"));
+    log.message(chalk.dim(`To switch to a different cli_type later:`));
+    log.message(chalk.dim(`    ${chalk.cyan("clawmoney relay stop")} && ${chalk.cyan(`clawmoney relay start --cli <other-cli>`)}`));
+    outro(chalk.green(`Setup complete · ${startChoice} daemon running`));
 }
