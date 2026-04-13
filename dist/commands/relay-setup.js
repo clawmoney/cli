@@ -156,15 +156,19 @@ export async function relaySetupCommand() {
     detectSpin.start("Scanning for installed CLI clients...");
     const detected = detectInstalledClis();
     detectSpin.stop("Scan complete");
-    for (const d of detected) {
-        if (d.available) {
-            log.success(`${chalk.bold(d.cli.padEnd(12))} ${chalk.dim(d.hint)}`);
-        }
-        else {
-            log.warn(`${chalk.bold(d.cli.padEnd(12))} ${chalk.dim(d.hint)}`);
-        }
-    }
+    // Collapse per-CLI rows into one (or two) summary lines — users only
+    // care about "which ones can I lend" at this point, not the per-binary
+    // hint strings. If everything's present it's a single green line; any
+    // misses get their own warn line with a short hint.
     const available = detected.filter((d) => d.available);
+    const missing = detected.filter((d) => !d.available);
+    if (available.length > 0) {
+        log.success(`Found: ${chalk.bold(available.map((d) => d.cli).join(", "))}`);
+    }
+    if (missing.length > 0) {
+        log.warn(`Missing: ${chalk.bold(missing.map((d) => d.cli).join(", "))} ` +
+            chalk.dim(`(install the CLI, or run \`clawmoney antigravity login\` for antigravity)`));
+    }
     if (available.length === 0) {
         log.error("No supported CLI clients found locally. Install at least one of: " +
             chalk.cyan("claude, codex, gemini") +
