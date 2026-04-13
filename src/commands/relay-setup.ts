@@ -313,29 +313,35 @@ export async function relaySetupCommand(): Promise<void> {
   const earnPerMonth = (cap: number) =>
     Math.round(cap * RELAY_DISCOUNT * (1 - PLATFORM_FEE) * 30);
 
+  // Baseline: $60/day API cost ≈ a fully utilized Max-tier subscription's
+  // daily quota (Claude Max 20x, ChatGPT Pro, etc.). Percentages are
+  // computed off this baseline so users can intuit "I'm sharing X% of
+  // a typical subscription's daily capacity". For Pro tier subs the
+  // real percentage is higher (because their full quota is smaller),
+  // but the USD cap is what actually matters technically.
   const dailyLimitChoice = await select({
     message:
-      "Daily API budget per provider? (caps how much subscription quota the relay burns through per day; higher = more earnings, but closer to relay-farm signal)",
+      "How much of your subscription's spare capacity do you want to share?",
     options: [
       {
-        value: 5,
-        label: "Conservative — $5/day cap",
-        hint: `up to ~$${earnPerMonth(5)}/month earnings · safest fingerprint, near-zero ban risk`,
+        value: 6,
+        label: `~10%  ·  $6/day cap   →  ~$${earnPerMonth(6)}/month earnings`,
+        hint: "light sharing — keeps most of your quota for personal use",
       },
       {
         value: 15,
-        label: "Balanced — $15/day cap",
-        hint: `up to ~$${earnPerMonth(15)}/month earnings · matches a heavy individual user · low ban risk (recommended)`,
+        label: `~25%  ·  $15/day cap  →  ~$${earnPerMonth(15)}/month earnings`,
+        hint: "recommended — shares a quarter, leaves 75% for you",
       },
       {
         value: 30,
-        label: "Aggressive — $30/day cap",
-        hint: `up to ~$${earnPerMonth(30)}/month earnings · power-user upper bound · moderate ban risk`,
+        label: `~50%  ·  $30/day cap  →  ~$${earnPerMonth(30)}/month earnings`,
+        hint: "heavy sharing — half for you, half for relay",
       },
       {
         value: 60,
-        label: "Maximize — $60/day cap",
-        hint: `up to ~$${earnPerMonth(60)}/month earnings · clearly above single-user usage · higher ban risk, recommended only if you're willing to rotate accounts`,
+        label: `~100% ·  $60/day cap  →  ~$${earnPerMonth(60)}/month earnings`,
+        hint: "relay-focused — best for accounts dedicated to providing",
       },
     ],
     initialValue: 15,
