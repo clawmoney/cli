@@ -224,50 +224,54 @@ export async function relaySetupCommand() {
         cancel("No models selected — nothing to register");
         process.exit(0);
     }
-    // ── Step 4: daily budget (the only product-level decision) ──
+    // ── Step 4: per-provider daily quota share ──
     //
-    // Concurrency is silent (5, the "single power user" cap — explained
-    // in the file header). daily_limit is the one variable that's a
-    // product decision, not a technical one: it directly controls how
-    // much you can earn (and how much subscription quota the relay
-    // burns through per day). We offer three presets calibrated to
-    // common provider postures, plus the implicit fall-through of
-    // editing config.yaml after start for advanced overrides.
+    // We deliberately don't show USD earnings projections in this prompt
+    // because they'd be misleading:
     //
-    // Earning math per provider (assuming 100% utilization):
-    //   max_earn_per_day = daily_limit × RELAY_DISCOUNT × (1 - PLATFORM_FEE)
-    //                    = daily_limit × 0.20 × 0.90 = daily_limit × 0.18
-    //   max_earn_per_month ≈ max_earn_per_day × 30
+    // - `daily_limit_usd` is per-provider (per model row), not per-account.
+    //   If a user registers 4 codex models on one ChatGPT account, total
+    //   daily cap = 4 × this value, not this value. Showing "$15/day cap"
+    //   makes them think it's their account-wide total.
+    //
+    // - Different models have wildly different prices (claude-opus is
+    //   $5/$25 per Mtok, haiku is $1/$5). A flat USD cap means very
+    //   different token volumes per model — there's no single "fair
+    //   share" number we can show.
+    //
+    // - Multiple CLI families = multiple independent subscriptions. A
+    //   user with claude + codex + gemini has three separate quota
+    //   pools. A single "% of subscription" framing per the wizard
+    //   can't express that cleanly.
+    //
+    // Solution: ask the user for a percentage (~10/25/50/100) which maps
+    // internally to a per-provider USD cap, but only SHOW the percentage
+    // in the prompt. Earnings depend on real buyer demand × per-model
+    // pricing × number of providers; we can't predict that, so we don't
+    // pretend to.
     const concurrency = 5;
-    const earnPerMonth = (cap) => Math.round(cap * RELAY_DISCOUNT * (1 - PLATFORM_FEE) * 30);
-    // Baseline: $60/day API cost ≈ a fully utilized Max-tier subscription's
-    // daily quota (Claude Max 20x, ChatGPT Pro, etc.). Percentages are
-    // computed off this baseline so users can intuit "I'm sharing X% of
-    // a typical subscription's daily capacity". For Pro tier subs the
-    // real percentage is higher (because their full quota is smaller),
-    // but the USD cap is what actually matters technically.
     const dailyLimitChoice = await select({
-        message: "How much of your subscription's spare capacity do you want to share?",
+        message: "Daily quota share per model? (applies independently to each model you register)",
         options: [
             {
                 value: 6,
-                label: `~10%  ·  $6/day cap   →  ~$${earnPerMonth(6)}/month earnings`,
-                hint: "light sharing — keeps most of your quota for personal use",
+                label: "~10%  ·  Minimal",
+                hint: "barely touches your subscription, leaves nearly all of it for personal use",
             },
             {
                 value: 15,
-                label: `~25%  ·  $15/day cap  →  ~$${earnPerMonth(15)}/month earnings`,
-                hint: "recommended — shares a quarter, leaves 75% for you",
+                label: "~25%  ·  Balanced  (recommended)",
+                hint: "shares a quarter of each model's quota, leaves 75% for your own use",
             },
             {
                 value: 30,
-                label: `~50%  ·  $30/day cap  →  ~$${earnPerMonth(30)}/month earnings`,
-                hint: "heavy sharing — half for you, half for relay",
+                label: "~50%  ·  Heavy",
+                hint: "splits each model's quota evenly between you and the relay",
             },
             {
                 value: 60,
-                label: `~100% ·  $60/day cap  →  ~$${earnPerMonth(60)}/month earnings`,
-                hint: "relay-focused — best for accounts dedicated to providing",
+                label: "~100% ·  Full",
+                hint: "dedicates your subscription to relay use — best for accounts you don't use personally",
             },
         ],
         initialValue: 15,
@@ -278,13 +282,22 @@ export async function relaySetupCommand() {
     }
     const dailyLimit = dailyLimitChoice;
     // ── Step 5: confirmation summary ──
+    // Translate the chosen daily-limit USD value back into the percentage
+    // label the user picked, so what they see in the summary matches what
+    // they answered in the prompt.
+    const limitLabel = {
+        6: "~10% (Minimal)",
+        15: "~25% (Balanced)",
+        30: "~50% (Heavy)",
+        60: "~100% (Full)",
+    };
     log.step(chalk.bold("Summary"));
     for (const r of registrations) {
         log.message(`  ${chalk.cyan(r.cli + "/" + r.model).padEnd(50)} ${chalk.dim(formatBuyerPrice(r.input, r.output))}`);
     }
-    log.message(chalk.dim(`  ${registrations.length} provider(s) · concurrency=${concurrency}/provider · daily_limit=$${dailyLimit}/provider`));
+    log.message(chalk.dim(`  ${registrations.length} provider(s) · ${limitLabel[dailyLimit] ?? `$${dailyLimit}/day cap`} per model`));
     log.message(chalk.dim(`  You earn ~${Math.round((1 - PLATFORM_FEE) * 100)}% of what buyers pay (after platform fee)`));
-    log.message(chalk.dim(`  To customize: edit ~/.clawmoney/config.yaml after start, or re-register a single model via "clawmoney relay register --cli X --model Y --concurrency N --daily-limit M"`));
+    log.message(chalk.dim(`  To customize: edit ~/.clawmoney/config.yaml after start`));
     const proceed = await confirm({
         message: `Register all ${registrations.length} providers now?`,
         initialValue: true,
