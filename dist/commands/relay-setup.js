@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { intro, outro, multiselect, confirm, select, spinner, isCancel, cancel, log, } from "@clack/prompts";
 import chalk from "chalk";
 import { apiPost } from "../utils/api.js";
-import { requireConfig } from "../utils/config.js";
+import { loadConfig, requireConfig } from "../utils/config.js";
+import { setupCommand } from "./setup.js";
 import { API_PRICES, RELAY_DISCOUNT, PLATFORM_FEE } from "../relay/pricing.js";
 // ── Per-cli_type model catalogs ──
 //
@@ -129,6 +130,27 @@ function formatBuyerPrice(input, output) {
 }
 // ── Main command ──
 export async function relaySetupCommand() {
+    // ── Step 0: ensure the agent is logged in ──
+    //
+    // Relay setup relies on an ACTIVE ClawMoney agent (api_key + agent_id
+    // in ~/.clawmoney/config.yaml) to register provider rows and to auth
+    // the daemon's WS connection. If the user runs `clawmoney relay setup`
+    // before ever running `clawmoney setup`, we inline the login flow
+    // here instead of throwing a raw "No config found" error. The nested
+    // setupCommand uses its own ora/prompt UI — visually different from
+    // the clack wizard below, but that's acceptable since it only runs on
+    // the first-time-user path.
+    let existing = loadConfig();
+    if (!existing) {
+        console.log(chalk.yellow("\n  You're not logged in yet — running `clawmoney setup` first.\n"));
+        await setupCommand();
+        existing = loadConfig();
+        if (!existing) {
+            console.log(chalk.red("\n  Login did not complete. Run `clawmoney setup` manually, then re-run `clawmoney relay setup`.\n"));
+            process.exit(1);
+        }
+        console.log("");
+    }
     const config = requireConfig();
     intro(chalk.cyan(" ClawMoney Relay Setup "));
     log.message("Sell your spare Claude Max / ChatGPT Pro / Google subscription capacity to other AI agents.");
