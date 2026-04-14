@@ -384,6 +384,7 @@ export async function relaySetupCommand(): Promise<void> {
   // it was pure friction for the common case.
   type Registration = { cli: string; model: string; input: number; output: number };
   const registrations: Registration[] = [];
+  const cliSummary: string[] = [];
 
   for (const cli of selectedClis) {
     const allModels = modelsForCli(cli);
@@ -396,9 +397,7 @@ export async function relaySetupCommand(): Promise<void> {
       continue;
     }
 
-    log.success(
-      `${chalk.bold(cli)}: ${recommended.length} models ${chalk.dim("— " + recommended.join(", "))}`
-    );
+    cliSummary.push(`${chalk.bold(cli)} ${chalk.dim(`(${recommended.length})`)}`);
 
     for (const model of recommended) {
       const p = API_PRICES[model];
@@ -409,6 +408,10 @@ export async function relaySetupCommand(): Promise<void> {
         output: p.output,
       });
     }
+  }
+
+  if (cliSummary.length > 0) {
+    log.success(`Registering: ${cliSummary.join(chalk.dim(" · "))}`);
   }
 
   if (registrations.length === 0) {
@@ -688,7 +691,7 @@ export async function relaySetupCommand(): Promise<void> {
     // which is annoying but doesn't break anything.
     log.warn(
       `Could not prune old providers: ${(err as Error).message} — ` +
-        `run \`clawmoney relay status\` and clean manually if needed`
+        `run \`npx clawmoney relay status\` and clean manually if needed`
     );
   }
 
@@ -720,10 +723,10 @@ export async function relaySetupCommand(): Promise<void> {
   log.message(
     chalk.dim("Next:") +
       "\n" +
-      `  ${chalk.cyan("clawmoney relay status")}   daemon + provider list\n` +
-      `  ${chalk.cyan("clawmoney relay logs")}     tail daemon log\n` +
-      `  ${chalk.cyan("clawmoney wallet balance")} on-chain + relay earnings\n` +
-      `  ${chalk.cyan("clawmoney relay stop")}     stop daemon`
+      `  ${chalk.cyan("npx clawmoney relay status")}   daemon + provider list\n` +
+      `  ${chalk.cyan("npx clawmoney relay logs")}     tail daemon log\n` +
+      `  ${chalk.cyan("npx clawmoney wallet balance")} on-chain + relay earnings\n` +
+      `  ${chalk.cyan("npx clawmoney relay stop")}     stop daemon`
   );
   const cliLabel =
     uniqueClis.length === 1

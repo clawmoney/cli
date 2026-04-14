@@ -228,6 +228,9 @@ export async function setupCommand(): Promise<void> {
       // Step 6: Register new agent
       agentSpinner.text = 'Registering agent...';
 
+      // Backend generates the anonymous provider slug from email hash
+      // — we deliberately do NOT send a name here so users can't pick
+      // something that leaks PII.
       const registerBody: Record<string, string> = { email };
       if (walletAddress) {
         registerBody.wallet_address = walletAddress;

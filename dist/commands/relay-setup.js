@@ -261,6 +261,7 @@ export async function relaySetupCommand() {
         return Promise.all(tasks);
     };
     const registrations = [];
+    const cliSummary = [];
     for (const cli of selectedClis) {
         const allModels = modelsForCli(cli);
         const recommended = (RECOMMENDED_MODELS[cli] ?? []).filter((m) => allModels.includes(m));
@@ -268,7 +269,7 @@ export async function relaySetupCommand() {
             log.warn(`${cli}: no recommended models found — skipping`);
             continue;
         }
-        log.success(`${chalk.bold(cli)}: ${recommended.length} models ${chalk.dim("— " + recommended.join(", "))}`);
+        cliSummary.push(`${chalk.bold(cli)} ${chalk.dim(`(${recommended.length})`)}`);
         for (const model of recommended) {
             const p = API_PRICES[model];
             registrations.push({
@@ -278,6 +279,9 @@ export async function relaySetupCommand() {
                 output: p.output,
             });
         }
+    }
+    if (cliSummary.length > 0) {
+        log.success(`Registering: ${cliSummary.join(chalk.dim(" · "))}`);
     }
     if (registrations.length === 0) {
         cancel("No models selected — nothing to register");
@@ -501,7 +505,7 @@ export async function relaySetupCommand() {
         // Non-fatal: worst case is the daemon preflights extra cli_types,
         // which is annoying but doesn't break anything.
         log.warn(`Could not prune old providers: ${err.message} — ` +
-            `run \`clawmoney relay status\` and clean manually if needed`);
+            `run \`npx clawmoney relay status\` and clean manually if needed`);
     }
     // ── Step 8: auto-start the daemon ──
     //
@@ -527,10 +531,10 @@ export async function relaySetupCommand() {
     // instead of 6.
     log.message(chalk.dim("Next:") +
         "\n" +
-        `  ${chalk.cyan("clawmoney relay status")}   daemon + provider list\n` +
-        `  ${chalk.cyan("clawmoney relay logs")}     tail daemon log\n` +
-        `  ${chalk.cyan("clawmoney wallet balance")} on-chain + relay earnings\n` +
-        `  ${chalk.cyan("clawmoney relay stop")}     stop daemon`);
+        `  ${chalk.cyan("npx clawmoney relay status")}   daemon + provider list\n` +
+        `  ${chalk.cyan("npx clawmoney relay logs")}     tail daemon log\n` +
+        `  ${chalk.cyan("npx clawmoney wallet balance")} on-chain + relay earnings\n` +
+        `  ${chalk.cyan("npx clawmoney relay stop")}     stop daemon`);
     const cliLabel = uniqueClis.length === 1
         ? `${uniqueClis[0]} daemon running`
         : `daemon serving ${uniqueClis.join(" + ")}`;
