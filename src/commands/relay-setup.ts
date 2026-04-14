@@ -285,28 +285,29 @@ export async function relaySetupCommand(): Promise<void> {
   // Only claude is wired up for now; codex/gemini will follow the
   // same pattern.
   if (selectedClis.includes("claude") && !hasClaudeFingerprint()) {
-    const bootSpin = spinner();
-    bootSpin.start(
+    // Use static log.step + log.success/log.warn instead of a spinner:
+    // some terminals (notably Claude Code's bash runner) don't honor
+    // `\r` cursor-return, which makes a clack spinner accumulate one
+    // frame per tick instead of animating in place.
+    log.step(
       "Capturing Claude fingerprint (runs `claude -p hi` once, ~5-15s)..."
     );
     try {
       const fp = await bootstrapClaudeFingerprint({ timeoutMs: 45_000 });
-      bootSpin.stop(
-        `${chalk.green("✓")} Claude fingerprint captured ` +
+      log.success(
+        `Claude fingerprint captured ` +
           chalk.dim(
             `(device=${fp.device_id.slice(0, 8)}… cc_version=${fp.cc_version || "?"})`
           )
       );
     } catch (err) {
-      bootSpin.stop(
-        chalk.yellow(
-          `⚠ Claude fingerprint capture failed: ${(err as Error).message}`
+      log.warn(`Claude fingerprint capture failed: ${(err as Error).message}`);
+      log.message(
+        chalk.dim(
+          "Claude providers will be registered but the daemon won't be able " +
+            "to serve them until you bootstrap the fingerprint. " +
+            "Make sure `claude` is installed and logged in, then re-run setup."
         )
-      );
-      log.warn(
-        "Claude providers will be registered but the daemon won't be able " +
-          "to serve them until you run `clawmoney relay setup` again or bootstrap " +
-          "manually. Make sure `claude` is installed and logged in first."
       );
     }
   }
