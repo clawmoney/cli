@@ -30,7 +30,15 @@ export interface RelayErrorEvent {
     event: "error";
     message: string;
 }
-export type RelayIncomingEvent = RelayRequest | RelayConnectedEvent | RelayErrorEvent;
+export interface RelayNoticeEvent {
+    event: "relay_notice";
+    notice_type: string;
+    cli_type?: string;
+    expected_model?: string;
+    got_model?: string;
+    message: string;
+}
+export type RelayIncomingEvent = RelayRequest | RelayConnectedEvent | RelayErrorEvent | RelayNoticeEvent;
 export interface RelayResponseSessionWindow {
     reset_at_ms: number;
     utilization?: number;

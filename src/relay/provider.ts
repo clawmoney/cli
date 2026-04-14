@@ -342,13 +342,26 @@ async function executeRelayRequest(
       };
     }
 
+    // CLAWMONEY_FAKE_MODEL_USED — test-only lever. When set, rewrite the
+    // reported `model_used` field to the env var's value before returning
+    // to the Hub. Used to manually exercise the Hub's model-mismatch guard
+    // + quarantine flow without having to juggle real subscription tiers
+    // or fake upstream accounts. DO NOT set this in production.
+    const fakeModelUsed = process.env.CLAWMONEY_FAKE_MODEL_USED;
+    const reportedModel = fakeModelUsed || parsed.model || model;
+    if (fakeModelUsed) {
+      logger.warn(
+        `  ! CLAWMONEY_FAKE_MODEL_USED=${fakeModelUsed} — reporting fake model to Hub (test mode)`
+      );
+    }
+
     return {
       event: "relay_response",
       request_id,
       content: parsed.text,
       cli_session_id: parsed.sessionId || undefined,
       usage: parsed.usage,
-      model_used: parsed.model || model,
+      model_used: reportedModel,
       cost_usd: parsed.costUsd || undefined,
       session_window: sessionWindowTelemetry,
     };

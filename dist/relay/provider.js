@@ -285,13 +285,23 @@ async function executeRelayRequest(request, config, sendChunk) {
                 status: snap.sessionWindow.status,
             };
         }
+        // CLAWMONEY_FAKE_MODEL_USED — test-only lever. When set, rewrite the
+        // reported `model_used` field to the env var's value before returning
+        // to the Hub. Used to manually exercise the Hub's model-mismatch guard
+        // + quarantine flow without having to juggle real subscription tiers
+        // or fake upstream accounts. DO NOT set this in production.
+        const fakeModelUsed = process.env.CLAWMONEY_FAKE_MODEL_USED;
+        const reportedModel = fakeModelUsed || parsed.model || model;
+        if (fakeModelUsed) {
+            logger.warn(`  ! CLAWMONEY_FAKE_MODEL_USED=${fakeModelUsed} — reporting fake model to Hub (test mode)`);
+        }
         return {
             event: "relay_response",
             request_id,
             content: parsed.text,
             cli_session_id: parsed.sessionId || undefined,
             usage: parsed.usage,
-            model_used: parsed.model || model,
+            model_used: reportedModel,
             cost_usd: parsed.costUsd || undefined,
             session_window: sessionWindowTelemetry,
         };
@@ -446,6 +456,18 @@ export function runRelayProvider(cliOverride) {
                 break;
             case "error":
                 logger.error(`Server error: ${event.message}`);
+                break;
+            case "relay_notice":
+                // Loud WARN for the human operator. Quarantine notices are the
+                // most important kind — they mean buyers are going to stop
+                // seeing this provider until the daemon is restarted, so we
+                // don't want them buried in the log.
+                logger.warn(`[NOTICE ${event.notice_type}] ${event.message}`);
+                if (event.notice_type === "model_mismatch_quarantine" &&
+                    event.expected_model &&
+                    event.got_model) {
+                    logger.warn(`  expected=${event.expected_model}  got=${event.got_model}  cli=${event.cli_type ?? "?"}`);
+                }
                 break;
             default:
                 logger.warn("Unknown event:", event);
