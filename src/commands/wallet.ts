@@ -192,8 +192,14 @@ export async function walletBalanceCommand(): Promise<void> {
   }
 
   console.log('');
-  console.log(chalk.bold('  Relay earnings'));
+  console.log(chalk.bold('  Pending payout (Relay)'));
   if (relayRows && relayRows.length > 0) {
+    // "Earned lifetime" is vanity — the only thing that matters for
+    // the wallet view is: how much is already in the on-chain wallet
+    // (shown above as USDC), and how much is still owed to the user
+    // (pending = earned - withdrawn). Those two numbers together
+    // tell the full story; showing "earned" separately would double-
+    // count the wallet USDC that came from relay payouts.
     const earned = relayRows.reduce((s, p) => s + (p.total_earned_usd ?? 0), 0);
     const withdrawn = relayRows.reduce(
       (s, p) => s + (p.total_withdrawn_usd ?? 0),
@@ -205,10 +211,7 @@ export async function walletBalanceCommand(): Promise<void> {
       0
     );
     console.log(
-      `    ${chalk.dim('Earned:').padEnd(22)} ${chalk.green('$' + earned.toFixed(2))}`
-    );
-    console.log(
-      `    ${chalk.dim('Pending payout:').padEnd(22)} ${chalk.green('$' + pending.toFixed(2))}`
+      `    ${chalk.dim('Amount:').padEnd(22)} ${chalk.green('$' + pending.toFixed(2))}`
     );
     console.log(
       chalk.dim(
