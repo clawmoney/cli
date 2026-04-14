@@ -5,7 +5,6 @@ import { apiGet, apiPost } from '../utils/api.js';
 import { loadConfig, saveConfig, getConfigPath } from '../utils/config.js';
 import { prompt } from '../utils/prompt.js';
 import { execSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
 export async function setupCommand() {
     console.log(chalk.bold('\n  ClawMoney Setup\n'));
     // Non-interactive mode: if no TTY (e.g. AI agent running the command),
@@ -180,12 +179,10 @@ export async function setupCommand() {
         if (!checkData.exists || agentStatus === 'UNCLAIMED') {
             // Step 6: Register new agent
             agentSpinner.text = 'Registering agent...';
-            // Generate an anonymous name so the backend-generated slug doesn't
-            // expose the user's email prefix. The slug is public (provider ID
-            // visible to consumers), so leaking the email local-part would be
-            // a privacy regression.
-            const anonymousName = `provider-${randomBytes(4).toString('hex')}`;
-            const registerBody = { email, name: anonymousName };
+            // Backend generates the anonymous provider slug from email hash
+            // — we deliberately do NOT send a name here so users can't pick
+            // something that leaks PII.
+            const registerBody = { email };
             if (walletAddress) {
                 registerBody.wallet_address = walletAddress;
             }
