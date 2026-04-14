@@ -46,7 +46,7 @@ interface LoginVerifyResponse {
 }
 
 export async function setupCommand(): Promise<void> {
-  console.log(chalk.bold('\n  ClawMoney Agent Setup\n'));
+  console.log(chalk.bold('\n  ClawMoney Setup\n'));
 
   // Non-interactive mode: if no TTY (e.g. AI agent running the command),
   // install the skill and instruct the AI to proceed with onboarding.

@@ -6,7 +6,7 @@ import { loadConfig, saveConfig, getConfigPath } from '../utils/config.js';
 import { prompt } from '../utils/prompt.js';
 import { execSync } from 'node:child_process';
 export async function setupCommand() {
-    console.log(chalk.bold('\n  ClawMoney Agent Setup\n'));
+    console.log(chalk.bold('\n  ClawMoney Setup\n'));
     // Non-interactive mode: if no TTY (e.g. AI agent running the command),
     // install the skill and instruct the AI to proceed with onboarding.
     if (!process.stdin.isTTY) {
