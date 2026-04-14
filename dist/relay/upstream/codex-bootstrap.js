@@ -158,22 +158,23 @@ export async function bootstrapCodexFingerprint(opts = {}) {
                     resolve();
                 }
             }, 500);
-            // Codex wants the proxy-local endpoint; strip HTTPS_PROXY so
-            // it talks to 127.0.0.1 directly (going through a proxy to
-            // loopback tends to wedge).
+            // DO inherit HTTPS_PROXY — codex CLI may need it to refresh
+            // its OAuth token via chatgpt.com's auth endpoint. Same
+            // reasoning as claude/gemini (see gemini-bootstrap.ts).
+            // NO_PROXY=127.0.0.1 keeps the ws upgrade to our local
+            // capture proxy from being tunneled through HTTPS_PROXY.
             const childEnv = {
                 ...process.env,
                 OPENAI_BASE_URL: `http://127.0.0.1:${CAPTURE_PORT}/v1`,
                 NO_PROXY: "127.0.0.1,localhost",
                 no_proxy: "127.0.0.1,localhost",
             };
-            delete childEnv.HTTPS_PROXY;
-            delete childEnv.https_proxy;
-            delete childEnv.HTTP_PROXY;
-            delete childEnv.http_proxy;
-            delete childEnv.ALL_PROXY;
-            delete childEnv.all_proxy;
-            codexChild = spawn("codex", ["-p", "hi"], {
+            // Codex CLI uses `codex exec <prompt>` for non-interactive
+            // runs. `-p` is --profile (and `hi` is a profile name that
+            // doesn't exist → code 1 before any request goes out).
+            // --skip-git-repo-check avoids codex bailing if the cwd
+            // isn't inside a git repo.
+            codexChild = spawn("codex", ["exec", "--skip-git-repo-check", "say ok"], {
                 env: childEnv,
                 stdio: ["ignore", "pipe", "pipe"],
                 shell: process.platform === "win32",

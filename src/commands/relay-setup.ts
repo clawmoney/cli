@@ -343,7 +343,26 @@ export async function relaySetupCommand(): Promise<void> {
       );
     }
 
-    // Codex intentionally omitted — codex-api.ts has safe defaults.
+    if (selectedClis.includes("codex") && !hasCodexFingerprint()) {
+      // Codex fingerprint is technically optional (codex-api.ts
+      // falls back to safe DEFAULT_ORIGINATOR / DEFAULT_OPENAI_BETA
+      // when the file is missing), but the daemon logs a WARN on
+      // every start. Capturing once during setup silences the
+      // warning and gives per-machine accuracy for anti-ban.
+      tasks.push(
+        bootstrapCodexFingerprint({ timeoutMs: 60_000 })
+          .then(() => ({
+            cli: "codex",
+            ok: true,
+            summary: "from chatgpt.com WS upgrade",
+          }))
+          .catch((err: Error) => ({
+            cli: "codex",
+            ok: false,
+            error: err.message,
+          }))
+      );
+    }
 
     if (tasks.length === 0) return [];
     return Promise.all(tasks);

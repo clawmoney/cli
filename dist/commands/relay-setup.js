@@ -11,6 +11,7 @@ import { setupCommand } from "./setup.js";
 import { API_PRICES, PLATFORM_FEE } from "../relay/pricing.js";
 import { hasClaudeFingerprint, bootstrapClaudeFingerprint, } from "../relay/upstream/claude-bootstrap.js";
 import { hasGeminiFingerprint, bootstrapGeminiFingerprint, } from "../relay/upstream/gemini-bootstrap.js";
+import { hasCodexFingerprint, bootstrapCodexFingerprint, } from "../relay/upstream/codex-bootstrap.js";
 // ── Per-cli_type model catalogs ──
 //
 // `RECOMMENDED_MODELS` is what gets registered when the user picks "all
@@ -237,7 +238,24 @@ export async function relaySetupCommand() {
                 error: err.message,
             })));
         }
-        // Codex intentionally omitted — codex-api.ts has safe defaults.
+        if (selectedClis.includes("codex") && !hasCodexFingerprint()) {
+            // Codex fingerprint is technically optional (codex-api.ts
+            // falls back to safe DEFAULT_ORIGINATOR / DEFAULT_OPENAI_BETA
+            // when the file is missing), but the daemon logs a WARN on
+            // every start. Capturing once during setup silences the
+            // warning and gives per-machine accuracy for anti-ban.
+            tasks.push(bootstrapCodexFingerprint({ timeoutMs: 60_000 })
+                .then(() => ({
+                cli: "codex",
+                ok: true,
+                summary: "from chatgpt.com WS upgrade",
+            }))
+                .catch((err) => ({
+                cli: "codex",
+                ok: false,
+                error: err.message,
+            })));
+        }
         if (tasks.length === 0)
             return [];
         return Promise.all(tasks);
