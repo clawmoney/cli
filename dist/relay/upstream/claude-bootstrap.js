@@ -276,22 +276,17 @@ export async function bootstrapClaudeFingerprint(opts = {}) {
                 return;
             }
             const port = addr.port;
-            // Build child env: inherit parent's env but strip HTTPS_PROXY
-            // entries so claude doesn't try to tunnel its call to
-            // http://127.0.0.1:<port> through the upstream proxy. Set
-            // NO_PROXY=localhost as belt-and-braces.
+            // Inherit HTTPS_PROXY so claude can reach sso.anthropic.com
+            // for OAuth refresh if its cached token is near expiry —
+            // same reason gemini-bootstrap keeps it. NO_PROXY=127.0.0.1
+            // keeps claude's call to our local listener from tunneling
+            // through the proxy.
             const childEnv = {
                 ...process.env,
                 ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`,
                 NO_PROXY: "127.0.0.1,localhost",
                 no_proxy: "127.0.0.1,localhost",
             };
-            delete childEnv.HTTPS_PROXY;
-            delete childEnv.https_proxy;
-            delete childEnv.HTTP_PROXY;
-            delete childEnv.http_proxy;
-            delete childEnv.ALL_PROXY;
-            delete childEnv.all_proxy;
             // Launch `claude -p "hi"` — same command the manual capture
             // script documents. `-p` is non-interactive print mode; in
             // recent claude versions it skips the trust dialog for

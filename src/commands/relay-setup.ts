@@ -325,12 +325,11 @@ export async function relaySetupCommand(): Promise<void> {
     }
 
     if (selectedClis.includes("gemini") && !hasGeminiFingerprint()) {
-      // Shorter timeout on gemini — recent CLI versions are flaky
-      // under our subprocess-intercept approach. 25s is enough for
-      // a working capture; beyond that we fall through to the
-      // manual instruction path cleanly.
+      // Gemini's capture typically completes in 5-15s on a working
+      // network. 45s is generous headroom for token refresh
+      // round-trips through a slow HTTPS_PROXY.
       tasks.push(
-        bootstrapGeminiFingerprint({ timeoutMs: 25_000 })
+        bootstrapGeminiFingerprint({ timeoutMs: 45_000 })
           .then((fp) => ({
             cli: "gemini",
             ok: true,
@@ -406,10 +405,9 @@ export async function relaySetupCommand(): Promise<void> {
   // fingerprint file.
   const startLine = `${chalk.gray("◇")}  Configuring providers`;
   process.stdout.write(startLine);
-  const tickEvery = 500;
   const ticker = setInterval(() => {
     process.stdout.write(chalk.dim("."));
-  }, tickEvery);
+  }, 1200);
 
   const results = await runAllBootstraps();
 

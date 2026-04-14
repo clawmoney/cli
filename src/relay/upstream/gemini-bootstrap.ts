@@ -186,20 +186,18 @@ export async function bootstrapGeminiFingerprint(
         }
       }, 500);
 
-      // Strip upstream proxy vars from the gemini subprocess so it
-      // talks to 127.0.0.1:8789 directly. Also set NO_PROXY.
+      // DO inherit HTTPS_PROXY — gemini CLI needs it to reach
+      // oauth2.googleapis.com for token refresh (see gemini-api.ts
+      // line 184). NO_PROXY=127.0.0.1 makes gemini bypass the proxy
+      // for our local capture listener, so HTTPS_PROXY + NO_PROXY
+      // together give gemini proxy access to Google AND direct
+      // access to our listener.
       const childEnv = {
         ...process.env,
         CODE_ASSIST_ENDPOINT: `http://127.0.0.1:${CAPTURE_PORT}`,
         NO_PROXY: "127.0.0.1,localhost",
         no_proxy: "127.0.0.1,localhost",
       };
-      delete (childEnv as Record<string, string | undefined>).HTTPS_PROXY;
-      delete (childEnv as Record<string, string | undefined>).https_proxy;
-      delete (childEnv as Record<string, string | undefined>).HTTP_PROXY;
-      delete (childEnv as Record<string, string | undefined>).http_proxy;
-      delete (childEnv as Record<string, string | undefined>).ALL_PROXY;
-      delete (childEnv as Record<string, string | undefined>).all_proxy;
 
       geminiChild = spawn("gemini", ["-p", "hi"], {
         env: childEnv,
