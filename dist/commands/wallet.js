@@ -3,6 +3,43 @@ import ora from 'ora';
 import { awalExec } from '../utils/awal.js';
 import { apiGet } from '../utils/api.js';
 import { loadConfig } from '../utils/config.js';
+// Base mainnet USDC contract + balanceOf(address) ABI selector.
+// Keeping on-chain reads as a first-class path lets `wallet balance`
+// skip the awal Electron bridge entirely, which is notorious for
+// cold-starting slowly or hanging if the daemon isn't warm.
+const BASE_RPC_URL = 'https://mainnet.base.org';
+const BASE_USDC_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+const BALANCE_OF_SELECTOR = '0x70a08231';
+const USDC_DECIMALS = 1_000_000;
+async function readBaseUsdcBalance(walletAddress, timeoutMs = 8000) {
+    const paddedAddr = walletAddress.toLowerCase().replace(/^0x/, '').padStart(64, '0');
+    const data = BALANCE_OF_SELECTOR + paddedAddr;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+        const resp = await fetch(BASE_RPC_URL, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'eth_call',
+                params: [{ to: BASE_USDC_CONTRACT, data }, 'latest'],
+            }),
+            signal: ctrl.signal,
+        });
+        const json = (await resp.json());
+        if (json.error)
+            throw new Error(json.error.message || 'RPC error');
+        if (!json.result)
+            throw new Error('empty RPC result');
+        const atomic = BigInt(json.result);
+        return Number(atomic) / USDC_DECIMALS;
+    }
+    finally {
+        clearTimeout(timer);
+    }
+}
 export async function walletStatusCommand() {
     const spinner = ora('Getting wallet status...').start();
     try {
@@ -39,47 +76,67 @@ function withTimeout(p, ms, label) {
 }
 export async function walletBalanceCommand() {
     const spinner = ora('Getting wallet balance...').start();
-    // Kick off both calls in parallel. Relay earnings are loaded from
-    // the clawmoney backend per-agent; the on-chain balance is awal's
-    // native `balance` RPC. Either half is allowed to fail — we print
-    // a dim "(unavailable)" note for that section and keep going.
+    // Source of truth for on-chain balance: direct JSON-RPC to Base
+    // mainnet USDC, not `awal balance`. Reasons:
+    //   - awal is an Electron app; cold-starting it via `npx` takes 3-10s
+    //     and occasionally wedges under load (see GH issues around
+    //     DEP0190 / pipe buffers).
+    //   - We already store the wallet address in ~/.clawmoney/config.yaml
+    //     at setup time, so we don't need awal to look it up.
+    //   - RPC reads are idempotent, cacheable, and cost nothing.
+    // Relay earnings are fetched in parallel from the clawmoney backend.
+    // Either half is allowed to fail — we print "(unavailable)" for the
+    // broken section and keep going.
     const config = loadConfig();
+    let walletAddress = config?.wallet_address ?? null;
+    // Fall back to awal only if we don't have a wallet address cached
+    // in the config — e.g. for users who ran setup before we started
+    // saving wallet_address. Capped at 5s so it can't block the command.
+    let awalFallbackError = null;
+    if (!walletAddress) {
+        try {
+            const awalResult = await withTimeout(awalExec(['address']), 5_000, 'awal address');
+            const data = awalResult.data;
+            if (typeof data?.address === 'string' && data.address) {
+                walletAddress = data.address;
+            }
+        }
+        catch (err) {
+            awalFallbackError = err.message;
+        }
+    }
     const relayPromise = config?.api_key
         ? apiGet("/api/v1/relay/providers/me", config.api_key)
             .then((resp) => (resp.ok && Array.isArray(resp.data) ? resp.data : null))
             .catch(() => null)
         : Promise.resolve(null);
-    // 10s is generous — awal balance usually returns in 1-2s. Beyond
-    // that the wallet process is probably wedged and the user wants
-    // the rest of the output immediately.
-    let awalResult = null;
-    let awalError = null;
-    try {
-        awalResult = await withTimeout(awalExec(['balance']), 10_000, 'awal balance');
+    let usdcBalance = null;
+    let onchainError = null;
+    if (walletAddress) {
+        try {
+            usdcBalance = await readBaseUsdcBalance(walletAddress);
+        }
+        catch (err) {
+            onchainError = err.message;
+        }
     }
-    catch (err) {
-        awalError = err.message;
+    else {
+        onchainError = awalFallbackError ?? 'no wallet address in config';
     }
     const relayRows = await relayPromise;
     spinner.stop();
     console.log('');
     console.log(chalk.bold('  Wallet'));
     console.log('');
-    console.log(chalk.bold('  On-chain (awal)'));
-    if (awalResult) {
-        const data = awalResult.data;
-        if (typeof data === 'object' && data !== null && Object.keys(data).length > 0) {
-            for (const [key, value] of Object.entries(data)) {
-                console.log(`    ${chalk.dim(key + ':').padEnd(22)} ${chalk.green(String(value))}`);
-            }
-        }
-        else {
-            console.log(`    ${chalk.dim(awalResult.raw || '(empty)')}`);
-        }
+    console.log(chalk.bold('  On-chain (Base USDC)'));
+    if (walletAddress) {
+        console.log(`    ${chalk.dim('Address:').padEnd(22)} ${chalk.cyan(walletAddress)}`);
+    }
+    if (usdcBalance !== null) {
+        console.log(`    ${chalk.dim('USDC:').padEnd(22)} ${chalk.green('$' + usdcBalance.toFixed(2))}`);
     }
     else {
-        console.log(`    ${chalk.yellow('unavailable')} ${chalk.dim('(' + (awalError ?? 'unknown error') + ')')}`);
-        console.log(chalk.dim('    Try:  npx awal status   |   clawmoney wallet status'));
+        console.log(`    ${chalk.yellow('unavailable')} ${chalk.dim('(' + (onchainError ?? 'unknown') + ')')}`);
     }
     console.log('');
     console.log(chalk.bold('  Relay earnings'));
