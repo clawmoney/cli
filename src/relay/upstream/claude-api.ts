@@ -643,6 +643,42 @@ let refreshInflight: Promise<LoadedCreds> | null = null;
 
 const REFRESH_SKEW_MS = 3 * 60 * 1000;
 
+// ── Auth-broken circuit breaker ─────────────────────────────────────────
+//
+// If Anthropic's OAuth refresh endpoint rejects our refresh_token as
+// invalid (400 invalid_grant, 401, 403 "Request not allowed", etc.),
+// that's a persistent condition — the token is not going to start
+// working again on its own. Every subsequent buyer request would burn
+// another refresh attempt on Anthropic, which looks like brute-forcing
+// from their anti-abuse side and risks getting the provider's account
+// flagged.
+//
+// Cache the "broken" state for AUTH_BROKEN_CACHE_MS. During that window
+// ALL calls to getFreshCreds() short-circuit with the cached error
+// WITHOUT hitting Anthropic. After the window expires we allow exactly
+// one probe refresh — if it succeeds, we're unbroken; if it fails
+// again, the window is extended by another interval.
+//
+// Transient 5xx responses are NOT cached — those are "maybe the server
+// is having a moment" and worth retrying. Only 4xx "no, really, the
+// token is bad" responses trip the breaker.
+const AUTH_BROKEN_CACHE_MS = 5 * 60 * 1000;
+let authBrokenUntilMs = 0;
+let authBrokenError: Error | null = null;
+
+function isAuthBrokenError(err: Error): boolean {
+  const msg = err.message.toLowerCase();
+  // Matches messages produced by refreshUpstreamToken:
+  //   "Token refresh failed: 400 ...invalid_grant..."
+  //   "Token refresh failed: 401 ..."
+  //   "Token refresh failed: 403 ...Request not allowed..."
+  return (
+    msg.includes("invalid_grant") ||
+    msg.includes("request not allowed") ||
+    /token refresh failed:\s*40[0134]/.test(msg)
+  );
+}
+
 async function doRefreshAndPersist(current: LoadedCreds): Promise<LoadedCreds> {
   logger.info("[claude-api] refreshing OAuth token...");
   const fresh = await refreshUpstreamToken(current.refreshToken);
@@ -701,6 +737,15 @@ async function doRefreshAndPersist(current: LoadedCreds): Promise<LoadedCreds> {
 }
 
 async function getFreshCreds(): Promise<LoadedCreds> {
+  // Circuit breaker: if the OAuth endpoint is known-broken for this
+  // daemon, throw the cached error immediately without touching
+  // Anthropic again. This is what keeps a retry storm from burning
+  // one refresh attempt per buyer request and getting the account
+  // flagged.
+  if (authBrokenUntilMs && Date.now() < authBrokenUntilMs && authBrokenError) {
+    throw authBrokenError;
+  }
+
   if (!cachedCreds) {
     cachedCreds = loadClaudeOAuth();
   }
@@ -714,7 +759,25 @@ async function getFreshCreds(): Promise<LoadedCreds> {
       refreshInflight = null;
     });
   }
-  cachedCreds = await refreshInflight;
+  try {
+    cachedCreds = await refreshInflight;
+  } catch (err) {
+    const e = err as Error;
+    if (isAuthBrokenError(e)) {
+      authBrokenUntilMs = Date.now() + AUTH_BROKEN_CACHE_MS;
+      authBrokenError = e;
+      logger.error(
+        `[claude-api] OAuth refresh rejected by Anthropic — caching auth-broken state for ${AUTH_BROKEN_CACHE_MS / 1000}s. Subsequent requests will fail fast without hitting the OAuth endpoint. Fix: re-login with 'claude /login' and restart the daemon. Root cause: ${e.message.slice(0, 200)}`
+      );
+    }
+    throw err;
+  }
+  // Successful refresh — clear any cached broken state.
+  if (authBrokenUntilMs) {
+    authBrokenUntilMs = 0;
+    authBrokenError = null;
+    logger.info("[claude-api] OAuth refresh recovered — auth-broken cache cleared");
+  }
   return cachedCreds;
 }
 
