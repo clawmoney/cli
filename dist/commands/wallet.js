@@ -2,7 +2,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { awalExec } from '../utils/awal.js';
 import { apiGet } from '../utils/api.js';
-import { loadConfig } from '../utils/config.js';
+import { loadConfig, saveConfig } from '../utils/config.js';
 // Base mainnet USDC contract + balanceOf(address) ABI selector.
 // Keeping on-chain reads as a first-class path lets `wallet balance`
 // skip the awal Electron bridge entirely, which is notorious for
@@ -88,21 +88,47 @@ export async function walletBalanceCommand() {
     // Either half is allowed to fail — we print "(unavailable)" for the
     // broken section and keep going.
     const config = loadConfig();
+    // Wallet address lookup order:
+    //   1. ~/.clawmoney/config.yaml cache (instant)
+    //   2. Backend /api/v1/claw-agents/me (authoritative, ~200ms)
+    //   3. awal address (Electron cold-start, last resort, 5s cap)
+    // After a successful #2 we write the result back to the config so
+    // every future `wallet balance` hits path #1.
     let walletAddress = config?.wallet_address ?? null;
-    // Fall back to awal only if we don't have a wallet address cached
-    // in the config — e.g. for users who ran setup before we started
-    // saving wallet_address. Capped at 5s so it can't block the command.
-    let awalFallbackError = null;
+    let addressSource = 'config';
+    let addressError = null;
+    if (!walletAddress && config?.api_key) {
+        try {
+            const resp = await apiGet('/api/v1/claw-agents/me', config.api_key);
+            if (resp.ok && typeof resp.data?.wallet_address === 'string' && resp.data.wallet_address) {
+                walletAddress = resp.data.wallet_address;
+                addressSource = 'api';
+                // Cache it so the next run is instant.
+                try {
+                    saveConfig({ wallet_address: walletAddress });
+                }
+                catch {
+                    // Non-fatal — we still have the address for THIS run.
+                }
+            }
+        }
+        catch (err) {
+            addressError = err.message;
+        }
+    }
     if (!walletAddress) {
+        // Last resort: cold-start awal. Capped at 5s so a wedged wallet
+        // daemon can't block the command forever.
         try {
             const awalResult = await withTimeout(awalExec(['address']), 5_000, 'awal address');
             const data = awalResult.data;
             if (typeof data?.address === 'string' && data.address) {
                 walletAddress = data.address;
+                addressSource = 'awal';
             }
         }
         catch (err) {
-            awalFallbackError = err.message;
+            addressError = err.message;
         }
     }
     const relayPromise = config?.api_key
@@ -121,8 +147,9 @@ export async function walletBalanceCommand() {
         }
     }
     else {
-        onchainError = awalFallbackError ?? 'no wallet address in config';
+        onchainError = addressError ?? 'no wallet address in config';
     }
+    void addressSource; // reserved for future debug display
     const relayRows = await relayPromise;
     spinner.stop();
     console.log('');
