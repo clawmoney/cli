@@ -3,6 +3,8 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import * as readline from "node:readline";
+
 import {
   intro,
   outro,
@@ -285,34 +287,44 @@ export async function relaySetupCommand(): Promise<void> {
   // Only claude is wired up for now; codex/gemini will follow the
   // same pattern.
   if (selectedClis.includes("claude") && !hasClaudeFingerprint()) {
-    // Append-only progress: print the ◇ line once, then append a
-    // single "." every 600ms until the bootstrap finishes. This
-    // avoids the `\r`-based spinner that stacks frames in Jack's
-    // terminal (see earlier iteration history), while still giving
-    // visible "working…" feedback.
-    process.stdout.write(
-      `${chalk.gray("◇")}  Capturing Claude fingerprint ${chalk.dim(
-        "(runs `claude -p hi` once, ~5-15s)"
-      )}`
-    );
-    const ticker = setInterval(() => {
-      process.stdout.write(chalk.dim("."));
-    }, 600);
+    // In-place line replacement: write a "Capturing…" start line
+    // without a trailing newline, then on completion clear that
+    // line and write the final success / failure line over it.
+    // Uses readline.cursorTo/clearLine rather than raw \r because
+    // some terminal environments don't process \r as cursor-return
+    // (see earlier iteration history — the clack spinner accumulated
+    // frames in Jack's terminal). Falls back cleanly: if the clear
+    // fails, the worst case is two lines instead of one.
+    const startLine =
+      `${chalk.gray("◇")}  Capturing Claude fingerprint ` +
+      chalk.dim("(runs `claude -p hi` once, ~5-15s)");
+    process.stdout.write(startLine);
+
+    const clearStartLine = () => {
+      try {
+        readline.cursorTo(process.stdout, 0);
+        readline.clearLine(process.stdout, 0);
+      } catch {
+        // non-TTY — just move to a new line and let the result
+        // print underneath the start line.
+        process.stdout.write("\n");
+      }
+    };
+
     try {
       const fp = await bootstrapClaudeFingerprint({ timeoutMs: 45_000 });
-      clearInterval(ticker);
-      process.stdout.write("\n");
-      log.success(
-        `Claude fingerprint captured ` +
+      clearStartLine();
+      process.stdout.write(
+        `${chalk.green("◆")}  Claude fingerprint captured ` +
           chalk.dim(
             `(device=${fp.device_id.slice(0, 8)}… cc_version=${fp.cc_version || "?"})`
-          )
+          ) +
+          "\n"
       );
     } catch (err) {
-      clearInterval(ticker);
-      process.stdout.write("\n");
-      log.warn(
-        `Claude fingerprint capture failed: ${(err as Error).message}`
+      clearStartLine();
+      process.stdout.write(
+        `${chalk.yellow("⚠")}  Claude fingerprint capture failed: ${(err as Error).message}\n`
       );
       log.message(
         chalk.dim(
