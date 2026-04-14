@@ -285,43 +285,35 @@ export async function relaySetupCommand(): Promise<void> {
   // Only claude is wired up for now; codex/gemini will follow the
   // same pattern.
   if (selectedClis.includes("claude") && !hasClaudeFingerprint()) {
-    // Spinner animation only works cleanly on real TTYs where `\r`
-    // cursor-return is honored. Claude Code's bash tool, CI pipes,
-    // and `script`-style wrappers render each spinner frame as a
-    // new line, which stacks 100+ frames over a 10-15s bootstrap.
-    // Fall back to static log steps in those contexts.
-    const isTty = Boolean(process.stdout.isTTY);
-    const bootSpin = isTty ? spinner() : null;
-
-    if (bootSpin) {
-      bootSpin.start(
-        "Capturing Claude fingerprint (runs `claude -p hi` once, ~5-15s)"
-      );
-    } else {
-      log.step(
-        "Capturing Claude fingerprint (runs `claude -p hi` once, ~5-15s)..."
-      );
-    }
-
+    // Append-only progress: print the ◇ line once, then append a
+    // single "." every 600ms until the bootstrap finishes. This
+    // avoids the `\r`-based spinner that stacks frames in Jack's
+    // terminal (see earlier iteration history), while still giving
+    // visible "working…" feedback.
+    process.stdout.write(
+      `${chalk.gray("◇")}  Capturing Claude fingerprint ${chalk.dim(
+        "(runs `claude -p hi` once, ~5-15s)"
+      )}`
+    );
+    const ticker = setInterval(() => {
+      process.stdout.write(chalk.dim("."));
+    }, 600);
     try {
       const fp = await bootstrapClaudeFingerprint({ timeoutMs: 45_000 });
-      const successMsg =
+      clearInterval(ticker);
+      process.stdout.write("\n");
+      log.success(
         `Claude fingerprint captured ` +
-        chalk.dim(
-          `(device=${fp.device_id.slice(0, 8)}… cc_version=${fp.cc_version || "?"})`
-        );
-      if (bootSpin) {
-        bootSpin.stop(`${chalk.green("✓")} ${successMsg}`);
-      } else {
-        log.success(successMsg);
-      }
+          chalk.dim(
+            `(device=${fp.device_id.slice(0, 8)}… cc_version=${fp.cc_version || "?"})`
+          )
+      );
     } catch (err) {
-      const errMsg = `Claude fingerprint capture failed: ${(err as Error).message}`;
-      if (bootSpin) {
-        bootSpin.stop(chalk.yellow(`⚠ ${errMsg}`));
-      } else {
-        log.warn(errMsg);
-      }
+      clearInterval(ticker);
+      process.stdout.write("\n");
+      log.warn(
+        `Claude fingerprint capture failed: ${(err as Error).message}`
+      );
       log.message(
         chalk.dim(
           "Claude providers will be registered but the daemon won't be able " +
