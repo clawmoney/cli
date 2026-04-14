@@ -410,9 +410,6 @@ export async function relaySetupCommand(): Promise<void> {
     }
   }
 
-  if (cliSummary.length > 0) {
-    log.success(`Registering: ${cliSummary.join(chalk.dim(" · "))}`);
-  }
 
   if (registrations.length === 0) {
     cancel("No models selected — nothing to register");
@@ -619,8 +616,10 @@ export async function relaySetupCommand(): Promise<void> {
   }
 
   if (failed === 0) {
+    const breakdown =
+      cliSummary.length > 0 ? `: ${cliSummary.join(chalk.dim(" · "))}` : "";
     regSpin.stop(
-      `${chalk.green(`✓ ${succeeded} providers registered`)}  ` +
+      `${chalk.green(`✓ Registered${breakdown}`)}  ` +
         chalk.dim(
           `(${limitLabel[dailyLimit] ?? `$${dailyLimit}`} quota share · you earn ~${earnPct}%)`
         )

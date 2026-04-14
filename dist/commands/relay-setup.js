@@ -280,9 +280,6 @@ export async function relaySetupCommand() {
             });
         }
     }
-    if (cliSummary.length > 0) {
-        log.success(`Registering: ${cliSummary.join(chalk.dim(" · "))}`);
-    }
     if (registrations.length === 0) {
         cancel("No models selected — nothing to register");
         process.exit(0);
@@ -455,7 +452,8 @@ export async function relaySetupCommand() {
         process.exit(1);
     }
     if (failed === 0) {
-        regSpin.stop(`${chalk.green(`✓ ${succeeded} providers registered`)}  ` +
+        const breakdown = cliSummary.length > 0 ? `: ${cliSummary.join(chalk.dim(" · "))}` : "";
+        regSpin.stop(`${chalk.green(`✓ Registered${breakdown}`)}  ` +
             chalk.dim(`(${limitLabel[dailyLimit] ?? `$${dailyLimit}`} quota share · you earn ~${earnPct}%)`));
     }
     else {
