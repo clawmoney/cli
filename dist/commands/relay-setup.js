@@ -8,6 +8,7 @@ import { apiPost } from "../utils/api.js";
 import { loadConfig, requireConfig } from "../utils/config.js";
 import { setupCommand } from "./setup.js";
 import { API_PRICES, PLATFORM_FEE } from "../relay/pricing.js";
+import { hasClaudeFingerprint, bootstrapClaudeFingerprint, } from "../relay/upstream/claude-bootstrap.js";
 // ── Per-cli_type model catalogs ──
 //
 // `RECOMMENDED_MODELS` is what gets registered when the user picks "all
@@ -203,6 +204,37 @@ export async function relaySetupCommand() {
         process.exit(0);
     }
     const selectedClis = familyChoice;
+    // ── Step 2b: bootstrap per-cli fingerprints if missing ──
+    //
+    // Claude / Codex / Gemini daemons each need a fingerprint file
+    // (~/.clawmoney/<cli>-fingerprint.json) to mimic the real CLI's
+    // device_id + account_uuid when relaying requests. Without it,
+    // every relay request fails at execution time and the buyer sees
+    // 502s.
+    //
+    // Previously users had to run a two-terminal capture dance
+    // manually. Now we do it inline: start a local proxy, invoke
+    // `claude -p hi` (etc) against it, intercept the first
+    // /v1/messages request, extract the fingerprint, forward the
+    // request upstream so the CLI call still succeeds.
+    //
+    // Only claude is wired up for now; codex/gemini will follow the
+    // same pattern.
+    if (selectedClis.includes("claude") && !hasClaudeFingerprint()) {
+        const bootSpin = spinner();
+        bootSpin.start("Capturing Claude fingerprint (runs `claude -p hi` once, ~5-15s)...");
+        try {
+            const fp = await bootstrapClaudeFingerprint({ timeoutMs: 45_000 });
+            bootSpin.stop(`${chalk.green("✓")} Claude fingerprint captured ` +
+                chalk.dim(`(device=${fp.device_id.slice(0, 8)}… cc_version=${fp.cc_version || "?"})`));
+        }
+        catch (err) {
+            bootSpin.stop(chalk.yellow(`⚠ Claude fingerprint capture failed: ${err.message}`));
+            log.warn("Claude providers will be registered but the daemon won't be able " +
+                "to serve them until you run `clawmoney relay setup` again or bootstrap " +
+                "manually. Make sure `claude` is installed and logged in first.");
+        }
+    }
     const registrations = [];
     for (const cli of selectedClis) {
         const allModels = modelsForCli(cli);

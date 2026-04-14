@@ -1,0 +1,313 @@
+/**
+ * Programmatic Claude fingerprint capture.
+ *
+ * Mirrors scripts/capture-claude-request.mjs but runs as a library so the
+ * setup wizard can bootstrap the fingerprint automatically instead of
+ * asking the user to run a two-terminal dance.
+ *
+ * Flow:
+ *   1. Listen on a random localhost port.
+ *   2. Spawn `claude -p "hi"` with ANTHROPIC_BASE_URL pointing at us.
+ *   3. When the first POST /v1/messages arrives, extract device_id,
+ *      account_uuid, user_agent, cc_version, cc_entrypoint from the
+ *      body + headers, persist to ~/.clawmoney/claude-fingerprint.json,
+ *      and forward the request to api.anthropic.com so the claude CLI
+ *      still sees a real response.
+ *   4. Clean up proxy server + claude subprocess.
+ *
+ * The forwarded request costs 1-2 cents' worth of tokens on the
+ * provider's real Claude Max subscription — acceptable for a one-time
+ * bootstrap that otherwise blocks every subsequent relay request.
+ */
+import { createServer } from "node:http";
+import { existsSync, mkdirSync, readdirSync, unlinkSync, writeFileSync, } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { spawn } from "node:child_process";
+import { fetch as undiciFetch, ProxyAgent } from "undici";
+const CONFIG_DIR = join(homedir(), ".clawmoney");
+const FINGERPRINT_PATH = join(CONFIG_DIR, "claude-fingerprint.json");
+export function hasClaudeFingerprint() {
+    return existsSync(FINGERPRINT_PATH);
+}
+const HOP_BY_HOP = new Set([
+    "host",
+    "connection",
+    "content-length",
+    "transfer-encoding",
+    "accept-encoding",
+]);
+function cloneHeaders(src) {
+    const out = {};
+    for (const [k, v] of Object.entries(src)) {
+        if (v == null)
+            continue;
+        if (HOP_BY_HOP.has(k.toLowerCase()))
+            continue;
+        out[k] = Array.isArray(v) ? v.join(", ") : v;
+    }
+    return out;
+}
+function extractFingerprint(body, headers) {
+    if (!body || typeof body !== "object")
+        return null;
+    const metadata = body.metadata;
+    const userIdRaw = metadata?.user_id;
+    if (typeof userIdRaw !== "string")
+        return null;
+    let userId;
+    try {
+        userId = JSON.parse(userIdRaw);
+    }
+    catch {
+        return null;
+    }
+    if (!userId.device_id || !userId.account_uuid)
+        return null;
+    const uaRaw = headers["user-agent"];
+    const ua = Array.isArray(uaRaw) ? uaRaw.join(", ") : (uaRaw ?? "");
+    // cc_version / cc_entrypoint are embedded in the system prompt as:
+    //   "x-anthropic-billing-header: cc_version=X; cc_entrypoint=Y; ..."
+    let cc_version = "";
+    let cc_entrypoint = "";
+    const systemArr = body.system;
+    if (Array.isArray(systemArr)) {
+        for (const entry of systemArr) {
+            const text = typeof entry === "string"
+                ? entry
+                : entry?.text;
+            if (typeof text !== "string")
+                continue;
+            if (text.includes("cc_version=")) {
+                const v = text.match(/cc_version=([^;\s]+)/);
+                const e = text.match(/cc_entrypoint=([^;\s]+)/);
+                if (v)
+                    cc_version = v[1];
+                if (e)
+                    cc_entrypoint = e[1];
+                break;
+            }
+        }
+    }
+    return {
+        device_id: userId.device_id,
+        account_uuid: userId.account_uuid,
+        user_agent: ua,
+        cc_version,
+        cc_entrypoint,
+    };
+}
+// Scrub any stray `capture-<ts>.json` files from earlier manual capture
+// runs — they can contain OAuth bearer tokens, so we delete them as soon
+// as the fingerprint write succeeds.
+function scrubCaptureFiles() {
+    try {
+        for (const f of readdirSync(CONFIG_DIR)) {
+            if (/^capture-\d+\.json$/.test(f)) {
+                unlinkSync(join(CONFIG_DIR, f));
+            }
+        }
+    }
+    catch {
+        // ignore — best-effort cleanup
+    }
+}
+export async function bootstrapClaudeFingerprint(opts = {}) {
+    const timeoutMs = opts.timeoutMs ?? 30_000;
+    mkdirSync(CONFIG_DIR, { recursive: true });
+    if (hasClaudeFingerprint()) {
+        // Caller should check hasClaudeFingerprint() first, but be defensive.
+        throw new Error("claude-fingerprint.json already exists — delete it to re-bootstrap");
+    }
+    const proxyUrl = process.env.HTTPS_PROXY ||
+        process.env.https_proxy ||
+        process.env.HTTP_PROXY ||
+        process.env.http_proxy;
+    let upstreamDispatcher;
+    if (proxyUrl && /^https?:\/\//.test(proxyUrl)) {
+        upstreamDispatcher = new ProxyAgent(proxyUrl);
+    }
+    let server = null;
+    let claudeChild = null;
+    let resolved = false;
+    let capturedFp = null;
+    const cleanup = () => {
+        if (claudeChild && !claudeChild.killed) {
+            try {
+                claudeChild.kill("SIGTERM");
+            }
+            catch {
+                // ignore
+            }
+        }
+        if (server) {
+            try {
+                server.close();
+            }
+            catch {
+                // ignore
+            }
+            server = null;
+        }
+    };
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+            if (resolved)
+                return;
+            resolved = true;
+            cleanup();
+            reject(new Error(`claude fingerprint capture timed out after ${timeoutMs}ms (claude -p hi did not complete)`));
+        }, timeoutMs);
+        server = createServer((req, res) => {
+            const chunks = [];
+            req.on("data", (c) => chunks.push(c));
+            req.on("end", async () => {
+                const bodyBuf = Buffer.concat(chunks);
+                const bodyText = bodyBuf.toString("utf-8");
+                let parsedBody;
+                try {
+                    parsedBody = JSON.parse(bodyText);
+                }
+                catch {
+                    parsedBody = bodyText;
+                }
+                // Try fingerprint extraction on every POST /v1/messages that
+                // comes through. We persist the first one that parses cleanly.
+                if (!capturedFp &&
+                    req.method === "POST" &&
+                    typeof req.url === "string" &&
+                    req.url.startsWith("/v1/messages")) {
+                    const fp = extractFingerprint(parsedBody, req.headers);
+                    if (fp) {
+                        capturedFp = fp;
+                        try {
+                            writeFileSync(FINGERPRINT_PATH, JSON.stringify(fp, null, 2), "utf-8");
+                            scrubCaptureFiles();
+                        }
+                        catch (writeErr) {
+                            if (!resolved) {
+                                resolved = true;
+                                clearTimeout(timer);
+                                cleanup();
+                                reject(new Error(`failed to write fingerprint: ${writeErr.message}`));
+                                return;
+                            }
+                        }
+                    }
+                }
+                // Forward to upstream so the claude CLI gets a real response
+                // and doesn't error out mid-request.
+                try {
+                    const upstreamHeaders = cloneHeaders(req.headers);
+                    const upstreamResp = await undiciFetch(`https://api.anthropic.com${req.url}`, {
+                        method: req.method,
+                        headers: upstreamHeaders,
+                        body: req.method === "GET" || req.method === "HEAD"
+                            ? undefined
+                            : bodyBuf,
+                        dispatcher: upstreamDispatcher,
+                    });
+                    const respHeaders = {};
+                    upstreamResp.headers.forEach((v, k) => {
+                        const lower = k.toLowerCase();
+                        if (lower === "content-encoding" ||
+                            lower === "content-length" ||
+                            lower === "transfer-encoding")
+                            return;
+                        respHeaders[k] = v;
+                    });
+                    res.writeHead(upstreamResp.status, respHeaders);
+                    if (upstreamResp.body) {
+                        const reader = upstreamResp.body.getReader();
+                        while (true) {
+                            const { done: rDone, value } = await reader.read();
+                            if (rDone)
+                                break;
+                            res.write(Buffer.from(value));
+                        }
+                    }
+                    res.end();
+                }
+                catch (err) {
+                    try {
+                        res.writeHead(502);
+                        res.end();
+                    }
+                    catch {
+                        // socket already closed
+                    }
+                    // Upstream proxy failure on the bootstrap request is fatal —
+                    // without a 2xx back, claude CLI won't finish and we'd block
+                    // here until timeout. Surface it now.
+                    if (!resolved && !capturedFp) {
+                        resolved = true;
+                        clearTimeout(timer);
+                        cleanup();
+                        reject(new Error(`upstream api.anthropic.com request failed: ${err.message}`));
+                        return;
+                    }
+                }
+                // Resolve once we've both captured AND forwarded the response.
+                if (capturedFp && !resolved) {
+                    resolved = true;
+                    clearTimeout(timer);
+                    cleanup();
+                    resolve(capturedFp);
+                }
+            });
+        });
+        server.on("error", (err) => {
+            if (resolved)
+                return;
+            resolved = true;
+            clearTimeout(timer);
+            cleanup();
+            reject(new Error(`bootstrap proxy server error: ${err.message}`));
+        });
+        server.listen(0, "127.0.0.1", () => {
+            const addr = server.address();
+            if (!addr || typeof addr === "string") {
+                if (resolved)
+                    return;
+                resolved = true;
+                clearTimeout(timer);
+                cleanup();
+                reject(new Error("failed to bind capture proxy"));
+                return;
+            }
+            const port = addr.port;
+            // Launch `claude -p "hi"` with env pointing at us. No shell on
+            // POSIX — spawn walks PATH itself.
+            claudeChild = spawn("claude", ["-p", "hi"], {
+                env: {
+                    ...process.env,
+                    ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`,
+                },
+                stdio: "ignore",
+                shell: process.platform === "win32",
+            });
+            claudeChild.on("error", (err) => {
+                if (resolved)
+                    return;
+                resolved = true;
+                clearTimeout(timer);
+                cleanup();
+                reject(new Error(`failed to spawn claude: ${err.message} (is the claude CLI installed and in PATH?)`));
+            });
+            claudeChild.on("exit", (code) => {
+                // Give the HTTP handler a short moment to finish writing the
+                // fingerprint after claude's subprocess exits. If we still don't
+                // have a fingerprint after that, reject with a useful error.
+                setTimeout(() => {
+                    if (capturedFp || resolved)
+                        return;
+                    resolved = true;
+                    clearTimeout(timer);
+                    cleanup();
+                    reject(new Error(`claude -p hi exited with code ${code ?? "unknown"} before sending a /v1/messages request ` +
+                        `(is your claude CLI logged in? try: claude -p hi)`));
+                }, 500);
+            });
+        });
+    });
+}
