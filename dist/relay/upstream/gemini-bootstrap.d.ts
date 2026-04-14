@@ -1,25 +1,15 @@
 /**
  * Programmatic Gemini fingerprint capture.
  *
- * Mirrors scripts/capture-gemini-request.mjs but runs inline so the
- * setup wizard can bootstrap ~/.clawmoney/gemini-fingerprint.json
- * without the two-terminal dance.
+ * Spawns the existing scripts/capture-gemini-request.mjs as a
+ * subprocess and runs `gemini -p hi` against it, rather than
+ * reimplementing the proxy in TypeScript. The TS port I tried
+ * first timed out at 25s even though the mjs script captures in
+ * ~4s on the same machine — the mjs path is proven and reused
+ * code, so keep the pattern consistent with codex-bootstrap.
  *
- * Flow:
- *   1. Listen on a random localhost port.
- *   2. Spawn `gemini -p "hi"` with CODE_ASSIST_ENDPOINT pointing at us.
- *   3. When the first POST hits a /v1internal:generateContent (or
- *      similar) path, extract project_id / user_agent / cli_version /
- *      x_goog_api_client from the body + headers, persist to
- *      ~/.clawmoney/gemini-fingerprint.json, and forward the request
- *      to cloudcode-pa.googleapis.com so the gemini CLI still sees a
- *      valid response.
- *   4. Clean up proxy server + gemini subprocess.
- *
- * Note: the :loadCodeAssist bootstrap request that Gemini CLI fires
- * first carries only `{metadata}` without a project — we skip it and
- * wait for a subsequent v1internal request that actually carries a
- * project field. Mirrors the mjs script's extractFingerprint guard.
+ * Note: the mjs script hardcodes port 8789. A collision surfaces
+ * as a spawn error we forward to the caller.
  */
 export interface GeminiFingerprint {
     project_id: string;
