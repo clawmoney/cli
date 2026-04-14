@@ -344,6 +344,7 @@ interface ProviderStatus {
   price_input_per_m?: number;
   price_output_per_m?: number;
   created_at?: string;
+  quarantine_reason?: string | null;
   detail?: string;
 }
 
@@ -437,14 +438,20 @@ export async function relayStatusCommand(): Promise<void> {
     );
 
     // Per-provider rows — compact table with status/cli/model/load.
-    const header = `  ${"STATUS".padEnd(9)} ${"CLI".padEnd(12)} ${"MODEL".padEnd(30)} ${"LOAD".padEnd(8)} ${"EARNED".padEnd(10)}`;
+    // QUARANTINED rows get a follow-up indented line showing the
+    // expected/got mismatch reason so the operator knows exactly what
+    // to fix — the WS notice also logs this when it first happens,
+    // but `relay status` is the after-the-fact checkpoint.
+    const header = `  ${"STATUS".padEnd(12)} ${"CLI".padEnd(12)} ${"MODEL".padEnd(30)} ${"LOAD".padEnd(8)} ${"EARNED".padEnd(10)}`;
     console.log(chalk.bold(header));
-    console.log(chalk.dim("  " + "─".repeat(75)));
+    console.log(chalk.dim("  " + "─".repeat(78)));
     for (const p of providers) {
-      const statusRaw = (p.status ?? "-").padEnd(9);
+      const statusRaw = (p.status ?? "-").padEnd(12);
       const statusColored =
         p.status === "online"
           ? chalk.green(statusRaw)
+          : p.status === "quarantined"
+          ? chalk.red(statusRaw)
           : p.status === "offline"
           ? chalk.dim(statusRaw)
           : chalk.yellow(statusRaw);
@@ -453,6 +460,12 @@ export async function relayStatusCommand(): Promise<void> {
       const load = `${p.current_load ?? 0}/${p.concurrency ?? "-"}`.padEnd(8);
       const earned = `$${(p.total_earned_usd ?? 0).toFixed(2)}`.padEnd(10);
       console.log(`  ${statusColored} ${cli} ${model} ${load} ${earned}`);
+      if (p.status === "quarantined" && p.quarantine_reason) {
+        console.log(
+          chalk.red(`    ↳ ${p.quarantine_reason}`) +
+            chalk.dim("  (fix: restart daemon after correcting the subscription/registration)")
+        );
+      }
     }
 
     console.log("");

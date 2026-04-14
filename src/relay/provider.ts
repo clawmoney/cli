@@ -533,6 +533,25 @@ export function runRelayProvider(cliOverride?: string): void {
         logger.error(`Server error: ${event.message}`);
         break;
 
+      case "relay_notice":
+        // Loud WARN for the human operator. Quarantine notices are the
+        // most important kind — they mean buyers are going to stop
+        // seeing this provider until the daemon is restarted, so we
+        // don't want them buried in the log.
+        logger.warn(
+          `[NOTICE ${event.notice_type}] ${event.message}`
+        );
+        if (
+          event.notice_type === "model_mismatch_quarantine" &&
+          event.expected_model &&
+          event.got_model
+        ) {
+          logger.warn(
+            `  expected=${event.expected_model}  got=${event.got_model}  cli=${event.cli_type ?? "?"}`
+          );
+        }
+        break;
+
       default:
         logger.warn("Unknown event:", event);
     }

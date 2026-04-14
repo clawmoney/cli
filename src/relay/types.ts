@@ -49,10 +49,24 @@ export interface RelayErrorEvent {
   message: string;
 }
 
+// One-way notice pushed by the Hub when something needs the provider's
+// attention — today only "model_mismatch_quarantine" is defined. The
+// daemon logs a WARN with the full message so the human operator sees
+// it without having to poll /providers/me.
+export interface RelayNoticeEvent {
+  event: "relay_notice";
+  notice_type: string;       // "model_mismatch_quarantine"
+  cli_type?: string;
+  expected_model?: string;
+  got_model?: string;
+  message: string;
+}
+
 export type RelayIncomingEvent =
   | RelayRequest
   | RelayConnectedEvent
-  | RelayErrorEvent;
+  | RelayErrorEvent
+  | RelayNoticeEvent;
 
 // ── Response sent back to server ──
 
