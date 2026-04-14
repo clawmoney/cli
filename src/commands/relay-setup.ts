@@ -278,102 +278,76 @@ export async function relaySetupCommand(): Promise<void> {
 
   const selectedClis = familyChoice as string[];
 
-  // Per-cli inline fingerprint bootstrap helper. Called from Step 3
-  // right after the "cli: N models" line so the capture flow is
-  // visually grouped with its owning cli family.
+  // Parallel fingerprint bootstrap helper. Called at the END of
+  // Step 3 after all "cli: N models" lines are printed, so the
+  // wizard's visual grouping stays intact while the actual captures
+  // run concurrently.
   //
-  // The daemon needs a fingerprint file per cli_type
-  // (~/.clawmoney/<cli>-fingerprint.json) to mimic the real CLI's
-  // device identity on every upstream request. Without it, the
-  // daemon fails at execution time and buyers see 502s. We
-  // previously required a manual two-terminal capture dance; now
-  // it's inlined into the wizard.
+  // Coverage:
+  //   - claude:      in-process TS proxy (bootstrapClaudeFingerprint)
+  //   - gemini:      in-process TS proxy (bootstrapGeminiFingerprint)
+  //   - codex:       SKIPPED — codex-api.ts falls back to safe
+  //                  defaults when the fingerprint file is missing,
+  //                  so forcing a WS capture dance is unnecessary
+  //                  noise. If per-machine accuracy ever matters,
+  //                  users can still run scripts/capture-codex-request.mjs
+  //                  manually.
+  //   - antigravity: handled by `clawmoney antigravity login`,
+  //                  no fingerprint file involved.
   //
-  // claude uses a plain HTTP proxy (in-process TS), same for gemini.
-  // codex uses the existing mjs capture script via subprocess
-  // because Codex CLI 0.118+ talks WebSocket.
-  //
-  // antigravity is handled separately via `clawmoney antigravity
-  // login` and doesn't need a fingerprint file.
-  const runCliBootstrap = async (cli: string): Promise<void> => {
-    let startLabel: string;
-    let run: () => Promise<string>;
-    let check: () => boolean;
+  // Output: one start line "Configuring providers..." replaced with
+  // "Providers configured (N ok / M failed)" + optional per-cli
+  // failure details below.
+  interface BootstrapResult {
+    cli: string;
+    ok: boolean;
+    summary?: string;
+    error?: string;
+  }
 
-    if (cli === "claude") {
-      if (hasClaudeFingerprint()) return;
-      startLabel = "Capturing Claude fingerprint (runs `claude -p hi` once, ~5-15s)";
-      check = hasClaudeFingerprint;
-      run = async () => {
-        const fp = await bootstrapClaudeFingerprint({ timeoutMs: 45_000 });
-        return `device=${fp.device_id.slice(0, 8)}… cc_version=${fp.cc_version || "?"}`;
-      };
-    } else if (cli === "gemini") {
-      if (hasGeminiFingerprint()) return;
-      startLabel = "Capturing Gemini fingerprint (runs `gemini -p hi` once, ~10-20s)";
-      check = hasGeminiFingerprint;
-      run = async () => {
-        const fp = await bootstrapGeminiFingerprint({ timeoutMs: 60_000 });
-        return `project=${fp.project_id} cli_version=${fp.cli_version}`;
-      };
-    } else if (cli === "codex") {
-      if (hasCodexFingerprint()) return;
-      startLabel = "Capturing Codex fingerprint (runs `codex -p hi` once, ~15-30s)";
-      check = hasCodexFingerprint;
-      run = async () => {
-        await bootstrapCodexFingerprint({ timeoutMs: 60_000 });
-        return "from chatgpt.com WS handshake";
-      };
-    } else {
-      // antigravity or unknown — skip, no fingerprint needed.
-      return;
+  const runAllBootstraps = async (): Promise<BootstrapResult[]> => {
+    const tasks: Array<Promise<BootstrapResult>> = [];
+
+    if (selectedClis.includes("claude") && !hasClaudeFingerprint()) {
+      tasks.push(
+        bootstrapClaudeFingerprint({ timeoutMs: 45_000 })
+          .then((fp) => ({
+            cli: "claude",
+            ok: true,
+            summary: `device=${fp.device_id.slice(0, 8)}… cc_version=${fp.cc_version || "?"}`,
+          }))
+          .catch((err: Error) => ({
+            cli: "claude",
+            ok: false,
+            error: err.message,
+          }))
+      );
     }
 
-    // In-place line replacement: print start line without a newline,
-    // then clear it on completion and print the result over the top.
-    // Uses readline.cursorTo/clearLine for terminal portability.
-    const startLine = `${chalk.gray("◇")}  ${chalk.bold(startLabel)}`;
-    process.stdout.write(startLine);
-
-    const clearStartLine = () => {
-      try {
-        readline.cursorTo(process.stdout, 0);
-        readline.clearLine(process.stdout, 0);
-      } catch {
-        process.stdout.write("\n");
-      }
-    };
-
-    try {
-      const summary = await run();
-      clearStartLine();
-      process.stdout.write(
-        `${chalk.green("◆")}  ${chalk.bold(cli)} fingerprint captured ` +
-          chalk.dim(`(${summary})`) +
-          "\n"
-      );
-    } catch (err) {
-      clearStartLine();
-      process.stdout.write(
-        `${chalk.yellow("⚠")}  ${chalk.bold(cli)} fingerprint capture failed: ${(err as Error).message}\n`
-      );
-      log.message(
-        chalk.dim(
-          `${cli} providers will be registered but the daemon won't be able ` +
-            "to serve them until the fingerprint is bootstrapped. " +
-            `Make sure \`${cli}\` is installed and logged in, then re-run setup.`
-        )
+    if (selectedClis.includes("gemini") && !hasGeminiFingerprint()) {
+      // Shorter timeout on gemini — recent CLI versions are flaky
+      // under our subprocess-intercept approach. 25s is enough for
+      // a working capture; beyond that we fall through to the
+      // manual instruction path cleanly.
+      tasks.push(
+        bootstrapGeminiFingerprint({ timeoutMs: 25_000 })
+          .then((fp) => ({
+            cli: "gemini",
+            ok: true,
+            summary: `project=${fp.project_id} cli_version=${fp.cli_version}`,
+          }))
+          .catch((err: Error) => ({
+            cli: "gemini",
+            ok: false,
+            error: err.message,
+          }))
       );
     }
-    // Defensive: if the bootstrap somehow resolved without writing
-    // the file, warn so the user isn't surprised later.
-    if (!check()) {
-      log.message(
-        chalk.dim(
-          `(${cli} fingerprint file still missing — daemon preflight will fail for this cli)`
-        )
-      );
-    }
+
+    // Codex intentionally omitted — codex-api.ts has safe defaults.
+
+    if (tasks.length === 0) return [];
+    return Promise.all(tasks);
   };
 
   // ── Step 3: auto-register recommended models per family ──
@@ -408,11 +382,6 @@ export async function relaySetupCommand(): Promise<void> {
       `${chalk.bold(cli)}: ${recommended.length} models ${chalk.dim("— " + recommended.join(", "))}`
     );
 
-    // Bootstrap the fingerprint for this cli right after its model
-    // line so the ◆ "fingerprint captured" message sits visually
-    // under its owning family (claude / codex / gemini / antigravity).
-    await runCliBootstrap(cli);
-
     for (const model of recommended) {
       const p = API_PRICES[model];
       registrations.push({
@@ -427,6 +396,69 @@ export async function relaySetupCommand(): Promise<void> {
   if (registrations.length === 0) {
     cancel("No models selected — nothing to register");
     process.exit(0);
+  }
+
+  // ── Step 3b: parallel fingerprint bootstrap for selected clis ──
+  //
+  // One "Configuring providers..." line that gets overwritten with
+  // the consolidated result. Claude and gemini run concurrently;
+  // codex is skipped (defaults OK); antigravity doesn't use a
+  // fingerprint file.
+  const startLine = `${chalk.gray("◇")}  Configuring providers`;
+  process.stdout.write(startLine);
+  const tickEvery = 500;
+  const ticker = setInterval(() => {
+    process.stdout.write(chalk.dim("."));
+  }, tickEvery);
+
+  const results = await runAllBootstraps();
+
+  clearInterval(ticker);
+  try {
+    readline.cursorTo(process.stdout, 0);
+    readline.clearLine(process.stdout, 0);
+  } catch {
+    process.stdout.write("\n");
+  }
+
+  if (results.length === 0) {
+    // No bootstraps needed — everything was already in place.
+    process.stdout.write(
+      `${chalk.green("◆")}  Providers configured ${chalk.dim("(fingerprints already in place)")}\n`
+    );
+  } else {
+    const okCount = results.filter((r) => r.ok).length;
+    const failCount = results.length - okCount;
+    if (failCount === 0) {
+      process.stdout.write(
+        `${chalk.green("◆")}  Providers configured ` +
+          chalk.dim(
+            `(${okCount} fingerprint${okCount === 1 ? "" : "s"} captured: ${results
+              .map((r) => r.cli)
+              .join(", ")})`
+          ) +
+          "\n"
+      );
+    } else {
+      process.stdout.write(
+        `${chalk.yellow("⚠")}  Providers configured with warnings ` +
+          chalk.dim(`(${okCount} ok / ${failCount} failed)`) +
+          "\n"
+      );
+      for (const r of results) {
+        if (r.ok) continue;
+        log.warn(
+          `${chalk.bold(r.cli)} fingerprint capture failed: ${r.error ?? "unknown"}`
+        );
+        log.message(
+          chalk.dim(
+            `${r.cli} providers will be registered but the daemon won't serve them until you ` +
+              `run \`node $(npm root -g)/clawmoney/scripts/capture-${r.cli}-request.mjs\` in one terminal ` +
+              `and \`<CLI env vars> ${r.cli} -p hi\` in another.`
+          )
+        );
+      }
+    }
   }
 
   // ── Step 4: per-provider daily quota share ──
