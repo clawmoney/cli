@@ -221,15 +221,38 @@ export async function relaySetupCommand() {
     // Only claude is wired up for now; codex/gemini will follow the
     // same pattern.
     if (selectedClis.includes("claude") && !hasClaudeFingerprint()) {
-        const bootSpin = spinner();
-        bootSpin.start("Capturing Claude fingerprint (runs `claude -p hi` once, ~5-15s)");
+        // Spinner animation only works cleanly on real TTYs where `\r`
+        // cursor-return is honored. Claude Code's bash tool, CI pipes,
+        // and `script`-style wrappers render each spinner frame as a
+        // new line, which stacks 100+ frames over a 10-15s bootstrap.
+        // Fall back to static log steps in those contexts.
+        const isTty = Boolean(process.stdout.isTTY);
+        const bootSpin = isTty ? spinner() : null;
+        if (bootSpin) {
+            bootSpin.start("Capturing Claude fingerprint (runs `claude -p hi` once, ~5-15s)");
+        }
+        else {
+            log.step("Capturing Claude fingerprint (runs `claude -p hi` once, ~5-15s)...");
+        }
         try {
             const fp = await bootstrapClaudeFingerprint({ timeoutMs: 45_000 });
-            bootSpin.stop(`${chalk.green("✓")} Claude fingerprint captured ` +
-                chalk.dim(`(device=${fp.device_id.slice(0, 8)}… cc_version=${fp.cc_version || "?"})`));
+            const successMsg = `Claude fingerprint captured ` +
+                chalk.dim(`(device=${fp.device_id.slice(0, 8)}… cc_version=${fp.cc_version || "?"})`);
+            if (bootSpin) {
+                bootSpin.stop(`${chalk.green("✓")} ${successMsg}`);
+            }
+            else {
+                log.success(successMsg);
+            }
         }
         catch (err) {
-            bootSpin.stop(chalk.yellow(`⚠ Claude fingerprint capture failed: ${err.message}`));
+            const errMsg = `Claude fingerprint capture failed: ${err.message}`;
+            if (bootSpin) {
+                bootSpin.stop(chalk.yellow(`⚠ ${errMsg}`));
+            }
+            else {
+                log.warn(errMsg);
+            }
             log.message(chalk.dim("Claude providers will be registered but the daemon won't be able " +
                 "to serve them until you bootstrap the fingerprint. " +
                 "Make sure `claude` is installed and logged in, then re-run setup."));
