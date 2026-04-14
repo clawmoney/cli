@@ -168,7 +168,15 @@ export async function setupCommand() {
             return;
         }
         const checkData = checkResp.data;
-        if (!checkData.exists || checkData.status === 'UNCLAIMED') {
+        // Backend returns agent details nested under `agent` now; fall back
+        // to legacy top-level fields so an older backend still works.
+        // Status is normalized to uppercase so case differences between
+        // backend builds (active vs ACTIVE) don't trip the branch select.
+        const agentInfo = checkData.agent ?? {};
+        const agentStatus = (agentInfo.status ?? checkData.status ?? '').toUpperCase();
+        const agentSlug = agentInfo.slug ?? checkData.slug;
+        const agentIdFromCheck = agentInfo.id ?? checkData.agent_id;
+        if (!checkData.exists || agentStatus === 'UNCLAIMED') {
             // Step 6: Register new agent
             agentSpinner.text = 'Registering agent...';
             const registerBody = { email };
@@ -191,9 +199,9 @@ export async function setupCommand() {
                 wallet_address: walletAddress || undefined,
             });
         }
-        else if (checkData.status === 'ACTIVE') {
+        else if (agentStatus === 'ACTIVE') {
             // Step 7: Login existing agent via OTP
-            agentSpinner.info(`Agent found: ${checkData.slug || checkData.agent_id}`);
+            agentSpinner.info(`Agent found: ${agentSlug || agentIdFromCheck}`);
             const loginSpinner2 = ora('Sending login OTP...').start();
             const loginResp = await apiPost('/api/v1/claw-agents/login', { email });
             if (!loginResp.ok) {
@@ -225,7 +233,7 @@ export async function setupCommand() {
             });
         }
         else {
-            agentSpinner.warn(`Agent status: ${checkData.status}`);
+            agentSpinner.warn(`Agent status: ${agentStatus || '(unknown)'}`);
             console.log(chalk.yellow('Please contact support if you need help.'));
             return;
         }

@@ -6,8 +6,23 @@ import { loadConfig, saveConfig, getConfigPath } from '../utils/config.js';
 import { prompt } from '../utils/prompt.js';
 import { execSync } from 'node:child_process';
 
+// The /claw-agents/check-email endpoint has two shapes in the wild:
+//   - legacy:  {exists, status, agent_id, slug}
+//   - current: {exists, agent: {id, name, slug, status, ...}}
+// The current shape is what bnbot-api actually returns today. Keep
+// the legacy top-level fields as optional so an older backend doesn't
+// break the CLI either.
+interface CheckEmailAgent {
+  id?: string;
+  name?: string;
+  slug?: string;
+  status?: string;
+}
+
 interface CheckEmailResponse {
   exists: boolean;
+  agent?: CheckEmailAgent;
+  // legacy top-level fields
   status?: string;
   agent_id?: string;
   slug?: string;
@@ -200,7 +215,16 @@ export async function setupCommand(): Promise<void> {
 
     const checkData = checkResp.data;
 
-    if (!checkData.exists || checkData.status === 'UNCLAIMED') {
+    // Backend returns agent details nested under `agent` now; fall back
+    // to legacy top-level fields so an older backend still works.
+    // Status is normalized to uppercase so case differences between
+    // backend builds (active vs ACTIVE) don't trip the branch select.
+    const agentInfo = checkData.agent ?? {};
+    const agentStatus = (agentInfo.status ?? checkData.status ?? '').toUpperCase();
+    const agentSlug = agentInfo.slug ?? checkData.slug;
+    const agentIdFromCheck = agentInfo.id ?? checkData.agent_id;
+
+    if (!checkData.exists || agentStatus === 'UNCLAIMED') {
       // Step 6: Register new agent
       agentSpinner.text = 'Registering agent...';
 
@@ -230,9 +254,9 @@ export async function setupCommand(): Promise<void> {
         email,
         wallet_address: walletAddress || undefined,
       });
-    } else if (checkData.status === 'ACTIVE') {
+    } else if (agentStatus === 'ACTIVE') {
       // Step 7: Login existing agent via OTP
-      agentSpinner.info(`Agent found: ${checkData.slug || checkData.agent_id}`);
+      agentSpinner.info(`Agent found: ${agentSlug || agentIdFromCheck}`);
 
       const loginSpinner2 = ora('Sending login OTP...').start();
       const loginResp = await apiPost<LoginResponse>(
@@ -276,7 +300,7 @@ export async function setupCommand(): Promise<void> {
         wallet_address: walletAddress || undefined,
       });
     } else {
-      agentSpinner.warn(`Agent status: ${checkData.status}`);
+      agentSpinner.warn(`Agent status: ${agentStatus || '(unknown)'}`);
       console.log(chalk.yellow('Please contact support if you need help.'));
       return;
     }
