@@ -276,15 +276,45 @@ export async function bootstrapClaudeFingerprint(opts = {}) {
                 return;
             }
             const port = addr.port;
-            // Launch `claude -p "hi"` with env pointing at us. No shell on
-            // POSIX — spawn walks PATH itself.
+            // Build child env: inherit parent's env but strip HTTPS_PROXY
+            // entries so claude doesn't try to tunnel its call to
+            // http://127.0.0.1:<port> through the upstream proxy. Set
+            // NO_PROXY=localhost as belt-and-braces.
+            const childEnv = {
+                ...process.env,
+                ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`,
+                NO_PROXY: "127.0.0.1,localhost",
+                no_proxy: "127.0.0.1,localhost",
+            };
+            delete childEnv.HTTPS_PROXY;
+            delete childEnv.https_proxy;
+            delete childEnv.HTTP_PROXY;
+            delete childEnv.http_proxy;
+            delete childEnv.ALL_PROXY;
+            delete childEnv.all_proxy;
+            // Launch `claude -p "hi"` — same command the manual capture
+            // script documents. `-p` is non-interactive print mode; in
+            // recent claude versions it skips the trust dialog for
+            // text-only prompts. We intentionally do NOT pass
+            // --dangerously-skip-permissions — that would silently opt
+            // users into a lower safety setting without consent.
             claudeChild = spawn("claude", ["-p", "hi"], {
-                env: {
-                    ...process.env,
-                    ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`,
-                },
-                stdio: "ignore",
+                env: childEnv,
+                stdio: ["ignore", "pipe", "pipe"],
                 shell: process.platform === "win32",
+            });
+            // Buffer stderr so we can surface it in the error message if
+            // claude bails out. stdout is dropped — we don't care about
+            // the content, only about the /v1/messages request it made.
+            let stderrBuf = "";
+            claudeChild.stderr?.on("data", (chunk) => {
+                stderrBuf += chunk.toString();
+                if (stderrBuf.length > 4_000) {
+                    stderrBuf = stderrBuf.slice(-4_000);
+                }
+            });
+            claudeChild.stdout?.on("data", () => {
+                // drain, ignore
             });
             claudeChild.on("error", (err) => {
                 if (resolved)
@@ -304,8 +334,9 @@ export async function bootstrapClaudeFingerprint(opts = {}) {
                     resolved = true;
                     clearTimeout(timer);
                     cleanup();
-                    reject(new Error(`claude -p hi exited with code ${code ?? "unknown"} before sending a /v1/messages request ` +
-                        `(is your claude CLI logged in? try: claude -p hi)`));
+                    const tail = stderrBuf.trim().slice(-400);
+                    const detail = tail ? ` stderr: ${tail}` : "";
+                    reject(new Error(`claude -p hi exited with code ${code ?? "unknown"} before sending a /v1/messages request.${detail}`));
                 }, 500);
             });
         });
