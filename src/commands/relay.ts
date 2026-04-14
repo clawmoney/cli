@@ -191,15 +191,46 @@ export async function relayRegisterCommand(options: RegisterOptions): Promise<vo
 export async function relayStartCommand(options: { cli?: string }): Promise<void> {
   const config = requireConfig();
 
-  // Check if already running
+  // If an old daemon is still running, auto-stop and replace it instead
+  // of bailing with "already running, use stop first". Previously re-
+  // running `clawmoney relay setup` (or `relay start`) with a previous
+  // daemon alive produced a confusing error at the last step of an
+  // otherwise-successful flow. SIGTERM → poll for exit (3s) →
+  // SIGKILL on stubborn processes → clean PID file → start fresh.
   const existingPid = readRelayPid();
   if (existingPid && isRelayPidAlive(existingPid)) {
-    console.log(
-      chalk.yellow(
-        `Relay Provider is already running (PID ${existingPid}). Use "clawmoney relay stop" first.`
-      )
-    );
-    return;
+    const stopSpin = ora(
+      `Replacing existing daemon (PID ${existingPid})...`
+    ).start();
+    try {
+      process.kill(existingPid, "SIGTERM");
+    } catch {
+      // Process may have exited between readPid and kill — ignore.
+    }
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      if (!isRelayPidAlive(existingPid)) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    if (isRelayPidAlive(existingPid)) {
+      try {
+        process.kill(existingPid, "SIGKILL");
+      } catch {
+        // ignore
+      }
+      await new Promise((r) => setTimeout(r, 200));
+      stopSpin.warn(
+        chalk.yellow(
+          `Old daemon (PID ${existingPid}) didn't exit in 3s — forced SIGKILL`
+        )
+      );
+    } else {
+      stopSpin.succeed(chalk.dim(`Stopped old daemon (PID ${existingPid})`));
+    }
+    // The graceful-shutdown path in the daemon removes its own PID
+    // file, but SIGKILL leaves a stale one. Make sure we start from
+    // a clean slate either way.
+    removeRelayPid();
   }
 
   const spinner = ora("Starting Relay Provider...").start();
