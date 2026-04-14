@@ -10,6 +10,8 @@ import { loadConfig, requireConfig } from "../utils/config.js";
 import { setupCommand } from "./setup.js";
 import { API_PRICES, PLATFORM_FEE } from "../relay/pricing.js";
 import { hasClaudeFingerprint, bootstrapClaudeFingerprint, } from "../relay/upstream/claude-bootstrap.js";
+import { hasGeminiFingerprint, bootstrapGeminiFingerprint, } from "../relay/upstream/gemini-bootstrap.js";
+import { hasCodexFingerprint, bootstrapCodexFingerprint, } from "../relay/upstream/codex-bootstrap.js";
 // ── Per-cli_type model catalogs ──
 //
 // `RECOMMENDED_MODELS` is what gets registered when the user picks "all
@@ -205,33 +207,65 @@ export async function relaySetupCommand() {
         process.exit(0);
     }
     const selectedClis = familyChoice;
-    // ── Step 2b: bootstrap per-cli fingerprints if missing ──
+    // Per-cli inline fingerprint bootstrap helper. Called from Step 3
+    // right after the "cli: N models" line so the capture flow is
+    // visually grouped with its owning cli family.
     //
-    // Claude / Codex / Gemini daemons each need a fingerprint file
+    // The daemon needs a fingerprint file per cli_type
     // (~/.clawmoney/<cli>-fingerprint.json) to mimic the real CLI's
-    // device_id + account_uuid when relaying requests. Without it,
-    // every relay request fails at execution time and the buyer sees
-    // 502s.
+    // device identity on every upstream request. Without it, the
+    // daemon fails at execution time and buyers see 502s. We
+    // previously required a manual two-terminal capture dance; now
+    // it's inlined into the wizard.
     //
-    // Previously users had to run a two-terminal capture dance
-    // manually. Now we do it inline: start a local proxy, invoke
-    // `claude -p hi` (etc) against it, intercept the first
-    // /v1/messages request, extract the fingerprint, forward the
-    // request upstream so the CLI call still succeeds.
+    // claude uses a plain HTTP proxy (in-process TS), same for gemini.
+    // codex uses the existing mjs capture script via subprocess
+    // because Codex CLI 0.118+ talks WebSocket.
     //
-    // Only claude is wired up for now; codex/gemini will follow the
-    // same pattern.
-    if (selectedClis.includes("claude") && !hasClaudeFingerprint()) {
-        // In-place line replacement: write a "Capturing…" start line
-        // without a trailing newline, then on completion clear that
-        // line and write the final success / failure line over it.
-        // Uses readline.cursorTo/clearLine rather than raw \r because
-        // some terminal environments don't process \r as cursor-return
-        // (see earlier iteration history — the clack spinner accumulated
-        // frames in Jack's terminal). Falls back cleanly: if the clear
-        // fails, the worst case is two lines instead of one.
-        const startLine = `${chalk.gray("◇")}  Capturing Claude fingerprint ` +
-            chalk.dim("(runs `claude -p hi` once, ~5-15s)");
+    // antigravity is handled separately via `clawmoney antigravity
+    // login` and doesn't need a fingerprint file.
+    const runCliBootstrap = async (cli) => {
+        let startLabel;
+        let run;
+        let check;
+        if (cli === "claude") {
+            if (hasClaudeFingerprint())
+                return;
+            startLabel = "Capturing Claude fingerprint (runs `claude -p hi` once, ~5-15s)";
+            check = hasClaudeFingerprint;
+            run = async () => {
+                const fp = await bootstrapClaudeFingerprint({ timeoutMs: 45_000 });
+                return `device=${fp.device_id.slice(0, 8)}… cc_version=${fp.cc_version || "?"}`;
+            };
+        }
+        else if (cli === "gemini") {
+            if (hasGeminiFingerprint())
+                return;
+            startLabel = "Capturing Gemini fingerprint (runs `gemini -p hi` once, ~10-20s)";
+            check = hasGeminiFingerprint;
+            run = async () => {
+                const fp = await bootstrapGeminiFingerprint({ timeoutMs: 60_000 });
+                return `project=${fp.project_id} cli_version=${fp.cli_version}`;
+            };
+        }
+        else if (cli === "codex") {
+            if (hasCodexFingerprint())
+                return;
+            startLabel = "Capturing Codex fingerprint (runs `codex -p hi` once, ~15-30s)";
+            check = hasCodexFingerprint;
+            run = async () => {
+                await bootstrapCodexFingerprint({ timeoutMs: 60_000 });
+                return "from chatgpt.com WS handshake";
+            };
+        }
+        else {
+            // antigravity or unknown — skip, no fingerprint needed.
+            return;
+        }
+        // In-place line replacement: print start line without a newline,
+        // then clear it on completion and print the result over the top.
+        // Uses readline.cursorTo/clearLine for terminal portability.
+        const startLine = `${chalk.gray("◇")}  ${chalk.bold(startLabel)}`;
         process.stdout.write(startLine);
         const clearStartLine = () => {
             try {
@@ -239,26 +273,29 @@ export async function relaySetupCommand() {
                 readline.clearLine(process.stdout, 0);
             }
             catch {
-                // non-TTY — just move to a new line and let the result
-                // print underneath the start line.
                 process.stdout.write("\n");
             }
         };
         try {
-            const fp = await bootstrapClaudeFingerprint({ timeoutMs: 45_000 });
+            const summary = await run();
             clearStartLine();
-            process.stdout.write(`${chalk.green("◆")}  Claude fingerprint captured ` +
-                chalk.dim(`(device=${fp.device_id.slice(0, 8)}… cc_version=${fp.cc_version || "?"})`) +
+            process.stdout.write(`${chalk.green("◆")}  ${chalk.bold(cli)} fingerprint captured ` +
+                chalk.dim(`(${summary})`) +
                 "\n");
         }
         catch (err) {
             clearStartLine();
-            process.stdout.write(`${chalk.yellow("⚠")}  Claude fingerprint capture failed: ${err.message}\n`);
-            log.message(chalk.dim("Claude providers will be registered but the daemon won't be able " +
-                "to serve them until you bootstrap the fingerprint. " +
-                "Make sure `claude` is installed and logged in, then re-run setup."));
+            process.stdout.write(`${chalk.yellow("⚠")}  ${chalk.bold(cli)} fingerprint capture failed: ${err.message}\n`);
+            log.message(chalk.dim(`${cli} providers will be registered but the daemon won't be able ` +
+                "to serve them until the fingerprint is bootstrapped. " +
+                `Make sure \`${cli}\` is installed and logged in, then re-run setup.`));
         }
-    }
+        // Defensive: if the bootstrap somehow resolved without writing
+        // the file, warn so the user isn't surprised later.
+        if (!check()) {
+            log.message(chalk.dim(`(${cli} fingerprint file still missing — daemon preflight will fail for this cli)`));
+        }
+    };
     const registrations = [];
     for (const cli of selectedClis) {
         const allModels = modelsForCli(cli);
@@ -268,6 +305,10 @@ export async function relaySetupCommand() {
             continue;
         }
         log.success(`${chalk.bold(cli)}: ${recommended.length} models ${chalk.dim("— " + recommended.join(", "))}`);
+        // Bootstrap the fingerprint for this cli right after its model
+        // line so the ◆ "fingerprint captured" message sits visually
+        // under its owning family (claude / codex / gemini / antigravity).
+        await runCliBootstrap(cli);
         for (const model of recommended) {
             const p = API_PRICES[model];
             registrations.push({
