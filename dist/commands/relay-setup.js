@@ -148,7 +148,8 @@ export async function relaySetupCommand() {
     // the first-time-user path.
     let existing = loadConfig();
     if (!existing) {
-        console.log(chalk.yellow("\n  You're not logged in yet — running `clawmoney setup` first.\n"));
+        // setup prints its own "ClawMoney Agent Setup" header so the
+        // handoff is self-explanatory — no extra narration needed.
         await setupCommand();
         existing = loadConfig();
         if (!existing) {
