@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import ora from 'ora';
-import { awalExec } from '../utils/awal.js';
+import { awalExec, awalExecSafe } from '../utils/awal.js';
 import { apiGet } from '../utils/api.js';
 import { loadConfig, saveConfig } from '../utils/config.js';
 // Base mainnet USDC contract + balanceOf(address) ABI selector.
@@ -43,7 +43,8 @@ async function readBaseUsdcBalance(walletAddress, timeoutMs = 8000) {
 export async function walletStatusCommand() {
     const spinner = ora('Getting wallet status...').start();
     try {
-        const result = await awalExec(['status']);
+        // Read-only, safe to auto-retry after killing a wedged awal.
+        const result = await awalExecSafe(['status'], { timeoutMs: 8_000 });
         spinner.succeed('Wallet Status');
         console.log('');
         const data = result.data;
@@ -117,10 +118,11 @@ export async function walletBalanceCommand() {
         }
     }
     if (!walletAddress) {
-        // Last resort: cold-start awal. Capped at 5s so a wedged wallet
-        // daemon can't block the command forever.
+        // Last resort: cold-start awal. Uses awalExecSafe so a wedged
+        // Electron is automatically killed + retried before surfacing
+        // the error. Capped at 6s per attempt.
         try {
-            const awalResult = await withTimeout(awalExec(['address']), 5_000, 'awal address');
+            const awalResult = await awalExecSafe(['address'], { timeoutMs: 6_000 });
             const data = awalResult.data;
             if (typeof data?.address === 'string' && data.address) {
                 walletAddress = data.address;
@@ -187,7 +189,8 @@ export async function walletBalanceCommand() {
 export async function walletAddressCommand() {
     const spinner = ora('Getting wallet address...').start();
     try {
-        const result = await awalExec(['address']);
+        // Read-only, safe to auto-retry on awal wedge.
+        const result = await awalExecSafe(['address'], { timeoutMs: 8_000 });
         spinner.succeed('Wallet Address');
         console.log('');
         const data = result.data;

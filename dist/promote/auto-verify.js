@@ -1,5 +1,5 @@
 import { apiGet, apiPost } from "../utils/api.js";
-import { awalExec } from "../utils/awal.js";
+import { awalExec, awalExecSafe } from "../utils/awal.js";
 import { requireConfig } from "../utils/config.js";
 const POLL_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
 const MAX_PER_CYCLE = 3;
@@ -11,7 +11,9 @@ function log(msg) {
 }
 async function getUsdcBalance() {
     try {
-        const result = await awalExec(["balance"]);
+        // Read-only balance check inside a long-running daemon loop —
+        // must auto-recover if awal wedges during the day.
+        const result = await awalExecSafe(["balance"], { timeoutMs: 10_000 });
         const base = result.data.base;
         const balances = base?.balances;
         const usdc = balances?.USDC;

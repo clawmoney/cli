@@ -98,3 +98,67 @@ export async function isAwalAvailable() {
         return false;
     }
 }
+/**
+ * Kill a wedged awal server process using the pattern documented in
+ * clawmoney-skill's SKILL.md. Reads the pid from `awal status --json`
+ * and SIGKILLs it. Safe to call even when awal isn't running (the
+ * inner command fails, kill -9 gets nothing, we swallow both).
+ *
+ * awal's Electron "Payments MCP" wrapper occasionally wedges on
+ * macOS (GPU render hang, stdin/stdout pipe full, or upstream
+ * Coinbase MCP endpoint unreachable). A hard kill lets the next
+ * `awal status` cold-start a fresh process.
+ */
+export async function killAwal() {
+    await new Promise((resolve) => {
+        const child = spawn('sh', [
+            '-c',
+            'kill -9 $(npx awal status --json 2>/dev/null | grep -o \'"pid":[0-9]*\' | grep -o \'[0-9]*\') 2>/dev/null',
+        ], { stdio: 'ignore', shell: false });
+        child.on('exit', () => resolve());
+        child.on('error', () => resolve());
+    });
+    // Give the OS a moment to reclaim the process + named pipes.
+    await new Promise((r) => setTimeout(r, 800));
+}
+/**
+ * Execute an awal command with timeout + one automatic retry on
+ * failure. On the first failure we kill any wedged awal process
+ * (using the SKILL-documented kill pattern) and re-run.
+ *
+ * Safe ONLY for READ operations (status, address, balance, etc).
+ * Do NOT use for writes (send, x402 pay, auth verify) — those
+ * either cost money twice on retry, or consume a single-use OTP
+ * and fail the second time. For writes, use awalExec directly
+ * and let the failure surface to the user.
+ */
+export async function awalExecSafe(args, opts = {}) {
+    const timeoutMs = opts.timeoutMs ?? 10_000;
+    const runWithTimeout = () => new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+            reject(new Error(`awal ${args.join(' ')} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+        awalExec(args).then((v) => {
+            clearTimeout(timer);
+            resolve(v);
+        }, (e) => {
+            clearTimeout(timer);
+            reject(e);
+        });
+    });
+    try {
+        return await runWithTimeout();
+    }
+    catch (firstErr) {
+        // First attempt failed — kill any wedged server and retry once.
+        await killAwal();
+        try {
+            return await runWithTimeout();
+        }
+        catch (secondErr) {
+            // Preserve the first error too — it's usually the more
+            // informative one (the retry typically just times out again).
+            throw new Error(`awal ${args.join(' ')} failed after retry: ${secondErr.message} (initial: ${firstErr.message})`);
+        }
+    }
+}
