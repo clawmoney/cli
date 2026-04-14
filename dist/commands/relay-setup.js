@@ -30,9 +30,24 @@ const RECOMMENDED_MODELS = {
     // Claude Code /model menu: Default(Sonnet 4.6) / Sonnet(1M) / Opus(1M) / Haiku
     // → 3 unique model IDs (Sonnet 1M = same model + context-1m beta)
     claude: ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"],
-    // Codex CLI /model menu: gpt-5.4 (current frontier) / gpt-5.4-mini /
-    // gpt-5.3-codex (Codex-optimized) / gpt-5.2 (long-running pro)
-    codex: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2"],
+    // Codex CLI /model menu (verified April 2026, v0.12x):
+    //   gpt-5.3-codex (default)  — latest frontier agentic coding
+    //   gpt-5.4 (current)        — latest frontier agentic coding
+    //   gpt-5.2-codex            — prior frontier agentic coding
+    //   gpt-5.1-codex-max        — Codex-optimized flagship (deep+fast)
+    //   gpt-5.2                  — latest frontier general model
+    //   gpt-5.1-codex-mini       — cheap/fast/smaller Codex
+    // gpt-5.4-mini is NOT in Codex CLI's menu — ChatGPT's Plus API offers
+    // it but Codex CLI doesn't expose it, so serving it as a Codex-family
+    // provider would never see traffic. Dropped from the recommended list.
+    codex: [
+        "gpt-5.3-codex",
+        "gpt-5.4",
+        "gpt-5.2-codex",
+        "gpt-5.1-codex-max",
+        "gpt-5.2",
+        "gpt-5.1-codex-mini",
+    ],
     // Gemini CLI exposes a long list; mainstream picks are the production-
     // stable 2.5 line (pro + flash) and the latest 3.x preview (pro + flash).
     // Image / thinking variants and lite/customtools are intentionally
@@ -348,18 +363,25 @@ export async function relaySetupCommand() {
     }
     // ── Step 7: prune — implement "pick-what-you-run" semantics ──
     //
-    // setup is meant to be declarative: the cli_types the user just picked
-    // are the complete set of what the daemon should serve. Earlier test
-    // runs that registered different subscriptions (antigravity, gemini,
-    // etc.) would otherwise linger in the DB and get preflighted every
-    // daemon start, confusing the user who just picked claude+codex.
+    // setup is declarative: the (cli_type, model) pairs the user just
+    // picked are the complete set of what the daemon should serve.
+    // Earlier test runs that registered different subscriptions
+    // (antigravity, gemini, etc.) OR stale model versions
+    // (claude-sonnet-4-5 before the recommended list moved to 4-6)
+    // would otherwise linger in the DB and get preflighted every
+    // daemon start.
     //
-    // We only prune AFTER registration succeeds, so a failed batch doesn't
-    // wipe the user's existing state. And we only send the selected
-    // cli_types as keep_cli_types — the backend handles the "delete what's
-    // not in the list" part.
+    // We only prune AFTER registration succeeds, so a failed batch
+    // doesn't wipe the user's existing state. We pass the EXACT
+    // (cli_type, model) pairs from `registrations` so prune is
+    // grain-safe and cleans stale per-model rows too.
     try {
-        const pruneResp = await apiPost("/api/v1/relay/providers/prune", { keep_cli_types: Array.from(new Set(selectedClis)) }, config.api_key);
+        const pruneResp = await apiPost("/api/v1/relay/providers/prune", {
+            keep: registrations.map((r) => ({
+                cli_type: r.cli,
+                model: r.model,
+            })),
+        }, config.api_key);
         if (pruneResp.ok &&
             pruneResp.data?.deleted &&
             pruneResp.data.deleted.length > 0) {
