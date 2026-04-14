@@ -30,14 +30,34 @@ interface RelayProviderRow {
   total_requests?: number;
 }
 
+// Wrap a promise in a hard timeout so a hung awal process can't
+// swallow the whole command. On timeout we surface a specific
+// error string the caller can tell apart from generic spawn errors.
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms}ms`));
+    }, ms);
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      }
+    );
+  });
+}
+
 export async function walletBalanceCommand(): Promise<void> {
   const spinner = ora('Getting wallet balance...').start();
 
   // Kick off both calls in parallel. Relay earnings are loaded from
   // the clawmoney backend per-agent; the on-chain balance is awal's
-  // native `balance` RPC. We don't block on-chain display if relay
-  // fetching fails — the on-chain balance is the authoritative "real
-  // money" view.
+  // native `balance` RPC. Either half is allowed to fail — we print
+  // a dim "(unavailable)" note for that section and keep going.
   const config = loadConfig();
   const relayPromise: Promise<RelayProviderRow[] | null> = config?.api_key
     ? apiGet<RelayProviderRow[]>("/api/v1/relay/providers/me", config.api_key)
@@ -45,29 +65,42 @@ export async function walletBalanceCommand(): Promise<void> {
         .catch(() => null)
     : Promise.resolve(null);
 
-  let awalResult;
+  // 10s is generous — awal balance usually returns in 1-2s. Beyond
+  // that the wallet process is probably wedged and the user wants
+  // the rest of the output immediately.
+  let awalResult: Awaited<ReturnType<typeof awalExec>> | null = null;
+  let awalError: string | null = null;
   try {
-    awalResult = await awalExec(['balance']);
+    awalResult = await withTimeout(awalExec(['balance']), 10_000, 'awal balance');
   } catch (err) {
-    spinner.fail('Failed to get wallet balance');
-    console.error(chalk.red((err as Error).message));
-    return;
+    awalError = (err as Error).message;
   }
 
   const relayRows = await relayPromise;
-  spinner.succeed('Wallet');
+  spinner.stop();
+  console.log('');
+  console.log(chalk.bold('  Wallet'));
   console.log('');
 
   console.log(chalk.bold('  On-chain (awal)'));
-  const data = awalResult.data as Record<string, unknown>;
-  if (typeof data === 'object' && data !== null) {
-    for (const [key, value] of Object.entries(data)) {
-      console.log(`    ${chalk.dim(key + ':').padEnd(22)} ${chalk.green(String(value))}`);
+  if (awalResult) {
+    const data = awalResult.data as Record<string, unknown>;
+    if (typeof data === 'object' && data !== null && Object.keys(data).length > 0) {
+      for (const [key, value] of Object.entries(data)) {
+        console.log(`    ${chalk.dim(key + ':').padEnd(22)} ${chalk.green(String(value))}`);
+      }
+    } else {
+      console.log(`    ${chalk.dim(awalResult.raw || '(empty)')}`);
     }
   } else {
-    console.log(`    ${awalResult.raw}`);
+    console.log(`    ${chalk.yellow('unavailable')} ${chalk.dim('(' + (awalError ?? 'unknown error') + ')')}`);
+    console.log(
+      chalk.dim('    Try:  npx awal status   |   clawmoney wallet status')
+    );
   }
 
+  console.log('');
+  console.log(chalk.bold('  Relay earnings'));
   if (relayRows && relayRows.length > 0) {
     const earned = relayRows.reduce((s, p) => s + (p.total_earned_usd ?? 0), 0);
     const withdrawn = relayRows.reduce(
@@ -79,9 +112,6 @@ export async function walletBalanceCommand(): Promise<void> {
       (s, p) => s + (p.total_requests ?? 0),
       0
     );
-
-    console.log('');
-    console.log(chalk.bold('  Relay earnings'));
     console.log(
       `    ${chalk.dim('Earned:').padEnd(22)} ${chalk.green('$' + earned.toFixed(2))}`
     );
@@ -93,6 +123,10 @@ export async function walletBalanceCommand(): Promise<void> {
         `    (${relayRows.length} provider${relayRows.length === 1 ? "" : "s"} · ${requests} request${requests === 1 ? "" : "s"} served)`
       )
     );
+  } else if (relayRows && relayRows.length === 0) {
+    console.log(`    ${chalk.dim('No providers registered yet. Run `clawmoney relay setup` to start earning.')}`);
+  } else {
+    console.log(`    ${chalk.yellow('unavailable')} ${chalk.dim('(relay backend unreachable)')}`);
   }
 
   console.log('');
