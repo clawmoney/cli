@@ -132,6 +132,11 @@ function loadRelayConfig(cliOverride?: string): RelayProviderConfig {
 
   const relay: RelayProviderSettings = {
     cli_type: cliOverride ?? userRelay.cli_type ?? DEFAULT_RELAY.cli_type,
+    // Pass rate_guard through verbatim. Per-field merging happens
+    // inside each upstream module's configureRateGuard() which
+    // already knows its own defaults — we don't want to double-
+    // default here.
+    rate_guard: userRelay.rate_guard,
     model: userRelay.model ?? DEFAULT_RELAY.model,
     mode: userRelay.mode ?? DEFAULT_RELAY.mode,
     concurrency: userRelay.concurrency ?? DEFAULT_RELAY.concurrency,
