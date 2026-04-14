@@ -1,4 +1,9 @@
 import { spawn } from 'node:child_process';
+// Windows resolves .cmd / .bat launchers only through the shell;
+// POSIX (macOS/Linux) `spawn` walks PATH on its own and prints a
+// DEP0190 deprecation warning when shell:true is combined with
+// argument arrays. Keep shell:true only where we actually need it.
+const USE_SHELL = process.platform === 'win32';
 /**
  * Execute an awal CLI command and parse the JSON output.
  * Always appends --json flag for machine-readable output.
@@ -9,7 +14,7 @@ export async function awalExec(args) {
     return new Promise((resolve, reject) => {
         const child = spawn('npx', ['awal', ...finalArgs], {
             stdio: ['inherit', 'pipe', 'pipe'],
-            shell: true,
+            shell: USE_SHELL,
         });
         let stdout = '';
         let stderr = '';
@@ -64,7 +69,7 @@ export async function awalExecInteractive(args) {
     return new Promise((resolve, reject) => {
         const child = spawn('npx', ['awal', ...finalArgs], {
             stdio: ['inherit', 'pipe', 'pipe'],
-            shell: true,
+            shell: USE_SHELL,
         });
         let stdout = '';
         let stderr = '';
