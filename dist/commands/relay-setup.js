@@ -423,6 +423,7 @@ export async function relaySetupCommand() {
     log.message(chalk.dim("Next:") +
         "\n" +
         `  ${chalk.cyan("clawmoney relay status")}   daemon + provider list\n` +
+        `  ${chalk.cyan("clawmoney relay logs")}     tail daemon log\n` +
         `  ${chalk.cyan("clawmoney wallet balance")} on-chain + relay earnings\n` +
         `  ${chalk.cyan("clawmoney relay stop")}     stop daemon`);
     const cliLabel = uniqueClis.length === 1
