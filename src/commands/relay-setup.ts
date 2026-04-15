@@ -58,23 +58,23 @@ const RECOMMENDED_MODELS: Record<string, string[]> = {
   // → 3 unique model IDs (Sonnet 1M = same model + context-1m beta)
   claude: ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"],
 
-  // Codex CLI /model menu (verified April 2026, v0.12x):
-  //   gpt-5.3-codex (default)  — latest frontier agentic coding
-  //   gpt-5.4 (current)        — latest frontier agentic coding
-  //   gpt-5.2-codex            — prior frontier agentic coding
-  //   gpt-5.1-codex-max        — Codex-optimized flagship (deep+fast)
-  //   gpt-5.2                  — latest frontier general model
-  //   gpt-5.1-codex-mini       — cheap/fast/smaller Codex
-  // gpt-5.4-mini is NOT in Codex CLI's menu — ChatGPT's Plus API offers
-  // it but Codex CLI doesn't expose it, so serving it as a Codex-family
-  // provider would never see traffic. Dropped from the recommended list.
+  // Codex CLI /model menu for ChatGPT sign-in (post 2026-04-14 cleanup):
+  //   gpt-5.4             — latest frontier agentic coding (current default)
+  //   gpt-5.4-mini        — smaller frontier agentic coding
+  //   gpt-5.3-codex       — industry-leading Codex-optimized model
+  //   gpt-5.2             — previous general-purpose model
+  //   gpt-5.3-codex-spark — Pro-only preview, excluded from auto-register
+  // OpenAI removed gpt-5.2-codex / gpt-5.1-codex-max / gpt-5.1-codex-mini /
+  // gpt-5.1-codex / gpt-5.1 / gpt-5 from the ChatGPT-sign-in picker on
+  // 2026-04-07 and fully dropped them on 2026-04-14. Requests for those
+  // models now fail upstream with "The '<model>' model is not supported
+  // when using Codex with a ChatGPT account", so they're no longer
+  // auto-registered.
   codex: [
-    "gpt-5.3-codex",
     "gpt-5.4",
-    "gpt-5.2-codex",
-    "gpt-5.1-codex-max",
+    "gpt-5.4-mini",
+    "gpt-5.3-codex",
     "gpt-5.2",
-    "gpt-5.1-codex-mini",
   ],
 
   // Gemini CLI exposes a long list; mainstream picks are the production-
