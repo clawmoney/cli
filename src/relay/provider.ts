@@ -213,6 +213,103 @@ function messagesToPrompt(
   return messages.map((m) => extractMessageText(m.content)).join("\n");
 }
 
+// ── OAuth auto-pause (per-cli_type) ────────────────────────────────────
+//
+// When upstream keeps rejecting our OAuth token (Anthropic 403
+// permission_error, ChatGPT auth failures, etc.), continuing to hammer
+// it wastes buyer requests, surfaces errors the Hub has to failover
+// around, and thrashes the Hub's 5xx ban / unban cycle every time the
+// daemon reconnects. Track consecutive auth-broken errors per cli_type
+// — after AUTH_ERROR_THRESHOLD hits in a row, stop accepting new
+// requests for THAT cli_type until daemon restart. Every successful
+// upstream response resets the counter.
+//
+// Key properties:
+//   - Per cli_type: a broken Claude OAuth doesn't take down Codex or
+//     Gemini on the same daemon, because each has its own counter and
+//     its own disable flag.
+//   - In-memory only: state resets on daemon restart. If the operator
+//     re-authed between restarts, the next request proves the token
+//     works and nothing happens; if they didn't, the counter fills
+//     back up within AUTH_ERROR_THRESHOLD requests and re-disables.
+//   - No WS lifecycle touched: the daemon stays connected to the Hub
+//     so other cli_types still serve. We just refuse to call upstream
+//     for the disabled one, returning a clean error the Hub can use
+//     to ban this provider row (its existing _is_auth_broken_error
+//     pattern catches our "OAuth authentication broken" message).
+//
+// Operator recovery: run `clawmoney login <cli>` (or re-auth the
+// relevant CLI directly — `claude login`, `codex login`, etc.), then
+// `clawmoney relay restart` to reset the counter.
+
+const AUTH_ERROR_THRESHOLD = 3;
+const consecutiveAuthErrorsByCli: Map<string, number> = new Map();
+const cliAuthDisabled: Set<string> = new Set();
+
+const AUTH_BROKEN_PATTERNS: readonly string[] = [
+  // Anthropic 403: OAuth authentication is currently not allowed for
+  // this organization. The new prod signal from 2026-04-15 incident.
+  "permission_error",
+  "not allowed for this organization",
+  // Legacy Claude / Anthropic auth failures (also matched by Hub's
+  // _AUTH_BROKEN_PATTERNS, so the two sides agree on classification).
+  "token refresh failed",
+  "invalid_grant",
+  "request not allowed",
+  "oauth refresh",
+  // Generic OAuth HTTP signatures. Catches the one-off 401/403
+  // responses from codex / gemini / antigravity that carry the same
+  // meaning even when the upstream-specific message format differs.
+  "unauthorized",
+];
+
+function isAuthBrokenError(errMsg: string): boolean {
+  const lower = errMsg.toLowerCase();
+  return AUTH_BROKEN_PATTERNS.some((p) => lower.includes(p));
+}
+
+function noteUpstreamAuthError(cliType: string): void {
+  const next = (consecutiveAuthErrorsByCli.get(cliType) ?? 0) + 1;
+  consecutiveAuthErrorsByCli.set(cliType, next);
+  if (next >= AUTH_ERROR_THRESHOLD && !cliAuthDisabled.has(cliType)) {
+    cliAuthDisabled.add(cliType);
+    logger.error("");
+    logger.error(
+      `  ╔══════════════════════════════════════════════════════════════`
+    );
+    logger.error(
+      `  ║ OAuth broken for cli_type='${cliType}' — ${next} consecutive`
+    );
+    logger.error(
+      `  ║ auth-broken responses from upstream. Pausing relay for this`
+    );
+    logger.error(
+      `  ║ cli_type to stop thrashing buyer requests + Hub ban state.`
+    );
+    logger.error(`  ║`);
+    logger.error(
+      `  ║ TO RESUME: re-authenticate your ${cliType} CLI locally, then`
+    );
+    logger.error(`  ║           run 'clawmoney relay restart'.`);
+    logger.error(`  ║`);
+    logger.error(
+      `  ║ Other cli_types on this daemon continue to serve normally.`
+    );
+    logger.error(
+      `  ╚══════════════════════════════════════════════════════════════`
+    );
+    logger.error("");
+  }
+}
+
+function noteUpstreamSuccess(cliType: string): void {
+  // Successful request → reset the consecutive counter. The disabled
+  // flag is sticky until daemon restart on purpose — we never want to
+  // "heal" mid-run based on a single lucky response, which could be
+  // an upstream glitch rather than a real token refresh.
+  consecutiveAuthErrorsByCli.delete(cliType);
+}
+
 async function executeRelayRequest(
   request: RelayRequest,
   config: RelayProviderConfig,
@@ -245,6 +342,24 @@ async function executeRelayRequest(
   logger.info(`  │ CLI:    ${cliType} / ${model} (${modeLabel})`);
   logger.info(`  │ Turns:  ${turns}`);
   logger.info(`  │ Prompt: ${String(lastUserMsg).slice(0, 80)}`);
+
+  // Fast-fail if this cli_type was auto-paused by a run of auth-broken
+  // responses earlier in the session. Returning the error here instead
+  // of calling upstream saves the round-trip and keeps the Hub's ban
+  // pattern triggering (it matches "OAuth authentication" / "auth
+  // broken" in _is_auth_broken_error) so buyer requests go straight to
+  // a healthy provider.
+  if (cliAuthDisabled.has(cliType)) {
+    logger.warn(
+      `  └─ REFUSED: ${cliType} auth paused (restart relay after re-auth)`
+    );
+    return {
+      event: "relay_response",
+      request_id,
+      content: "",
+      error: `OAuth authentication broken for cli_type='${cliType}'. Provider needs to re-authenticate locally and restart the daemon. (permission_error)`,
+    };
+  }
 
   try {
     const startMs = Date.now();
@@ -360,6 +475,10 @@ async function executeRelayRequest(
       );
     }
 
+    // Successful upstream round-trip — reset the auth-error counter for
+    // this cli_type. One good response means the token currently works.
+    noteUpstreamSuccess(cliType);
+
     return {
       event: "relay_response",
       request_id,
@@ -371,12 +490,22 @@ async function executeRelayRequest(
       session_window: sessionWindowTelemetry,
     };
   } catch (err) {
-    logger.error(`  └─ ERROR: ${err instanceof Error ? err.message : err}`);
+    const errMsg = err instanceof Error ? err.message : String(err);
+    logger.error(`  └─ ERROR: ${errMsg}`);
+    // If the upstream error looks like a persistent auth failure
+    // (OAuth rejected, token broken, permission_error, etc.), bump
+    // this cli_type's consecutive-auth-error counter. After
+    // AUTH_ERROR_THRESHOLD in a row, future requests for this
+    // cli_type short-circuit at the top of executeRelayRequest until
+    // daemon restart.
+    if (isAuthBrokenError(errMsg)) {
+      noteUpstreamAuthError(cliType);
+    }
     return {
       event: "relay_response",
       request_id,
       content: "",
-      error: err instanceof Error ? err.message : "Unknown execution error",
+      error: errMsg || "Unknown execution error",
     };
   }
 }
