@@ -1060,20 +1060,34 @@ function ensureClaudeCodeShell(body, fingerprint) {
     // Position: right after the billing header slot (idx 1), or right
     // after any buyer-prefixed system blocks (at head) if we're also
     // inserting the billing header.
+    //
+    // Anthropic has a hard ordering rule within the system array: any
+    // cache_control block with `ttl="1h"` MUST come before any block with
+    // `ttl="5m"`. Our injected marker uses the default ephemeral TTL
+    // (5m), so if the buyer's original system array contains a 1h block
+    // further down, naively inserting at index 1 puts the 1h block AFTER
+    // our 5m block and Anthropic 400s with
+    //   system.N.cache_control.ttl: a ttl='1h' cache_control block must
+    //   not come after a ttl='5m' cache_control block.
+    // Walk from the end to find the last 1h block; if one exists, drop
+    // the marker immediately after it so the 1h-before-5m invariant
+    // holds. Otherwise fall back to the original "index 1 (or 0)" slot.
     if (!hasCcMarker) {
         const markerBlock = {
             type: "text",
             text: `${CLAUDE_CODE_SYSTEM_PROMPT_LEAD}\n\n${RELAY_INSTRUCTIONS}`,
             cache_control: { type: "ephemeral" },
         };
-        // Insert at index 1 (slot after billing header), or 0 if we'll be
-        // unshifting the billing header next.
-        if (hasBillingHeaderFirst) {
-            system.splice(1, 0, markerBlock);
+        let insertAt = hasBillingHeaderFirst ? 1 : 0;
+        for (let i = system.length - 1; i >= 0; i--) {
+            const cc = system[i]
+                ?.cache_control;
+            if (cc && typeof cc === "object" && cc.ttl === "1h") {
+                insertAt = i + 1;
+                break;
+            }
         }
-        else {
-            system.unshift(markerBlock);
-        }
+        system.splice(insertAt, 0, markerBlock);
     }
     // ── Update or inject billing header at index 0 ──
     if (hasBillingHeaderFirst) {
