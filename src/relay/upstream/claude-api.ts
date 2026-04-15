@@ -1255,6 +1255,55 @@ function mergeBetas(required: string[], clientBeta: string | undefined): string 
   return out.join(",");
 }
 
+// Scan a passthrough body for any `cache_control: {type: "ephemeral",
+// ttl: "1h"}` block across tools / system / messages. The presence of
+// even one 1h block forces us to upgrade our own injected CC marker in
+// system to 1h too, because Anthropic rejects requests where a 1h
+// block appears after any 5m block in the global tools→system→messages
+// ordering (see long comment in ensureClaudeCodeShell).
+//
+// Returns true on the first 1h block found — this is a detect-only
+// walk, not a rewrite. Safe on malformed bodies (returns false).
+function bodyHasExtendedCacheBlock(body: Record<string, unknown>): boolean {
+  const isExtendedBlock = (block: unknown): boolean => {
+    if (!block || typeof block !== "object") return false;
+    const cc = (block as { cache_control?: { ttl?: string } })
+      .cache_control;
+    if (!cc || typeof cc !== "object") return false;
+    return cc.ttl === "1h";
+  };
+
+  if (Array.isArray(body.tools)) {
+    for (const t of body.tools) {
+      if (isExtendedBlock(t)) return true;
+    }
+  }
+
+  if (Array.isArray(body.system)) {
+    for (const b of body.system) {
+      if (isExtendedBlock(b)) return true;
+    }
+  }
+
+  if (Array.isArray(body.messages)) {
+    for (const m of body.messages) {
+      if (!m || typeof m !== "object") continue;
+      const content = (m as { content?: unknown }).content;
+      // Anthropic messages can carry content either as a string (no
+      // cache_control possible) or as an array of content blocks
+      // (each of which can carry cache_control). Only the array form
+      // matters for this check.
+      if (Array.isArray(content)) {
+        for (const c of content) {
+          if (isExtendedBlock(c)) return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
 // Ensure a passthrough body carries the full Claude Code fingerprint
 // shell that Anthropic's OAuth-endpoint validator expects. Called from
 // doCallClaudeApiPassthrough as the last body-munging step before the
@@ -1332,34 +1381,68 @@ function ensureClaudeCodeShell(
   );
 
   // ── Inject CC marker if missing ──
-  // Position: right after the billing header slot (idx 1), or right
-  // after any buyer-prefixed system blocks (at head) if we're also
-  // inserting the billing header.
   //
-  // Anthropic has a hard ordering rule within the system array: any
-  // cache_control block with `ttl="1h"` MUST come before any block with
-  // `ttl="5m"`. Our injected marker uses the default ephemeral TTL
-  // (5m), so if the buyer's original system array contains a 1h block
-  // further down, naively inserting at index 1 puts the 1h block AFTER
-  // our 5m block and Anthropic 400s with
-  //   system.N.cache_control.ttl: a ttl='1h' cache_control block must
-  //   not come after a ttl='5m' cache_control block.
-  // Walk from the end to find the last 1h block; if one exists, drop
-  // the marker immediately after it so the 1h-before-5m invariant
-  // holds. Otherwise fall back to the original "index 1 (or 0)" slot.
+  // Anthropic has a hard GLOBAL ordering rule across the whole request:
+  // within the linear processing order `tools → system → messages`,
+  // any block with `cache_control.ttl="1h"` MUST come before any block
+  // with `ttl="5m"`. Not just within one section — globally. A 5m block
+  // in system comes before any 1h block in messages and that's a 400.
+  //
+  // Our injected CC marker lives in system. Its default TTL is 5m
+  // (what real Claude Code uses). When a buyer request carries any 1h
+  // cache_control block ANYWHERE (their own system, or inside any
+  // message content block, or in tools), naively injecting a 5m marker
+  // in system causes:
+  //   system.N.cache_control.ttl   — when the 1h is in system below us
+  //   messages.N.content.M.cache_control.ttl  — when the 1h is in messages
+  // Anthropic 400s with:
+  //   a ttl='1h' cache_control block must not come after a ttl='5m'
+  //   cache_control block. Note that blocks are processed in the
+  //   following order: `tools`, `system`, `messages`.
+  //
+  // Fix: detect whether the buyer's body touches 1h cache anywhere.
+  // If yes, upgrade our marker's TTL to 1h too — then the whole request
+  // is uniformly 1h from our side, no 1h-after-5m violation possible.
+  // If no, keep the default 5m (matches real Claude Code fingerprint).
+  //
+  // The 1h TTL won't actually materialise extra cost for our marker
+  // because our system block is < 1024 tokens and below Anthropic's
+  // minimum cache token threshold, so neither 5m nor 1h actually
+  // produces a cache write or read. The TTL label is purely a shape
+  // marker that unblocks the ordering validator.
   if (!hasCcMarker) {
+    const buyerUsesExtendedCache = bodyHasExtendedCacheBlock(body);
     const markerBlock = {
       type: "text",
       text: `${CLAUDE_CODE_SYSTEM_PROMPT_LEAD}\n\n${RELAY_INSTRUCTIONS}`,
-      cache_control: { type: "ephemeral" as const },
+      cache_control: buyerUsesExtendedCache
+        ? ({ type: "ephemeral", ttl: "1h" } as const)
+        : ({ type: "ephemeral" } as const),
     };
+    // Insert position inside system:
+    //   - If our marker is 5m: put it AFTER any existing 1h block in
+    //     system so system-internal ordering holds (1h-before-5m).
+    //   - If our marker is 1h: put it BEFORE any existing 5m block in
+    //     system for the same reason (1h-before-5m). No 5m block →
+    //     default slot.
     let insertAt = hasBillingHeaderFirst ? 1 : 0;
-    for (let i = system.length - 1; i >= 0; i--) {
-      const cc = (system[i] as { cache_control?: { ttl?: string } })
-        ?.cache_control;
-      if (cc && typeof cc === "object" && cc.ttl === "1h") {
-        insertAt = i + 1;
-        break;
+    if (buyerUsesExtendedCache) {
+      for (let i = 0; i < system.length; i++) {
+        const cc = (system[i] as { cache_control?: { ttl?: string } })
+          ?.cache_control;
+        if (cc && typeof cc === "object" && (cc.ttl ?? "5m") === "5m") {
+          insertAt = i;
+          break;
+        }
+      }
+    } else {
+      for (let i = system.length - 1; i >= 0; i--) {
+        const cc = (system[i] as { cache_control?: { ttl?: string } })
+          ?.cache_control;
+        if (cc && typeof cc === "object" && cc.ttl === "1h") {
+          insertAt = i + 1;
+          break;
+        }
       }
     }
     system.splice(insertAt, 0, markerBlock);
