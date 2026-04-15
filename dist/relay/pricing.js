@@ -24,28 +24,23 @@ export const API_PRICES = {
     "claude-sonnet-4-6": { input: 3, output: 15 },
     "claude-sonnet-4-5": { input: 3, output: 15 },
     "claude-haiku-4-5": { input: 1, output: 5 },
-    // ── OpenAI (ChatGPT Plus / Codex subscriptions) ──
-    // Verified against LiteLLM. Codex CLI may expose any of these depending
-    // on the user's subscription tier and which models ChatGPT enables.
+    // ── OpenAI (ChatGPT Plus / Pro via Codex CLI) ──
+    // Verified against LiteLLM. Per OpenAI's 2026-04-14 Codex changelog,
+    // ChatGPT-sign-in users can only pick gpt-5.4 / gpt-5.4-mini /
+    // gpt-5.3-codex / gpt-5.2, plus gpt-5.3-codex-spark on Pro. The old
+    // 5 / 5.1 / 5.2-codex families were fully removed that day. Anything
+    // below this comment that's deprecated was removed from the CLI-side
+    // pricing table so `modelsForCli("codex")` no longer offers them.
     "gpt-5.4": { input: 2.50, output: 15 },
     "gpt-5.4-mini": { input: 0.75, output: 4.50 },
-    "gpt-5.4-nano": { input: 0.20, output: 1.25 },
-    // gpt-5.4-pro is not in LiteLLM as of April 2026. Keeping the manually
-    // verified values from OpenAI's enterprise pricing page.
-    "gpt-5.4-pro": { input: 30, output: 180 },
     "gpt-5.3-codex": { input: 1.75, output: 14 },
     // gpt-5.3-codex-spark is not in LiteLLM — sub2api falls back to
     // gpt-5.1-codex pricing (see pricing_service.go SparkBilling handling).
     "gpt-5.3-codex-spark": { input: 1.25, output: 10 },
     "gpt-5.2": { input: 1.75, output: 14 },
-    "gpt-5.2-codex": { input: 1.75, output: 14 },
-    "gpt-5.1": { input: 1.25, output: 10 },
-    "gpt-5.1-codex": { input: 1.25, output: 10 },
-    "gpt-5.1-codex-mini": { input: 0.25, output: 2 },
-    "gpt-5.1-codex-max": { input: 1.25, output: 10 },
-    "gpt-5": { input: 1.25, output: 10 },
     // Reasoning models (o-series). Previously had incorrect values — LiteLLM
     // confirms o3 is $2/$8 (not $5/$20) and o4-mini is $1.1/$4.4 (not $4/$16).
+    // These are API-only (not Codex CLI), kept for OpenAI SDK callers.
     "o3": { input: 2, output: 8 },
     "o4-mini": { input: 1.1, output: 4.4 },
     // ── Google Antigravity (Ultra-bundled IDE quota pool) ──
