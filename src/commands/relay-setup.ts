@@ -18,7 +18,7 @@ import {
 import chalk from "chalk";
 
 import { apiPost } from "../utils/api.js";
-import { loadConfig, requireConfig } from "../utils/config.js";
+import { loadConfig, requireConfig, saveConfig } from "../utils/config.js";
 import { setupCommand } from "./setup.js";
 import { API_PRICES, PLATFORM_FEE } from "../relay/pricing.js";
 import {
@@ -505,40 +505,54 @@ export async function relaySetupCommand(): Promise<void> {
   // pretend to.
   const concurrency = 5;
 
-  const dailyLimitChoice = await select({
+  const quotaShareChoice = await select({
     message:
-      "Daily quota share per model? (applies independently to each model you register)",
+      "How much of your 5h session window can relay use?",
     options: [
       {
-        value: 15,
-        label: "~25%  ·  Light",
+        value: 25,
+        label: "25%  ·  Light",
         hint: "share a quarter, leaves 75% for your personal use",
       },
       {
-        value: 30,
-        label: "~50%  ·  Balanced  (recommended)",
-        hint: "splits each model's quota evenly between you and the relay",
+        value: 50,
+        label: "50%  ·  Balanced  (recommended)",
+        hint: "splits your quota evenly between you and the relay",
       },
       {
-        value: 45,
-        label: "~75%  ·  Heavy",
+        value: 75,
+        label: "75%  ·  Heavy",
         hint: "most of your subscription goes to relay, 25% reserved for personal use",
       },
       {
-        value: 60,
-        label: "~100% ·  Full",
+        value: 100,
+        label: "100% ·  Full",
         hint: "dedicates your subscription to relay — best for accounts you don't use personally",
       },
     ],
-    initialValue: 30,
+    initialValue: 50,
   });
 
-  if (isCancel(dailyLimitChoice)) {
+  if (isCancel(quotaShareChoice)) {
     cancel("Setup cancelled");
     process.exit(0);
   }
 
-  const dailyLimit = dailyLimitChoice as number;
+  const maxRelayUtilization = quotaShareChoice as number;
+  // daily_limit_usd is kept as a high fallback — the real cap is now
+  // maxRelayUtilization enforced by the daemon's rate-guard. Set it
+  // generously so it doesn't interfere.
+  const dailyLimit = 60;
+
+  // Persist max_relay_utilization into config.yaml so the daemon's
+  // rate-guard reads it on startup.
+  saveConfig({
+    relay: {
+      rate_guard: {
+        max_relay_utilization: maxRelayUtilization,
+      },
+    },
+  } as unknown as Partial<typeof config>);
 
   // ── Step 5: register everything under one spinner ──
   //
@@ -555,7 +569,7 @@ export async function relaySetupCommand(): Promise<void> {
   // subscriptions + quota share above; Ctrl-C still aborts, and the
   // backend is idempotent so mid-way aborts are safe to re-run.
   const limitLabel: Record<number, string> = {
-    15: "~25%", 30: "~50%", 45: "~75%", 60: "~100%",
+    25: "25%", 50: "50%", 75: "75%", 100: "100%",
   };
   const earnPct = Math.round((1 - PLATFORM_FEE) * 100);
 
@@ -621,7 +635,7 @@ export async function relaySetupCommand(): Promise<void> {
     regSpin.stop(
       `${chalk.green(`✓ Registered${breakdown}`)}  ` +
         chalk.dim(
-          `(${limitLabel[dailyLimit] ?? `$${dailyLimit}`} quota share · you earn ~${earnPct}%)`
+          `(${limitLabel[maxRelayUtilization] ?? `${maxRelayUtilization}%`} of 5h window · you earn ~${earnPct}%)`
         )
     );
   } else {

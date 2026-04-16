@@ -38,6 +38,15 @@ export interface RateGuardConfig {
   jitterMs: number;
   /** Hard daily cost cap in USD. Default 15. */
   dailyBudgetUsd: number;
+  /**
+   * Max relay utilization of the 5h session window (0-100).
+   * When relay's own accumulated utilization delta reaches this %,
+   * further relay requests are refused until the window resets.
+   * Provider's direct usage does NOT count against this budget —
+   * only the delta observed across relay requests is tracked.
+   * Default 50 (relay can use up to 50% of the 5h window).
+   */
+  maxRelayUtilization: number;
 }
 
 export const DEFAULT_RATE_GUARD_CONFIG: RateGuardConfig = {
@@ -47,12 +56,22 @@ export const DEFAULT_RATE_GUARD_CONFIG: RateGuardConfig = {
   minRequestGapMs: 500,
   jitterMs: 1500,
   dailyBudgetUsd: 15,
+  maxRelayUtilization: 50,
 };
 
 export class RateGuardBudgetExceededError extends Error {
   constructor(spent: number, limit: number) {
     super(`Daily budget exceeded: $${spent.toFixed(4)} / $${limit.toFixed(2)}`);
     this.name = "RateGuardBudgetExceededError";
+  }
+}
+
+export class RateGuardRelayUtilizationExceededError extends Error {
+  constructor(used: number, limit: number, resetMins: number) {
+    super(
+      `Relay utilization quota reached: ${used.toFixed(1)}% / ${limit}% of 5h window used by relay (resets in ${resetMins}min)`
+    );
+    this.name = "RateGuardRelayUtilizationExceededError";
   }
 }
 
@@ -100,6 +119,12 @@ export class RateGuard {
   private cooldownReason = "";
   // Rolling 5h session window surfaced by Anthropic headers.
   private sessionWindow: SessionWindow | null = null;
+  // Relay utilization tracking — accumulated delta of session_window
+  // utilization across relay requests within the current 5h window.
+  // Resets when the window resets (endMs changes).
+  private relayWindowUsed = 0;         // accumulated relay % (0-100)
+  private relayWindowEndMs = 0;        // which window we're tracking
+  private lastSeenUtilization: number | null = null; // for delta computation
 
   constructor(config: Partial<RateGuardConfig> = {}) {
     this.cfg = { ...DEFAULT_RATE_GUARD_CONFIG, ...config };
@@ -119,12 +144,41 @@ export class RateGuard {
     }
   }
 
-  /** Update the 5h session window tracker from parsed upstream headers. */
+  /** Update the 5h session window tracker from parsed upstream headers.
+   *  Also accumulates relay's own utilization delta for quota enforcement. */
   setSessionWindow(window: SessionWindow): void {
+    // Detect window reset — if endMs changed, we're in a new window.
+    if (window.endMs !== this.relayWindowEndMs) {
+      if (this.relayWindowEndMs > 0 && this.relayWindowUsed > 0) {
+        logger.info(
+          `[rate-guard] relay window reset (previous relay_used=${this.relayWindowUsed.toFixed(1)}%)`
+        );
+      }
+      this.relayWindowUsed = 0;
+      this.relayWindowEndMs = window.endMs;
+      this.lastSeenUtilization = null;
+    }
+
+    // Compute relay delta: how much utilization increased since last observation.
+    // This is called AFTER each relay request, so the delta is (approximately)
+    // the utilization cost of that one relay request. If the provider was also
+    // using the account directly during this request, the delta includes their
+    // usage too — accepted trade-off (see design discussion).
+    if (
+      typeof window.utilization === "number" &&
+      this.lastSeenUtilization !== null
+    ) {
+      const delta = window.utilization - this.lastSeenUtilization;
+      if (delta > 0) {
+        this.relayWindowUsed += delta;
+      }
+    }
+    this.lastSeenUtilization = window.utilization ?? null;
+
     this.sessionWindow = window;
     const mins = Math.round((window.endMs - Date.now()) / 60_000);
     logger.info(
-      `[rate-guard] session window: ${window.utilization ?? "?"}% used, resets in ${mins}min (status=${window.status ?? "unknown"})`
+      `[rate-guard] session window: ${window.utilization ?? "?"}% used (relay_used=${this.relayWindowUsed.toFixed(1)}%/${this.cfg.maxRelayUtilization}%), resets in ${mins}min (status=${window.status ?? "unknown"})`
     );
   }
 
@@ -161,13 +215,27 @@ export class RateGuard {
     }
   }
 
-  /** Check whether a new request would exceed the daily budget. */
+  /** Check whether a new request would exceed the daily budget or relay utilization cap. */
   checkBudget(): void {
     this.rotateDailyCounterIfNeeded();
     if (this.dailySpentUsd >= this.cfg.dailyBudgetUsd) {
       throw new RateGuardBudgetExceededError(
         this.dailySpentUsd,
         this.cfg.dailyBudgetUsd
+      );
+    }
+    // Check relay utilization cap against 5h window.
+    // Only enforce if we've seen at least one session window update
+    // (otherwise we don't know the utilization yet — fail open).
+    if (
+      this.relayWindowEndMs > 0 &&
+      this.relayWindowUsed >= this.cfg.maxRelayUtilization
+    ) {
+      const resetMins = Math.max(0, Math.round((this.relayWindowEndMs - Date.now()) / 60_000));
+      throw new RateGuardRelayUtilizationExceededError(
+        this.relayWindowUsed,
+        this.cfg.maxRelayUtilization,
+        resetMins,
       );
     }
   }
@@ -199,6 +267,8 @@ export class RateGuard {
     cooldownUntilMs: number;
     cooldownReason: string;
     sessionWindow: SessionWindow | null;
+    relayWindowUsed: number;
+    maxRelayUtilization: number;
   } {
     return {
       inFlight: this.inFlight,
@@ -208,6 +278,8 @@ export class RateGuard {
       cooldownUntilMs: this.cooldownUntilMs,
       cooldownReason: this.cooldownReason,
       sessionWindow: this.getSessionWindow(),
+      relayWindowUsed: this.relayWindowUsed,
+      maxRelayUtilization: this.cfg.maxRelayUtilization,
     };
   }
 
