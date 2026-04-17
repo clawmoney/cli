@@ -25,7 +25,7 @@ import {
   preflightAntigravityApi,
   getAntigravityRateGuardSnapshot,
 } from "./upstream/antigravity-api.js";
-import { apiGet } from "../utils/api.js";
+import { apiGet, apiPost } from "../utils/api.js";
 
 /**
  * Pick the rate-guard snapshot matching this request's cli_type. Fixes a
@@ -657,6 +657,155 @@ export function runRelayProvider(cliOverride?: string): void {
   }
 
   const activeTasks = new Set<string>();
+
+  // ── Model catalog auto-sync ──
+  //
+  // Hub maintains the canonical list of recommended models per cli_type
+  // in app/core/relay_catalog.py. When Anthropic / OpenAI / Google
+  // releases a new model, it's added there and all daemons pick it up
+  // on the next poll — no CLI upgrade required.
+  //
+  // Flow:
+  //   1. Query /providers/me → find which cli_types this agent uses
+  //   2. GET /relay/model-catalog → recommended models per cli_type
+  //   3. For each cli_type in use, batch-register every recommended model
+  //      (upsert — adds new models, keeps existing config intact)
+  //   4. Repeat every 30 min
+  //
+  // Inherits settings (concurrency, daily_limit, pricing) from an
+  // existing provider in the same cli_type so new models join with
+  // the same quota share the user originally picked.
+
+  interface CatalogEntry {
+    model: string;
+    input: number;
+    output: number;
+    recommended: boolean;
+  }
+
+  async function syncModelCatalog(): Promise<void> {
+    try {
+      // Step 1: existing providers (gives us cli_types + default settings).
+      const myResp = await apiGet<
+        Array<{
+          cli_type: string;
+          model: string;
+          concurrency: number;
+          daily_limit_usd: number;
+          price_input_per_m: number;
+          price_output_per_m: number;
+        }>
+      >("/api/v1/relay/providers/me", config.api_key);
+      if (!myResp.ok || !Array.isArray(myResp.data)) {
+        logger.warn(`[catalog-sync] skipped: /providers/me returned ${myResp.status}`);
+        return;
+      }
+      const existing = myResp.data;
+      if (existing.length === 0) {
+        logger.info("[catalog-sync] no existing providers yet — skipping auto-sync");
+        return;
+      }
+
+      // Settings template per cli_type (from any existing provider in that family).
+      const settingsByCli = new Map<
+        string,
+        {
+          concurrency: number;
+          daily_limit_usd: number;
+        }
+      >();
+      const knownModels = new Set<string>();
+      for (const p of existing) {
+        knownModels.add(`${p.cli_type}/${p.model}`);
+        if (!settingsByCli.has(p.cli_type)) {
+          settingsByCli.set(p.cli_type, {
+            concurrency: p.concurrency,
+            daily_limit_usd: p.daily_limit_usd,
+          });
+        }
+      }
+
+      // Step 2: fetch catalog.
+      const catalogResp = await apiGet<{
+        catalog: Record<string, CatalogEntry[]>;
+      }>("/api/v1/relay/model-catalog");
+      if (!catalogResp.ok || !catalogResp.data?.catalog) {
+        logger.warn(`[catalog-sync] skipped: /model-catalog returned ${catalogResp.status}`);
+        return;
+      }
+      const catalog = catalogResp.data.catalog;
+
+      // Step 3: build batch for cli_types the agent has at least one provider for.
+      const batch: Array<{
+        cli_type: string;
+        model: string;
+        mode: string;
+        concurrency: number;
+        daily_limit_usd: number;
+        price_input_per_m: number;
+        price_output_per_m: number;
+      }> = [];
+      const newModels: string[] = [];
+      for (const [cliType, settings] of settingsByCli) {
+        const recommended = catalog[cliType] ?? [];
+        for (const entry of recommended) {
+          if (!knownModels.has(`${cliType}/${entry.model}`)) {
+            newModels.push(`${cliType}/${entry.model}`);
+          }
+          batch.push({
+            cli_type: cliType,
+            model: entry.model,
+            mode: "chat",
+            concurrency: settings.concurrency,
+            daily_limit_usd: settings.daily_limit_usd,
+            price_input_per_m: entry.input,
+            price_output_per_m: entry.output,
+          });
+        }
+      }
+
+      if (batch.length === 0) {
+        return;
+      }
+
+      // Step 4: upsert via batch register (already idempotent).
+      const regResp = await apiPost<{
+        created: unknown[];
+        skipped: unknown[];
+        failed: Array<{ cli_type: string; model: string; error: string }>;
+      }>("/api/v1/relay/providers/batch", { providers: batch }, config.api_key);
+
+      if (!regResp.ok) {
+        logger.warn(`[catalog-sync] batch register failed: ${regResp.status}`);
+        return;
+      }
+      const created = regResp.data.created?.length ?? 0;
+      const failed = regResp.data.failed?.length ?? 0;
+      if (newModels.length > 0 || created > 0) {
+        logger.info(
+          `[catalog-sync] OK: ${batch.length} entries, ${created} newly created, ${failed} failed` +
+            (newModels.length > 0 ? ` (new: ${newModels.join(", ")})` : "")
+        );
+      } else {
+        logger.info(`[catalog-sync] OK: ${batch.length} entries, no changes`);
+      }
+    } catch (err) {
+      logger.warn(`[catalog-sync] error: ${(err as Error).message}`);
+    }
+  }
+
+  // Initial sync, then every 30 min.
+  syncModelCatalog().catch((err) =>
+    logger.warn(`[catalog-sync] initial sync failed: ${(err as Error).message}`)
+  );
+  const catalogTimer = setInterval(
+    () =>
+      syncModelCatalog().catch((err) =>
+        logger.warn(`[catalog-sync] periodic sync failed: ${(err as Error).message}`)
+      ),
+    30 * 60 * 1000,
+  );
+  catalogTimer.unref();
 
   // Create WS client
   const wsClient = new RelayWsClient(config, (event: RelayIncomingEvent) => {
