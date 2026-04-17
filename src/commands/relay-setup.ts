@@ -54,9 +54,10 @@ import {
 // model in that family.
 
 const RECOMMENDED_MODELS: Record<string, string[]> = {
-  // Claude Code /model menu: Default(Sonnet 4.6) / Sonnet(1M) / Opus(1M) / Haiku
-  // → 3 unique model IDs (Sonnet 1M = same model + context-1m beta)
-  claude: ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"],
+  // Claude Code /model menu (post 2026-04-16 Opus 4.7 release):
+  //   Default(Opus 4.7 1M) / Sonnet 4.6 / Haiku 4.5
+  // Opus 4.7 released 2026-04-16 and became the default model.
+  claude: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"],
 
   // Codex CLI /model menu for ChatGPT sign-in (post 2026-04-14 cleanup):
   //   gpt-5.4             — latest frontier agentic coding (current default)
