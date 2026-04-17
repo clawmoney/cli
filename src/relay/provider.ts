@@ -69,7 +69,7 @@ const DEFAULT_RELAY: RelayProviderSettings = {
   mode: "chat",
   concurrency: 5,
   daily_limit_usd: 20,
-  ws_url: "wss://api.bnbot.ai/api/v1/ws/relay",
+  ws_url: "wss://api.spareapi.ai/ws/relay",
   reconnect: {
     initial: 5,
     max: 300,
