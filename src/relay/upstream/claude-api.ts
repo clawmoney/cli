@@ -102,10 +102,18 @@ const STATIC_CLAUDE_CODE_HEADERS: Record<string, string> = {
 const CLAUDE_CODE_SYSTEM_PROMPT_LEAD =
   "You are a Claude agent, built on Anthropic's Claude Agent SDK.";
 
-// Appended after the CC marker; this is the only part a buyer actually
-// controls the behavior of. Keeps the relay output in plain-text mode.
-const RELAY_INSTRUCTIONS =
+// Template-mode instructions ONLY — not used in passthrough mode.
+// In passthrough, the buyer's Claude Code sends its own tool definitions
+// and expects full agentic behavior; injecting "do not use tools" here
+// would break WebSearch / Bash / Edit / all other tools, producing
+// "current mode can't use tools" responses from the model.
+const RELAY_INSTRUCTIONS_TEMPLATE =
   "You are operating in pure-LLM relay mode. Respond to the user's message with plain text only. Do not use tools. Do not ask clarifying questions. Be concise.";
+
+// Passthrough-mode marker — just the CC identity lead, no tool-suppression.
+// The buyer controls tool behavior via the body's `tools` array and
+// their own system prompt.
+const RELAY_INSTRUCTIONS_PASSTHROUGH = "";
 
 // Short-name → fully qualified ID mapping required by the Claude OAuth API.
 const MODEL_ID_OVERRIDES: Record<string, string> = {
@@ -1082,7 +1090,7 @@ async function doCallClaudeApi(opts: CallClaudeApiOptions): Promise<ParsedOutput
       },
       {
         type: "text",
-        text: `${CLAUDE_CODE_SYSTEM_PROMPT_LEAD}\n\n${RELAY_INSTRUCTIONS}`,
+        text: `${CLAUDE_CODE_SYSTEM_PROMPT_LEAD}\n\n${RELAY_INSTRUCTIONS_TEMPLATE}`,
         // Mark the last system block for prompt caching. Real Claude Code
         // *always* attaches cache_control: {type: "ephemeral"} to its system
         // blocks — Anthropic uses the presence of this marker as part of its
@@ -1450,9 +1458,13 @@ function ensureClaudeCodeShell(
   // marker that unblocks the ordering validator.
   if (!hasCcMarker) {
     const buyerUsesExtendedCache = bodyHasExtendedCacheBlock(body);
+    // Passthrough mode: inject ONLY the CC identity lead, no tool
+    // suppression. The buyer's Claude Code drives tool use via its own
+    // tools array + system prompt. Appending "Do not use tools" here
+    // would break WebSearch / Bash / Edit / every other tool.
     const markerBlock = {
       type: "text",
-      text: `${CLAUDE_CODE_SYSTEM_PROMPT_LEAD}\n\n${RELAY_INSTRUCTIONS}`,
+      text: CLAUDE_CODE_SYSTEM_PROMPT_LEAD,
       cache_control: buyerUsesExtendedCache
         ? ({ type: "ephemeral", ttl: "1h" } as const)
         : ({ type: "ephemeral" } as const),
