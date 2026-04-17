@@ -35,10 +35,22 @@ export interface RateGuardConfig {
     jitterMs: number;
     /** Hard daily cost cap in USD. Default 15. */
     dailyBudgetUsd: number;
+    /**
+     * Max relay utilization of the 5h session window (0-100).
+     * When relay's own accumulated utilization delta reaches this %,
+     * further relay requests are refused until the window resets.
+     * Provider's direct usage does NOT count against this budget —
+     * only the delta observed across relay requests is tracked.
+     * Default 50 (relay can use up to 50% of the 5h window).
+     */
+    maxRelayUtilization: number;
 }
 export declare const DEFAULT_RATE_GUARD_CONFIG: RateGuardConfig;
 export declare class RateGuardBudgetExceededError extends Error {
     constructor(spent: number, limit: number);
+}
+export declare class RateGuardRelayUtilizationExceededError extends Error {
+    constructor(used: number, limit: number, resetMins: number);
 }
 /**
  * Thrown when the rate-guard is in a hard cooldown after observing a real
@@ -71,15 +83,19 @@ export declare class RateGuard {
     private cooldownUntilMs;
     private cooldownReason;
     private sessionWindow;
+    private relayWindowUsed;
+    private relayWindowEndMs;
+    private lastSeenUtilization;
     constructor(config?: Partial<RateGuardConfig>);
     /** Record an upstream-imposed cooldown. Called after parsing a real 429. */
     triggerCooldown(untilMs: number, reason: string): void;
-    /** Update the 5h session window tracker from parsed upstream headers. */
+    /** Update the 5h session window tracker from parsed upstream headers.
+     *  Also accumulates relay's own utilization delta for quota enforcement. */
     setSessionWindow(window: SessionWindow): void;
     getSessionWindow(): SessionWindow | null;
     private currentMaxConcurrency;
     private rotateDailyCounterIfNeeded;
-    /** Check whether a new request would exceed the daily budget. */
+    /** Check whether a new request would exceed the daily budget or relay utilization cap. */
     checkBudget(): void;
     /** Check upstream-imposed cooldown. Throws RateGuardCooldownError if still cooling. */
     checkCooldown(): void;
@@ -93,6 +109,8 @@ export declare class RateGuard {
         cooldownUntilMs: number;
         cooldownReason: string;
         sessionWindow: SessionWindow | null;
+        relayWindowUsed: number;
+        maxRelayUtilization: number;
     };
     /**
      * Wrap an upstream call. Blocks until:

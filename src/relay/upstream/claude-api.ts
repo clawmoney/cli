@@ -198,14 +198,39 @@ function pickClaudeBetasForModel(model: string): string[] {
   const m = normalizeModel(model);
   const isHaiku = m.includes("haiku");
   const betas: string[] = [];
+
+  // claude-code-20250219 — required for non-haiku models, Anthropic uses
+  // it to identify legitimate Claude Code requests (missing → "non-CC"
+  // classification → Extra usage required for long context etc).
   if (!isHaiku) betas.push("claude-code-20250219");
-  // OAuth subscriber — always true for us since we only serve relay from
-  // Max-tier OAuth tokens.
+
+  // oauth-2025-04-20 — required for OAuth (Max subscription) tokens.
   betas.push("oauth-2025-04-20");
-  // Interleaved thinking — all Claude 4+ models support it.
+
+  // interleaved-thinking-2025-05-14 — all Claude 4+ models support it.
   if (modelSupportsThinking(model)) {
     betas.push("interleaved-thinking-2025-05-14");
   }
+
+  // Below: betas that real Claude Code always sends. Missing any of these
+  // causes Anthropic to treat the request as "not quite Claude Code",
+  // which silently disables tool use and may force Extra usage billing
+  // on long context. Cross-referenced against auth2api and real CC wire
+  // capture (2026-04 versions).
+  //
+  // - redact-thinking-2026-02-12: hides thinking blocks in response
+  // - context-management-2025-06-27: enables tool_result context windows
+  // - prompt-caching-scope-2026-01-05: global prompt cache scope
+  // - advanced-tool-use-2025-11-20: enables tool_use for non-haiku (CRITICAL)
+  // - effort-2025-11-24: adaptive thinking effort levels
+  betas.push("redact-thinking-2026-02-12");
+  betas.push("context-management-2025-06-27");
+  betas.push("prompt-caching-scope-2026-01-05");
+  if (!isHaiku) {
+    betas.push("advanced-tool-use-2025-11-20");
+    betas.push("effort-2025-11-24");
+  }
+
   return betas;
 }
 

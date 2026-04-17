@@ -507,6 +507,7 @@ export function configureAntigravityRateGuard(config) {
             minRequestGapMs: config.min_request_gap_ms,
             jitterMs: config.jitter_ms,
             dailyBudgetUsd: config.daily_budget_usd,
+            maxRelayUtilization: config.max_relay_utilization,
         }
         : {};
     const cleaned = Object.fromEntries(Object.entries(mapped).filter(([, v]) => v !== undefined));

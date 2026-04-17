@@ -19,6 +19,7 @@ export const API_PRICES = {
     // ── Anthropic (Claude) ──
     // Verified against LiteLLM pricing DB. cache_read = 0.1x input,
     // cache_write = 1.25x input (Anthropic ephemeral cache).
+    "claude-opus-4-7": { input: 5, output: 25 }, // released 2026-04-16
     "claude-opus-4-6": { input: 5, output: 25 },
     "claude-opus-4-5": { input: 5, output: 25 },
     "claude-sonnet-4-6": { input: 3, output: 15 },

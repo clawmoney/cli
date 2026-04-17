@@ -6,7 +6,7 @@ import * as readline from "node:readline";
 import { intro, outro, multiselect, select, spinner, isCancel, cancel, log, } from "@clack/prompts";
 import chalk from "chalk";
 import { apiPost } from "../utils/api.js";
-import { loadConfig, requireConfig } from "../utils/config.js";
+import { loadConfig, requireConfig, saveConfig } from "../utils/config.js";
 import { setupCommand } from "./setup.js";
 import { API_PRICES, PLATFORM_FEE } from "../relay/pricing.js";
 import { hasClaudeFingerprint, bootstrapClaudeFingerprint, } from "../relay/upstream/claude-bootstrap.js";
@@ -31,9 +31,10 @@ import { hasCodexFingerprint, bootstrapCodexFingerprint, } from "../relay/upstre
 // falls through to modelsForCli(cli) which returns EVERY priced
 // model in that family.
 const RECOMMENDED_MODELS = {
-    // Claude Code /model menu: Default(Sonnet 4.6) / Sonnet(1M) / Opus(1M) / Haiku
-    // → 3 unique model IDs (Sonnet 1M = same model + context-1m beta)
-    claude: ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"],
+    // Claude Code /model menu (post 2026-04-16 Opus 4.7 release):
+    //   Default(Opus 4.7 1M) / Sonnet 4.6 / Haiku 4.5
+    // Opus 4.7 released 2026-04-16 and became the default model.
+    claude: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"],
     // Codex CLI /model menu for ChatGPT sign-in (post 2026-04-14 cleanup):
     //   gpt-5.4             — latest frontier agentic coding (current default)
     //   gpt-5.4-mini        — smaller frontier agentic coding
@@ -358,37 +359,50 @@ export async function relaySetupCommand() {
     // pricing × number of providers; we can't predict that, so we don't
     // pretend to.
     const concurrency = 5;
-    const dailyLimitChoice = await select({
-        message: "Daily quota share per model? (applies independently to each model you register)",
+    const quotaShareChoice = await select({
+        message: "How much of your 5h session window can relay use?",
         options: [
             {
-                value: 15,
-                label: "~25%  ·  Light",
+                value: 25,
+                label: "25%  ·  Light",
                 hint: "share a quarter, leaves 75% for your personal use",
             },
             {
-                value: 30,
-                label: "~50%  ·  Balanced  (recommended)",
-                hint: "splits each model's quota evenly between you and the relay",
+                value: 50,
+                label: "50%  ·  Balanced  (recommended)",
+                hint: "splits your quota evenly between you and the relay",
             },
             {
-                value: 45,
-                label: "~75%  ·  Heavy",
+                value: 75,
+                label: "75%  ·  Heavy",
                 hint: "most of your subscription goes to relay, 25% reserved for personal use",
             },
             {
-                value: 60,
-                label: "~100% ·  Full",
+                value: 100,
+                label: "100% ·  Full",
                 hint: "dedicates your subscription to relay — best for accounts you don't use personally",
             },
         ],
-        initialValue: 30,
+        initialValue: 50,
     });
-    if (isCancel(dailyLimitChoice)) {
+    if (isCancel(quotaShareChoice)) {
         cancel("Setup cancelled");
         process.exit(0);
     }
-    const dailyLimit = dailyLimitChoice;
+    const maxRelayUtilization = quotaShareChoice;
+    // daily_limit_usd is kept as a high fallback — the real cap is now
+    // maxRelayUtilization enforced by the daemon's rate-guard. Set it
+    // generously so it doesn't interfere.
+    const dailyLimit = 60;
+    // Persist max_relay_utilization into config.yaml so the daemon's
+    // rate-guard reads it on startup.
+    saveConfig({
+        relay: {
+            rate_guard: {
+                max_relay_utilization: maxRelayUtilization,
+            },
+        },
+    });
     // ── Step 5: register everything under one spinner ──
     //
     // We deliberately skip the old per-model Summary block: pricing is on
@@ -404,7 +418,7 @@ export async function relaySetupCommand() {
     // subscriptions + quota share above; Ctrl-C still aborts, and the
     // backend is idempotent so mid-way aborts are safe to re-run.
     const limitLabel = {
-        15: "~25%", 30: "~50%", 45: "~75%", 60: "~100%",
+        25: "25%", 50: "50%", 75: "75%", 100: "100%",
     };
     const earnPct = Math.round((1 - PLATFORM_FEE) * 100);
     // Single batch POST — one round-trip, one DB session, no
@@ -454,7 +468,7 @@ export async function relaySetupCommand() {
     if (failed === 0) {
         const breakdown = cliSummary.length > 0 ? `: ${cliSummary.join(chalk.dim(" · "))}` : "";
         regSpin.stop(`${chalk.green(`✓ Registered${breakdown}`)}  ` +
-            chalk.dim(`(${limitLabel[dailyLimit] ?? `$${dailyLimit}`} quota share · you earn ~${earnPct}%)`));
+            chalk.dim(`(${limitLabel[maxRelayUtilization] ?? `${maxRelayUtilization}%`} of 5h window · you earn ~${earnPct}%)`));
     }
     else {
         regSpin.stop(`${chalk.yellow(`${succeeded} registered, ${failed} failed`)}`);

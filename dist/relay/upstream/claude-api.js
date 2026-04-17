@@ -726,6 +726,7 @@ export function configureRateGuard(config) {
             minRequestGapMs: config.min_request_gap_ms,
             jitterMs: config.jitter_ms,
             dailyBudgetUsd: config.daily_budget_usd,
+            maxRelayUtilization: config.max_relay_utilization,
         }
         : {};
     // Filter out undefined so defaults apply.
@@ -896,7 +897,19 @@ async function doCallClaudeApi(opts) {
         // account harder and extend the ban. Parse the reset headers, mark
         // cooldown, and fail this request. Subsequent requests will immediately
         // short-circuit via checkCooldown().
+        //
+        // Exception: "Extra usage is required" is NOT a rate limit — it's a
+        // billing/feature gate (e.g. Sonnet 1M context requires Extra usage
+        // credits on Claude Max). Triggering a global 5-minute cooldown for
+        // this would block ALL subsequent requests (including Opus, Haiku,
+        // non-1M Sonnet) even though they don't need Extra usage. Instead,
+        // fail only this request and let others through.
         if (resp.status === 429) {
+            const isExtraUsage = errText.toLowerCase().includes("extra usage");
+            if (isExtraUsage) {
+                logger.warn("[claude-api] 429 Extra usage required — skipping cooldown (not a rate limit)");
+                throw new Error(`Anthropic 429 extra-usage-required: ${errText.slice(0, 300)}`);
+            }
             const cooldown = extractCooldownUntilFromHeaders(resp.headers);
             if (cooldown && rateGuard) {
                 rateGuard.triggerCooldown(cooldown.untilMs, cooldown.reason);
@@ -1307,6 +1320,11 @@ async function doCallClaudeApiPassthrough(opts) {
         }
         const errText = await resp.text();
         if (resp.status === 429) {
+            const isExtraUsage = errText.toLowerCase().includes("extra usage");
+            if (isExtraUsage) {
+                logger.warn("[claude-api] 429 Extra usage required (passthrough) — skipping cooldown");
+                throw new Error(`Anthropic 429 extra-usage-required: ${errText.slice(0, 300)}`);
+            }
             const cooldown = extractCooldownUntilFromHeaders(resp.headers);
             if (cooldown && rateGuard) {
                 rateGuard.triggerCooldown(cooldown.untilMs, cooldown.reason);

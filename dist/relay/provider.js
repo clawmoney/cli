@@ -7,7 +7,7 @@ import { callClaudeApi, callClaudeApiPassthrough, preflightClaudeApi, getRateGua
 import { callCodexApi, callCodexApiPassthrough, preflightCodexApi, getRateGuardSnapshot as getCodexRateGuardSnapshot, } from "./upstream/codex-api.js";
 import { callGeminiApi, preflightGeminiApi, getGeminiRateGuardSnapshot, } from "./upstream/gemini-api.js";
 import { callAntigravityApi, preflightAntigravityApi, getAntigravityRateGuardSnapshot, } from "./upstream/antigravity-api.js";
-import { apiGet } from "../utils/api.js";
+import { apiGet, apiPost } from "../utils/api.js";
 /**
  * Pick the rate-guard snapshot matching this request's cli_type. Fixes a
  * pre-existing bug where gemini/codex responses were piggy-backing Claude's
@@ -551,6 +551,85 @@ export function runRelayProvider(cliOverride) {
         });
     }
     const activeTasks = new Set();
+    async function syncModelCatalog() {
+        try {
+            // Step 1: existing providers (gives us cli_types + default settings).
+            const myResp = await apiGet("/api/v1/relay/providers/me", config.api_key);
+            if (!myResp.ok || !Array.isArray(myResp.data)) {
+                logger.warn(`[catalog-sync] skipped: /providers/me returned ${myResp.status}`);
+                return;
+            }
+            const existing = myResp.data;
+            if (existing.length === 0) {
+                logger.info("[catalog-sync] no existing providers yet — skipping auto-sync");
+                return;
+            }
+            // Settings template per cli_type (from any existing provider in that family).
+            const settingsByCli = new Map();
+            const knownModels = new Set();
+            for (const p of existing) {
+                knownModels.add(`${p.cli_type}/${p.model}`);
+                if (!settingsByCli.has(p.cli_type)) {
+                    settingsByCli.set(p.cli_type, {
+                        concurrency: p.concurrency,
+                        daily_limit_usd: p.daily_limit_usd,
+                    });
+                }
+            }
+            // Step 2: fetch catalog.
+            const catalogResp = await apiGet("/api/v1/relay/model-catalog");
+            if (!catalogResp.ok || !catalogResp.data?.catalog) {
+                logger.warn(`[catalog-sync] skipped: /model-catalog returned ${catalogResp.status}`);
+                return;
+            }
+            const catalog = catalogResp.data.catalog;
+            // Step 3: build batch for cli_types the agent has at least one provider for.
+            const batch = [];
+            const newModels = [];
+            for (const [cliType, settings] of settingsByCli) {
+                const recommended = catalog[cliType] ?? [];
+                for (const entry of recommended) {
+                    if (!knownModels.has(`${cliType}/${entry.model}`)) {
+                        newModels.push(`${cliType}/${entry.model}`);
+                    }
+                    batch.push({
+                        cli_type: cliType,
+                        model: entry.model,
+                        mode: "chat",
+                        concurrency: settings.concurrency,
+                        daily_limit_usd: settings.daily_limit_usd,
+                        price_input_per_m: entry.input,
+                        price_output_per_m: entry.output,
+                    });
+                }
+            }
+            if (batch.length === 0) {
+                return;
+            }
+            // Step 4: upsert via batch register (already idempotent).
+            const regResp = await apiPost("/api/v1/relay/providers/batch", { providers: batch }, config.api_key);
+            if (!regResp.ok) {
+                logger.warn(`[catalog-sync] batch register failed: ${regResp.status}`);
+                return;
+            }
+            const created = regResp.data.created?.length ?? 0;
+            const failed = regResp.data.failed?.length ?? 0;
+            if (newModels.length > 0 || created > 0) {
+                logger.info(`[catalog-sync] OK: ${batch.length} entries, ${created} newly created, ${failed} failed` +
+                    (newModels.length > 0 ? ` (new: ${newModels.join(", ")})` : ""));
+            }
+            else {
+                logger.info(`[catalog-sync] OK: ${batch.length} entries, no changes`);
+            }
+        }
+        catch (err) {
+            logger.warn(`[catalog-sync] error: ${err.message}`);
+        }
+    }
+    // Initial sync, then every 30 min.
+    syncModelCatalog().catch((err) => logger.warn(`[catalog-sync] initial sync failed: ${err.message}`));
+    const catalogTimer = setInterval(() => syncModelCatalog().catch((err) => logger.warn(`[catalog-sync] periodic sync failed: ${err.message}`)), 30 * 60 * 1000);
+    catalogTimer.unref();
     // Create WS client
     const wsClient = new RelayWsClient(config, (event) => {
         handleEvent(event);

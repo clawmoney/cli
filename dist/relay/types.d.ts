@@ -86,6 +86,7 @@ export interface RelayRateGuardConfig {
     min_request_gap_ms?: number;
     jitter_ms?: number;
     daily_budget_usd?: number;
+    max_relay_utilization?: number;
 }
 export interface RelayProviderSettings {
     cli_type: string;
