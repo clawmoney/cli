@@ -57,15 +57,90 @@ export async function setupCommand() {
     catch {
         // Fall through — if the check fails, we still try registering.
     }
+    // Existing ACTIVE agent → login path: send OTP, verify, rotate key.
+    // This is the "I already registered on another machine / lost my api_key"
+    // flow — no new claim link needed.
     if (existingStatus === 'ACTIVE') {
-        agentSpinner.warn('An active agent already exists for this email.');
-        console.log('');
-        console.log(chalk.yellow('If you have lost your API key, re-register and a new claim link will be sent.'));
-        const proceed = await prompt(chalk.cyan('? ') + 'Continue with re-registration? (y/N): ');
-        if (!/^y(es)?$/i.test(proceed.trim())) {
+        agentSpinner.info('Existing agent found. Sending login code to your email...');
+        try {
+            const loginResp = await apiPost('/api/v1/claw-agents/login', { email });
+            if (!loginResp.ok) {
+                console.error(chalk.red(JSON.stringify(loginResp.data)));
+                return;
+            }
+        }
+        catch (err) {
+            console.error(chalk.red(err.message));
             return;
         }
-        agentSpinner.start('Checking agent status...');
+        const otp = await prompt(chalk.cyan('? ') + 'Enter the 6-digit code from your email: ');
+        if (!otp || !/^\d{4,8}$/.test(otp.trim())) {
+            console.log(chalk.red('Invalid code.'));
+            return;
+        }
+        const verifySpinner = ora('Verifying code...').start();
+        let loginData;
+        try {
+            const verifyResp = await apiPost('/api/v1/claw-agents/login/verify', { email, otp: otp.trim() });
+            if (!verifyResp.ok) {
+                verifySpinner.fail('Verification failed');
+                console.error(chalk.red(JSON.stringify(verifyResp.data)));
+                return;
+            }
+            loginData = verifyResp.data;
+        }
+        catch (err) {
+            verifySpinner.fail('Verification failed');
+            console.error(chalk.red(err.message));
+            return;
+        }
+        verifySpinner.succeed('Logged in');
+        // Persist api_key immediately so nothing is lost if wallet provision hiccups.
+        saveConfig({
+            api_key: loginData.api_key,
+            agent_id: loginData.agent_id,
+            agent_slug: loginData.agent_slug,
+            email,
+            wallet_address: loginData.agent?.wallet_address ?? undefined,
+        });
+        // Ensure a CDP wallet exists for this agent. Older ACTIVE agents
+        // predating the CDP flow have wallet_address=null; hitting the
+        // balance endpoint triggers _ensure_agent_wallet on the backend.
+        let walletAddress = loginData.agent?.wallet_address ?? '';
+        if (!walletAddress) {
+            const walletSpinner = ora('Provisioning CDP wallet...').start();
+            try {
+                const balResp = await apiGet('/api/v1/claw-agents/me/wallet/balance?asset=usdc', loginData.api_key);
+                if (balResp.ok && balResp.data?.address) {
+                    walletAddress = balResp.data.address;
+                    saveConfig({ wallet_address: walletAddress });
+                    walletSpinner.succeed(`Wallet ready: ${walletAddress}`);
+                }
+                else {
+                    walletSpinner.warn('Wallet not yet available — will be created on first use.');
+                }
+            }
+            catch (err) {
+                walletSpinner.warn(`Wallet provisioning deferred: ${err.message}`);
+            }
+        }
+        // Summary.
+        console.log('');
+        console.log(chalk.green.bold('  Setup complete!'));
+        console.log('');
+        console.log(chalk.dim(`  Agent ID:    ${loginData.agent_id}`));
+        console.log(chalk.dim(`  Agent Slug:  ${loginData.agent_slug}`));
+        if (walletAddress) {
+            console.log(chalk.dim(`  Wallet:      ${walletAddress}`));
+            console.log(chalk.dim(`  Custody:     Coinbase CDP Server Wallet`));
+        }
+        console.log(chalk.dim(`  Config:      ${getConfigPath()}`));
+        console.log('');
+        console.log(`  Next steps:`);
+        console.log(`    ${chalk.cyan('clawmoney wallet balance')}  Check your wallet balance`);
+        console.log(`    ${chalk.cyan('clawmoney browse')}          Browse available tasks`);
+        console.log('');
+        return;
     }
     // Step 3: Register agent (or re-send claim link for an UNCLAIMED agent).
     // The backend generates the anonymous slug from email hash; we never send a name.
