@@ -3,8 +3,9 @@ import chalk from "chalk";
 import ora from "ora";
 import { requireConfig } from "../utils/config.js";
 import { apiGet, apiPost } from "../utils/api.js";
-import { awalExec } from "../utils/awal.js";
 import { uploadFile } from "../hub/media.js";
+import { CdpProvider } from "../wallet/cdp-provider.js";
+import { x402Fetch } from "../wallet/x402-client.js";
 export async function gigCreateCommand(options) {
     const config = requireConfig();
     const budget = parseFloat(options.budget);
@@ -43,17 +44,19 @@ export async function gigCreateCommand(options) {
         // Auto-fund: check wallet balance and pay
         spinner.start("Checking wallet balance...");
         try {
-            const balanceResult = await awalExec(["balance"]);
-            const baseBalances = balanceResult.data.base;
-            const usdcBalance = baseBalances?.balances
-                ? baseBalances.balances.USDC?.formatted
-                : undefined;
-            const balance = parseFloat(String(usdcBalance || "0"));
+            const wallet = new CdpProvider(config.api_key);
+            const bal = await wallet.getBalance("usdc");
+            const atomic = BigInt(bal.amount);
+            const divisor = 10n ** BigInt(bal.decimals || 6);
+            const balance = Number(atomic / divisor) + Number(atomic % divisor) / Number(divisor);
             if (balance >= budget) {
                 // Enough USDC — pay via x402
                 spinner.text = `Funding $${budget.toFixed(2)} USDC via x402...`;
                 try {
-                    await awalExec(["x402", "pay", `https://pay.clawmoney.ai/market/escrow/${task.id}?price=${budget}`]);
+                    const res = await x402Fetch(wallet, `https://pay.clawmoney.ai/market/escrow/${task.id}?price=${budget}`, { method: "POST" });
+                    if (!res.ok) {
+                        throw new Error(`Payment endpoint returned ${res.status}`);
+                    }
                     spinner.succeed(chalk.green(`Funded! $${budget.toFixed(2)} USDC`));
                     console.log(chalk.dim("  Task is now live and accepting submissions."));
                 }
@@ -82,7 +85,7 @@ export async function gigCreateCommand(options) {
                 }
                 else {
                     spinner.warn(chalk.yellow("Stripe checkout not available."));
-                    console.log(chalk.dim(`  Fund via x402: npx awal x402 pay "https://pay.clawmoney.ai/market/escrow/${task.id}?price=${budget}"`));
+                    console.log(chalk.dim(`  Fund via x402 in another client, or use Stripe checkout above.`));
                 }
             }
         }

@@ -5,8 +5,9 @@ import chalk from "chalk";
 import ora from "ora";
 import { requireConfig } from "../utils/config.js";
 import { apiGet, apiPost, getApiBase } from "../utils/api.js";
-import { awalExec } from "../utils/awal.js";
 import { readPid, isPidAlive, removePid } from "../hub/provider.js";
+import { CdpProvider } from "../wallet/cdp-provider.js";
+import { x402Fetch } from "../wallet/x402-client.js";
 
 const LOG_FILE = join(homedir(), ".clawmoney", "provider.log");
 
@@ -333,7 +334,15 @@ export async function hubCallCommand(options: CallOptions): Promise<void> {
       if (options.pay) {
         spinner.text = `Funding task $${budget} USDC via x402...`;
         try {
-          await awalExec(["x402", "pay", `https://pay.clawmoney.ai/market/escrow/${taskId}?price=${budget}`]);
+          const wallet = new CdpProvider(config.api_key);
+          const res = await x402Fetch(
+            wallet,
+            `https://pay.clawmoney.ai/market/escrow/${taskId}?price=${budget}`,
+            { method: "POST" }
+          );
+          if (!res.ok) {
+            throw new Error(`Payment endpoint returned ${res.status}`);
+          }
         } catch (err) {
           spinner.fail(chalk.red(`Funding failed: ${(err as Error).message}`));
           process.exit(1);
@@ -355,26 +364,29 @@ export async function hubCallCommand(options: CallOptions): Promise<void> {
       // x402 payment flow via pay.clawmoney.ai Worker
       const skillPrice = skillInfo?.price ?? 0.01;
 
-      // Step 2: Pay via awal x402 → pay.clawmoney.ai Worker
+      // Step 2: Pay via x402 → pay.clawmoney.ai Worker
       spinner.text = `Paying $${skillPrice} USDC for ${options.agent}/${options.skill}...`;
       const payUrl = `https://pay.clawmoney.ai/market/${encodeURIComponent(options.agent)}/${encodeURIComponent(options.skill)}?price=${skillPrice}`;
 
-      let payResult;
+      let payData: Record<string, unknown>;
       try {
-        payResult = await awalExec(["x402", "pay", payUrl]);
+        const wallet = new CdpProvider(config.api_key);
+        const res = await x402Fetch(wallet, payUrl, { method: "POST" });
+        if (!res.ok) {
+          throw new Error(`Payment endpoint returned ${res.status}`);
+        }
+        payData = (await res.json()) as Record<string, unknown>;
       } catch (err) {
         spinner.fail(chalk.red(`Payment failed: ${(err as Error).message}`));
         process.exit(1);
       }
 
       // Extract payment_token from Worker response
-      // awal returns {status, statusText, data: {payment_token, ...}, headers}
-      const payData = payResult.data as Record<string, unknown>;
       const innerData = (payData.data as Record<string, unknown>) ?? payData;
       const paymentToken = (innerData.payment_token as string) ?? (payData.payment_token as string);
       if (!paymentToken) {
         spinner.fail(chalk.red("Payment succeeded but no payment_token returned"));
-        console.error(chalk.dim(`  Raw response: ${JSON.stringify(payResult.data).slice(0, 200)}`));
+        console.error(chalk.dim(`  Raw response: ${JSON.stringify(payData).slice(0, 200)}`));
         process.exit(1);
       }
 

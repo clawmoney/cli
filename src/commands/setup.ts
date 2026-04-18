@@ -1,17 +1,12 @@
 import chalk from 'chalk';
 import ora from 'ora';
-import { awalExec } from '../utils/awal.js';
 import { apiGet, apiPost } from '../utils/api.js';
 import { loadConfig, saveConfig, getConfigPath } from '../utils/config.js';
 import { prompt } from '../utils/prompt.js';
-import { execSync } from 'node:child_process';
 
 // The /claw-agents/check-email endpoint has two shapes in the wild:
 //   - legacy:  {exists, status, agent_id, slug}
 //   - current: {exists, agent: {id, name, slug, status, ...}}
-// The current shape is what bnbot-api actually returns today. Keep
-// the legacy top-level fields as optional so an older backend doesn't
-// break the CLI either.
 interface CheckEmailAgent {
   id?: string;
   name?: string;
@@ -22,298 +17,176 @@ interface CheckEmailAgent {
 interface CheckEmailResponse {
   exists: boolean;
   agent?: CheckEmailAgent;
-  // legacy top-level fields
   status?: string;
   agent_id?: string;
   slug?: string;
 }
 
 interface RegisterResponse {
-  agent_id: string;
-  slug: string;
+  agent: {
+    id: string;
+    slug: string;
+    name?: string;
+    wallet_address?: string | null;
+    status?: string;
+  };
   api_key: string;
+  message?: string;
 }
 
-interface LoginResponse {
-  flow_id: string;
-  message: string;
+interface MeResponse {
+  id: string;
+  slug: string;
+  wallet_address?: string | null;
+  status?: string;
+  email?: string;
 }
 
-interface LoginVerifyResponse {
-  agent_id: string;
-  slug: string;
-  api_key: string;
+const CLAIM_POLL_INTERVAL_MS = 4_000;
+const CLAIM_POLL_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+
+async function pollForClaim(apiKey: string, onTick?: () => void): Promise<MeResponse | null> {
+  const start = Date.now();
+  while (Date.now() - start < CLAIM_POLL_TIMEOUT_MS) {
+    try {
+      const resp = await apiGet<MeResponse>('/api/v1/claw-agents/me', apiKey);
+      // Claim completion is detected via wallet_address being populated.
+      // Agent.status stays "unclaimed" by design until X account verification
+      // (see crud.claim_claw_agent), so we can't gate on status here — the
+      // wallet address is only set by complete_claim_with_key, so its
+      // presence is a reliable claim-completed signal.
+      if (resp.ok && resp.data && resp.data.wallet_address) {
+        return resp.data;
+      }
+    } catch {
+      // Network blip — keep polling.
+    }
+    onTick?.();
+    await new Promise((r) => setTimeout(r, CLAIM_POLL_INTERVAL_MS));
+  }
+  return null;
 }
 
 export async function setupCommand(): Promise<void> {
   console.log(chalk.bold('\n  ClawMoney Setup\n'));
 
-  // Non-interactive mode: if no TTY (e.g. AI agent running the command),
-  // install the skill and instruct the AI to proceed with onboarding.
+  // Non-interactive mode: skill-install path.
   if (!process.stdin.isTTY) {
     console.log('ClawMoney skill installed successfully.');
     console.log('');
     console.log('NEXT STEP: Run /clawmoney now to complete onboarding.');
-    console.log('The skill will walk you through wallet setup, agent registration, and earning.');
+    console.log('The skill will walk you through agent registration and earning.');
     console.log('');
     return;
   }
 
-  // Step 1: Check and install dependencies
-  const depSpinner = ora('Checking dependencies...').start();
-  try {
-    // Check if awal is available
-    try {
-      execSync('npx awal --version', { stdio: 'pipe' });
-      depSpinner.succeed('awal is available');
-    } catch {
-      depSpinner.text = 'Installing awal...';
-      try {
-        execSync('npm install -g awal', { stdio: 'pipe' });
-        depSpinner.succeed('awal installed');
-      } catch {
-        depSpinner.warn('Could not install awal globally. Will use npx.');
-      }
-    }
-  } catch (err) {
-    depSpinner.fail('Failed to check dependencies');
-    console.error(chalk.red((err as Error).message));
-    return;
-  }
-
-  // Step 2: Check wallet status
-  //
-  // We try to get the wallet address directly — if awal returns one, the
-  // wallet is signed in, end of story. This avoids the awal `status` command
-  // returning an unrecognized shape (observed field-name drift: some versions
-  // return `authenticated`, others `signedIn`/`account`/nested objects)
-  // which would otherwise force us into the login flow even when the user
-  // is already signed in, and awal would then refuse with "already signed in".
-  const walletSpinner = ora('Checking wallet status...').start();
-  let walletAddress = '';
-  let needsLogin = false;
-
-  try {
-    const addrResult = await awalExec(['address']);
-    const addrData = addrResult.data as Record<string, unknown>;
-    const addr = (addrData.address as string) || '';
-    if (addr) {
-      walletAddress = addr;
-      walletSpinner.succeed(`Wallet connected: ${walletAddress}`);
-    } else {
-      // Fall back to legacy `status` shape in case some awal version only
-      // exposes authentication through that command.
-      const status = await awalExec(['status']);
-      const statusData = status.data as Record<string, unknown>;
-      if (statusData.authenticated || statusData.loggedIn || statusData.address) {
-        walletAddress = (statusData.address as string) || '';
-        walletSpinner.succeed(`Wallet connected${walletAddress ? `: ${walletAddress}` : ''}`);
-      } else {
-        needsLogin = true;
-        walletSpinner.info('Wallet not authenticated');
-      }
-    }
-  } catch {
-    needsLogin = true;
-    walletSpinner.info('Wallet not authenticated');
-  }
-
-  // Step 3: Ask for email
+  // Step 1: Ask for email.
   const email = await prompt(chalk.cyan('? ') + 'Enter your email: ');
   if (!email || !email.includes('@')) {
     console.log(chalk.red('Invalid email address.'));
     return;
   }
 
-  // Step 4: Login wallet if needed
-  if (needsLogin) {
-    const loginSpinner = ora('Logging in to wallet...').start();
-    try {
-      const loginResult = await awalExec(['auth', 'login', email]);
-      const loginData = loginResult.data as Record<string, unknown>;
-      const flowId = loginData.flowId || loginData.flow_id;
-
-      if (!flowId) {
-        loginSpinner.fail('Login failed: no flow ID returned');
-        console.log(chalk.dim('Response:'), loginResult.raw);
-        return;
-      }
-
-      loginSpinner.info('OTP sent to your email');
-
-      const otp = await prompt(chalk.cyan('? ') + 'Enter OTP from email: ');
-      if (!otp) {
-        console.log(chalk.red('OTP is required.'));
-        return;
-      }
-
-      const verifySpinner = ora('Verifying OTP...').start();
-      try {
-        const verifyResult = await awalExec(['auth', 'verify', String(flowId), otp]);
-        verifySpinner.succeed('Wallet authenticated');
-
-        // Get wallet address
-        const addrResult = await awalExec(['address']);
-        const addrData = addrResult.data as Record<string, unknown>;
-        walletAddress = (addrData.address as string) || '';
-        if (walletAddress) {
-          console.log(chalk.dim(`  Wallet: ${walletAddress}`));
-        }
-      } catch (err) {
-        verifySpinner.fail('OTP verification failed');
-        console.error(chalk.red((err as Error).message));
-        return;
-      }
-    } catch (err) {
-      // If awal reports "already signed in" we're actually in the happy path
-      // — the wallet is authenticated, the address check at the top just
-      // failed to detect it. Try once more to fetch the address directly.
-      const msg = (err as Error).message || '';
-      if (/already\s*signed\s*in/i.test(msg)) {
-        loginSpinner.info('Wallet already signed in');
-        try {
-          const addrResult = await awalExec(['address']);
-          const addrData = addrResult.data as Record<string, unknown>;
-          walletAddress = (addrData.address as string) || '';
-          if (walletAddress) {
-            console.log(chalk.dim(`  Wallet: ${walletAddress}`));
-          }
-        } catch {
-          // Address fetch still failed — continue anyway; the agent
-          // register/login flow below doesn't strictly require a wallet.
-        }
-      } else {
-        loginSpinner.fail('Wallet login failed');
-        console.error(chalk.red(msg));
-        return;
-      }
-    }
-  }
-
-  // If we still don't have address, try fetching it
-  if (!walletAddress) {
-    try {
-      const addrResult = await awalExec(['address']);
-      const addrData = addrResult.data as Record<string, unknown>;
-      walletAddress = (addrData.address as string) || '';
-    } catch {
-      // continue without address
-    }
-  }
-
-  // Step 5: Check agent status
+  // Step 2: Check if this email already has an agent.
   const agentSpinner = ora('Checking agent status...').start();
+  let existingStatus = '';
   try {
     const checkResp = await apiGet<CheckEmailResponse>(
       `/api/v1/claw-agents/check-email?email=${encodeURIComponent(email)}`
     );
+    if (checkResp.ok) {
+      const info = checkResp.data.agent ?? {};
+      existingStatus = (info.status ?? checkResp.data.status ?? '').toUpperCase();
+    }
+  } catch {
+    // Fall through — if the check fails, we still try registering.
+  }
 
-    if (!checkResp.ok) {
-      agentSpinner.fail(`API error: ${checkResp.status}`);
+  if (existingStatus === 'ACTIVE') {
+    agentSpinner.warn('An active agent already exists for this email.');
+    console.log('');
+    console.log(chalk.yellow('If you have lost your API key, re-register and a new claim link will be sent.'));
+    const proceed = await prompt(chalk.cyan('? ') + 'Continue with re-registration? (y/N): ');
+    if (!/^y(es)?$/i.test(proceed.trim())) {
       return;
     }
+    agentSpinner.start('Checking agent status...');
+  }
 
-    const checkData = checkResp.data;
-
-    // Backend returns agent details nested under `agent` now; fall back
-    // to legacy top-level fields so an older backend still works.
-    // Status is normalized to uppercase so case differences between
-    // backend builds (active vs ACTIVE) don't trip the branch select.
-    const agentInfo = checkData.agent ?? {};
-    const agentStatus = (agentInfo.status ?? checkData.status ?? '').toUpperCase();
-    const agentSlug = agentInfo.slug ?? checkData.slug;
-    const agentIdFromCheck = agentInfo.id ?? checkData.agent_id;
-
-    if (!checkData.exists || agentStatus === 'UNCLAIMED') {
-      // Step 6: Register new agent
-      agentSpinner.text = 'Registering agent...';
-
-      // Backend generates the anonymous provider slug from email hash
-      // — we deliberately do NOT send a name here so users can't pick
-      // something that leaks PII.
-      const registerBody: Record<string, string> = { email };
-      if (walletAddress) {
-        registerBody.wallet_address = walletAddress;
-      }
-
-      const regResp = await apiPost<RegisterResponse>(
-        '/api/v1/claw-agents/register',
-        registerBody
-      );
-
-      if (!regResp.ok) {
-        agentSpinner.fail('Registration failed');
-        console.error(chalk.red(JSON.stringify(regResp.data)));
-        return;
-      }
-
-      const regData = regResp.data;
-      agentSpinner.succeed(`Agent registered: ${regData.slug}`);
-
-      saveConfig({
-        api_key: regData.api_key,
-        agent_id: regData.agent_id,
-        agent_slug: regData.slug,
-        email,
-        wallet_address: walletAddress || undefined,
-      });
-    } else if (agentStatus === 'ACTIVE') {
-      // Step 7: Login existing agent via OTP
-      agentSpinner.info(`Agent found: ${agentSlug || agentIdFromCheck}`);
-
-      const loginSpinner2 = ora('Sending login OTP...').start();
-      const loginResp = await apiPost<LoginResponse>(
-        '/api/v1/claw-agents/login',
-        { email }
-      );
-
-      if (!loginResp.ok) {
-        loginSpinner2.fail('Agent login failed');
-        console.error(chalk.red(JSON.stringify(loginResp.data)));
-        return;
-      }
-
-      loginSpinner2.info('OTP sent to your email');
-      const agentOtp = await prompt(chalk.cyan('? ') + 'Enter agent login OTP: ');
-
-      const verifySpinner2 = ora('Verifying...').start();
-      const verifyResp = await apiPost<LoginVerifyResponse>(
-        '/api/v1/claw-agents/login/verify',
-        {
-          email,
-          otp: agentOtp,
-          flow_id: loginResp.data.flow_id,
-        }
-      );
-
-      if (!verifyResp.ok) {
-        verifySpinner2.fail('Agent login verification failed');
-        console.error(chalk.red(JSON.stringify(verifyResp.data)));
-        return;
-      }
-
-      const loginData = verifyResp.data;
-      verifySpinner2.succeed('Agent authenticated');
-
-      saveConfig({
-        api_key: loginData.api_key,
-        agent_id: loginData.agent_id,
-        agent_slug: loginData.slug,
-        email,
-        wallet_address: walletAddress || undefined,
-      });
-    } else {
-      agentSpinner.warn(`Agent status: ${agentStatus || '(unknown)'}`);
-      console.log(chalk.yellow('Please contact support if you need help.'));
+  // Step 3: Register agent (or re-send claim link for an UNCLAIMED agent).
+  // The backend generates the anonymous slug from email hash; we never send a name.
+  agentSpinner.text = 'Registering agent...';
+  let regData: RegisterResponse;
+  try {
+    const regResp = await apiPost<RegisterResponse>(
+      '/api/v1/claw-agents/register',
+      { email }
+    );
+    if (!regResp.ok) {
+      agentSpinner.fail('Registration failed');
+      console.error(chalk.red(JSON.stringify(regResp.data)));
       return;
     }
+    regData = regResp.data;
   } catch (err) {
-    agentSpinner.fail('Failed to check agent status');
+    agentSpinner.fail('Registration failed');
     console.error(chalk.red((err as Error).message));
     return;
   }
 
-  // Step 8: Print summary
+  agentSpinner.succeed(`Agent registered: ${regData.agent.slug}`);
+
+  // Persist the api_key and agent_id immediately — the key only activates
+  // after the claim link is clicked, but we save it now so nothing is lost
+  // if the user ctrl-C's during the claim step.
+  saveConfig({
+    api_key: regData.api_key,
+    agent_id: regData.agent.id,
+    agent_slug: regData.agent.slug,
+    email,
+  });
+
+  // Step 4: Instruct the user to click the claim link in their email.
+  console.log('');
+  console.log(chalk.bold('  Check your email'));
+  console.log('');
+  console.log(chalk.dim('  We sent a claim link to'), chalk.cyan(email));
+  console.log(chalk.dim('  Click the link to complete setup. Your CDP wallet will be'));
+  console.log(chalk.dim('  provisioned automatically and this CLI will unlock.'));
+  console.log('');
+
+  // Step 5: Poll for claim completion.
+  const pollSpinner = ora('Waiting for claim link to be clicked...').start();
+  let tickCount = 0;
+  const completed = await pollForClaim(regData.api_key, () => {
+    tickCount++;
+    if (tickCount % 5 === 0) {
+      pollSpinner.text = `Waiting for claim link... (${Math.floor((tickCount * CLAIM_POLL_INTERVAL_MS) / 1000)}s)`;
+    }
+  });
+
+  if (!completed) {
+    pollSpinner.warn('Claim not completed within 15 minutes.');
+    console.log('');
+    console.log(chalk.yellow('  You can re-run'), chalk.cyan('clawmoney setup'), chalk.yellow('later to resume.'));
+    console.log(chalk.dim('  Your API key is already saved and will activate once you click the claim link.'));
+    console.log('');
+    return;
+  }
+
+  const walletAddress = completed.wallet_address ?? '';
+  pollSpinner.succeed('Agent claimed');
+
+  // Step 6: Update config with the now-known wallet address.
+  saveConfig({
+    api_key: regData.api_key,
+    agent_id: completed.id,
+    agent_slug: completed.slug,
+    email,
+    wallet_address: walletAddress || undefined,
+  });
+
+  // Step 7: Summary.
   const config = loadConfig();
   console.log('');
   console.log(chalk.green.bold('  Setup complete!'));
@@ -323,6 +196,7 @@ export async function setupCommand(): Promise<void> {
     console.log(chalk.dim(`  Agent Slug:  ${config.agent_slug}`));
     if (walletAddress) {
       console.log(chalk.dim(`  Wallet:      ${walletAddress}`));
+      console.log(chalk.dim(`  Custody:     Coinbase CDP Server Wallet`));
     }
     console.log(chalk.dim(`  Config:      ${getConfigPath()}`));
   }

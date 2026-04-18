@@ -1,8 +1,9 @@
 import chalk from 'chalk';
 import ora from 'ora';
 import { apiGet, apiPost } from '../utils/api.js';
-import { awalExec } from '../utils/awal.js';
 import { requireConfig } from '../utils/config.js';
+import { CdpProvider } from '../wallet/cdp-provider.js';
+import { x402PayJson } from '../wallet/x402-client.js';
 
 interface SubmitOptions {
   url: string;
@@ -109,11 +110,13 @@ export async function promoteVerifyCommand(
 
     // Fetch witness proof via x402
     const witnessSpinner = ora('Fetching witness proof via x402 ($0.01)...').start();
-    let witnessData: any;
+    let witnessData: Record<string, unknown>;
     try {
-      witnessData = await awalExec([
-        'x402', 'pay', `https://witness.bnbot.ai/x/${tweetId}`,
-      ]);
+      const wallet = new CdpProvider(config.api_key);
+      witnessData = await x402PayJson<Record<string, unknown>>(
+        wallet,
+        `https://witness.bnbot.ai/x/${tweetId}`
+      );
       witnessSpinner.succeed('Witness proof obtained');
     } catch (err) {
       witnessSpinner.fail('Witness fetch failed');
@@ -121,8 +124,14 @@ export async function promoteVerifyCommand(
       return;
     }
 
-    // Parse witness response — awalExec wraps: { success, data: { status, data: { code, data: {...}, proof: {...} } } }
-    const proof = witnessData?.data?.data?.proof || witnessData?.data?.proof || witnessData?.proof;
+    // Parse witness response — x402PayJson returns the response body directly.
+    const wdInner = witnessData?.data as Record<string, unknown> | undefined;
+    const proof = (wdInner?.proof ?? witnessData?.proof) as {
+      payload?: string;
+      signature?: string;
+      signer?: string;
+      timestamp?: number;
+    } | undefined;
     if (!proof) {
       console.error(chalk.red('  No proof in witness response'));
       console.log(chalk.dim(`  Raw: ${JSON.stringify(witnessData).slice(0, 200)}`));

@@ -1,6 +1,7 @@
 import { apiGet, apiPost } from "../utils/api.js";
-import { awalExec, awalExecSafe } from "../utils/awal.js";
 import { requireConfig } from "../utils/config.js";
+import { CdpProvider } from "../wallet/cdp-provider.js";
+import { x402PayJson } from "../wallet/x402-client.js";
 const POLL_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
 const MAX_PER_CYCLE = 3;
 const MIN_BALANCE_USD = 0.05;
@@ -9,15 +10,16 @@ function log(msg) {
     const ts = new Date().toISOString().replace("T", " ").slice(0, 19);
     console.log(`[${ts}] ${msg}`);
 }
-async function getUsdcBalance() {
+async function getUsdcBalance(apiKey) {
     try {
-        // Read-only balance check inside a long-running daemon loop —
-        // must auto-recover if awal wedges during the day.
-        const result = await awalExecSafe(["balance"], { timeoutMs: 10_000 });
-        const base = result.data.base;
-        const balances = base?.balances;
-        const usdc = balances?.USDC;
-        return parseFloat(String(usdc?.formatted || "0"));
+        const wallet = new CdpProvider(apiKey);
+        const bal = await wallet.getBalance("usdc");
+        // `amount` is in atomic units; USDC has 6 decimals.
+        const atomic = BigInt(bal.amount);
+        const divisor = 10n ** BigInt(bal.decimals || 6);
+        const whole = Number(atomic / divisor);
+        const frac = Number(atomic % divisor) / Number(divisor);
+        return whole + frac;
     }
     catch {
         return 0;
@@ -65,19 +67,15 @@ async function verifySubmission(task, submission, apiKey) {
     const tweetId = tweetMatch[1];
     let witnessData;
     try {
-        witnessData = await awalExec([
-            "x402",
-            "pay",
-            `https://witness.bnbot.ai/x/${tweetId}`,
-        ]);
+        const wallet = new CdpProvider(apiKey);
+        witnessData = await x402PayJson(wallet, `https://witness.bnbot.ai/x/${tweetId}`);
     }
     catch (err) {
         log(`  Witness failed: ${err.message}`);
         return false;
     }
-    const wd = witnessData.data;
-    const wdInner = wd?.data;
-    const proof = (wdInner?.proof ?? wd?.proof ?? null);
+    const wdInner = witnessData?.data;
+    const proof = (wdInner?.proof ?? witnessData?.proof ?? null);
     if (!proof) {
         log(`  No proof in witness response`);
         return false;
@@ -108,7 +106,7 @@ async function verifySubmission(task, submission, apiKey) {
 }
 async function runCycle(apiKey) {
     // Check balance
-    const balance = await getUsdcBalance();
+    const balance = await getUsdcBalance(apiKey);
     if (balance < MIN_BALANCE_USD) {
         log(`Balance $${balance.toFixed(3)} below minimum $${MIN_BALANCE_USD}. Pausing.`);
         return;

@@ -1,12 +1,10 @@
 import chalk from 'chalk';
 import ora from 'ora';
-import { awalExec, awalExecSafe } from '../utils/awal.js';
 import { apiGet } from '../utils/api.js';
-import { loadConfig, saveConfig } from '../utils/config.js';
-// Base mainnet USDC contract + balanceOf(address) ABI selector.
-// Keeping on-chain reads as a first-class path lets `wallet balance`
-// skip the awal Electron bridge entirely, which is notorious for
-// cold-starting slowly or hanging if the daemon isn't warm.
+import { loadConfig, requireConfig, saveConfig } from '../utils/config.js';
+import { CdpProvider } from '../wallet/cdp-provider.js';
+// On-chain balance is read directly over public RPC to avoid a hot-path
+// round-trip through the backend for a plain USDC balance query.
 const BASE_RPC_URL = 'https://mainnet.base.org';
 const BASE_USDC_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const BALANCE_OF_SELECTOR = '0x70a08231';
@@ -43,14 +41,14 @@ async function readBaseUsdcBalance(walletAddress, timeoutMs = 8000) {
 export async function walletStatusCommand() {
     const spinner = ora('Getting wallet status...').start();
     try {
-        // Read-only, safe to auto-retry after killing a wedged awal.
-        const result = await awalExecSafe(['status'], { timeoutMs: 8_000 });
+        const config = requireConfig();
+        const wallet = new CdpProvider(config.api_key);
+        const address = await wallet.getAddress();
         spinner.succeed('Wallet Status');
         console.log('');
-        const data = result.data;
-        for (const [key, value] of Object.entries(data)) {
-            console.log(`  ${chalk.dim(key + ':')} ${value}`);
-        }
+        console.log(`  ${chalk.dim('Address:')} ${chalk.cyan(address)}`);
+        console.log(`  ${chalk.dim('Custody:')} Coinbase CDP Server Wallet`);
+        console.log(`  ${chalk.dim('Network:')} Base`);
         console.log('');
     }
     catch (err) {
@@ -58,75 +56,25 @@ export async function walletStatusCommand() {
         console.error(chalk.red(err.message));
     }
 }
-// Wrap a promise in a hard timeout so a hung awal process can't
-// swallow the whole command. On timeout we surface a specific
-// error string the caller can tell apart from generic spawn errors.
-function withTimeout(p, ms, label) {
-    return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-            reject(new Error(`${label} timed out after ${ms}ms`));
-        }, ms);
-        p.then((v) => {
-            clearTimeout(timer);
-            resolve(v);
-        }, (e) => {
-            clearTimeout(timer);
-            reject(e);
-        });
-    });
-}
 export async function walletBalanceCommand() {
     const spinner = ora('Getting wallet balance...').start();
-    // Source of truth for on-chain balance: direct JSON-RPC to Base
-    // mainnet USDC, not `awal balance`. Reasons:
-    //   - awal is an Electron app; cold-starting it via `npx` takes 3-10s
-    //     and occasionally wedges under load (see GH issues around
-    //     DEP0190 / pipe buffers).
-    //   - We already store the wallet address in ~/.clawmoney/config.yaml
-    //     at setup time, so we don't need awal to look it up.
-    //   - RPC reads are idempotent, cacheable, and cost nothing.
-    // Relay earnings are fetched in parallel from the clawmoney backend.
-    // Either half is allowed to fail — we print "(unavailable)" for the
-    // broken section and keep going.
+    // Source of truth for on-chain balance: direct JSON-RPC to Base mainnet
+    // USDC. The wallet address comes from config.yaml (set at setup time) or
+    // the backend /me endpoint. Relay earnings are fetched in parallel.
     const config = loadConfig();
-    // Wallet address lookup order:
-    //   1. ~/.clawmoney/config.yaml cache (instant)
-    //   2. Backend /api/v1/claw-agents/me (authoritative, ~200ms)
-    //   3. awal address (Electron cold-start, last resort, 5s cap)
-    // After a successful #2 we write the result back to the config so
-    // every future `wallet balance` hits path #1.
     let walletAddress = config?.wallet_address ?? null;
-    let addressSource = 'config';
     let addressError = null;
     if (!walletAddress && config?.api_key) {
         try {
             const resp = await apiGet('/api/v1/claw-agents/me', config.api_key);
             if (resp.ok && typeof resp.data?.wallet_address === 'string' && resp.data.wallet_address) {
                 walletAddress = resp.data.wallet_address;
-                addressSource = 'api';
-                // Cache it so the next run is instant.
                 try {
                     saveConfig({ wallet_address: walletAddress });
                 }
                 catch {
                     // Non-fatal — we still have the address for THIS run.
                 }
-            }
-        }
-        catch (err) {
-            addressError = err.message;
-        }
-    }
-    if (!walletAddress) {
-        // Last resort: cold-start awal. Uses awalExecSafe so a wedged
-        // Electron is automatically killed + retried before surfacing
-        // the error. Capped at 6s per attempt.
-        try {
-            const awalResult = await awalExecSafe(['address'], { timeoutMs: 6_000 });
-            const data = awalResult.data;
-            if (typeof data?.address === 'string' && data.address) {
-                walletAddress = data.address;
-                addressSource = 'awal';
             }
         }
         catch (err) {
@@ -151,7 +99,6 @@ export async function walletBalanceCommand() {
     else {
         onchainError = addressError ?? 'no wallet address in config';
     }
-    void addressSource; // reserved for future debug display
     const relayRows = await relayPromise;
     spinner.stop();
     console.log('');
@@ -170,12 +117,6 @@ export async function walletBalanceCommand() {
     console.log('');
     console.log(chalk.bold('  Pending payout (Relay)'));
     if (relayRows && relayRows.length > 0) {
-        // "Earned lifetime" is vanity — the only thing that matters for
-        // the wallet view is: how much is already in the on-chain wallet
-        // (shown above as USDC), and how much is still owed to the user
-        // (pending = earned - withdrawn). Those two numbers together
-        // tell the full story; showing "earned" separately would double-
-        // count the wallet USDC that came from relay payouts.
         const earned = relayRows.reduce((s, p) => s + (p.total_earned_usd ?? 0), 0);
         const withdrawn = relayRows.reduce((s, p) => s + (p.total_withdrawn_usd ?? 0), 0);
         const pending = Math.max(0, earned - withdrawn);
@@ -194,13 +135,27 @@ export async function walletBalanceCommand() {
 export async function walletAddressCommand() {
     const spinner = ora('Getting wallet address...').start();
     try {
-        // Read-only, safe to auto-retry on awal wedge.
-        const result = await awalExecSafe(['address'], { timeoutMs: 8_000 });
+        const config = requireConfig();
+        // Fast path: config.yaml cache (written at setup).
+        if (config.wallet_address) {
+            spinner.succeed('Wallet Address');
+            console.log('');
+            console.log(`  ${chalk.cyan(config.wallet_address)}`);
+            console.log('');
+            return;
+        }
+        const wallet = new CdpProvider(config.api_key);
+        const address = await wallet.getAddress();
+        // Cache back to config.
+        try {
+            saveConfig({ wallet_address: address });
+        }
+        catch {
+            // Non-fatal.
+        }
         spinner.succeed('Wallet Address');
         console.log('');
-        const data = result.data;
-        const address = data.address || result.raw.trim();
-        console.log(`  ${chalk.cyan(String(address))}`);
+        console.log(`  ${chalk.cyan(address)}`);
         console.log('');
     }
     catch (err) {
@@ -210,22 +165,26 @@ export async function walletAddressCommand() {
 }
 export async function walletSendCommand(amount, to) {
     console.log('');
-    console.log(chalk.bold('  Send Transaction'));
+    console.log(chalk.bold('  Send USDC'));
     console.log(chalk.dim(`  Amount: ${amount}`));
     console.log(chalk.dim(`  To:     ${to}`));
     console.log('');
     const spinner = ora('Sending...').start();
     try {
-        const result = await awalExec(['send', amount, to]);
+        const config = requireConfig();
+        const wallet = new CdpProvider(config.api_key);
+        // `amount` is the user-facing decimal (e.g. "1.5"); convert to atomic (6dp for USDC).
+        const [whole, frac = ''] = amount.split('.');
+        const paddedFrac = (frac + '000000').slice(0, 6);
+        const atomic = BigInt(whole || '0') * 1000000n + BigInt(paddedFrac || '0');
+        const result = await wallet.send(to, atomic.toString(), 'usdc');
         spinner.succeed('Transaction sent');
         console.log('');
-        const data = result.data;
-        if (data.txHash || data.hash || data.transactionHash) {
-            const hash = data.txHash || data.hash || data.transactionHash;
-            console.log(`  ${chalk.dim('TX Hash:')} ${chalk.cyan(String(hash))}`);
+        if (result.transaction_hash) {
+            console.log(`  ${chalk.dim('TX Hash:')} ${chalk.cyan(result.transaction_hash)}`);
         }
-        else {
-            console.log(`  ${result.raw}`);
+        if (result.transaction_link) {
+            console.log(`  ${chalk.dim('Link:')}    ${chalk.cyan(result.transaction_link)}`);
         }
         console.log('');
     }
