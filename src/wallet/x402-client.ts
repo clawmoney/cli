@@ -1,4 +1,4 @@
-import { bytesToHex, keccak256, stringToBytes } from 'viem';
+import { bytesToHex } from 'viem';
 import type { WalletProvider, Eip712TypedData } from './provider.js';
 
 export interface X402PaymentRequirement {
@@ -83,10 +83,13 @@ async function signPaymentAuthorization(
   }
 
   const now = Math.floor(Date.now() / 1000);
-  const validAfter = 0;
-  const validBefore = now + req.maxTimeoutSeconds;
+  const validAfter = "0";
+  const validBefore = String(now + req.maxTimeoutSeconds);
   const nonce = randomNonce32();
 
+  // x402 spec (and facilitator Zod schemas) require uint256 fields as
+  // JSON strings, not numbers. CDP's sign_typed_data accepts either for
+  // the signing input, but the X-Payment payload must be stringified.
   const authorization = {
     from: fromAddress,
     to: req.payTo,
@@ -110,11 +113,12 @@ async function signPaymentAuthorization(
     message: authorization,
   };
 
-  // Idempotency key: deterministic hash of the authorization so a retry
-  // producing the same nonce won't double-sign.
-  const idempotencyKey = keccak256(
-    stringToBytes(JSON.stringify(authorization))
-  );
+  // Idempotency key: random UUID (36 chars, CDP SDK's documented limit).
+  // We can't use keccak(authorization) because its 66-char hex output
+  // exceeds CDP's x_idempotency_key length cap. Since `nonce` inside
+  // the authorization is already unique per request, a random UUID
+  // here is sufficient to dedupe client-side retries.
+  const idempotencyKey = crypto.randomUUID();
 
   const signed = await wallet.signTypedData(typed, idempotencyKey);
   return { signature: signed.signature, authorization };
