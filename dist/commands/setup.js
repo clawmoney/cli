@@ -103,26 +103,34 @@ export async function setupCommand() {
             email,
             wallet_address: loginData.agent?.wallet_address ?? undefined,
         });
-        // Ensure a CDP wallet exists for this agent. Older ACTIVE agents
-        // predating the CDP flow have wallet_address=null; hitting the
-        // balance endpoint triggers _ensure_agent_wallet on the backend.
-        let walletAddress = loginData.agent?.wallet_address ?? '';
-        if (!walletAddress) {
-            const walletSpinner = ora('Provisioning CDP wallet...').start();
-            try {
-                const balResp = await apiGet('/api/v1/claw-agents/me/wallet/balance?asset=usdc', loginData.api_key);
-                if (balResp.ok && balResp.data?.address) {
-                    walletAddress = balResp.data.address;
-                    saveConfig({ wallet_address: walletAddress });
-                    walletSpinner.succeed(`Wallet ready: ${walletAddress}`);
+        // Always hit /me/wallet/balance to (a) let the backend reconcile
+        // legacy awal addresses to the canonical CDP address (the /login/verify
+        // response may still carry the stale awal value from DB), and (b) cache
+        // the authoritative address back to config. The returned `address` is
+        // the CDP account address after _ensure_agent_wallet has run.
+        let walletAddress = '';
+        const walletSpinner = ora('Reconciling CDP wallet...').start();
+        try {
+            const balResp = await apiGet('/api/v1/claw-agents/me/wallet/balance?asset=usdc', loginData.api_key);
+            if (balResp.ok && balResp.data?.address) {
+                walletAddress = balResp.data.address;
+                saveConfig({ wallet_address: walletAddress });
+                const prior = loginData.agent?.wallet_address ?? '';
+                if (prior && prior.toLowerCase() !== walletAddress.toLowerCase()) {
+                    walletSpinner.succeed(`Wallet migrated: ${prior} → ${walletAddress}`);
+                    console.log(chalk.yellow(`  (Your old awal address ${prior} is no longer`));
+                    console.log(chalk.yellow(`   used by this CLI. Transfer any remaining funds manually.)`));
                 }
                 else {
-                    walletSpinner.warn('Wallet not yet available — will be created on first use.');
+                    walletSpinner.succeed(`Wallet ready: ${walletAddress}`);
                 }
             }
-            catch (err) {
-                walletSpinner.warn(`Wallet provisioning deferred: ${err.message}`);
+            else {
+                walletSpinner.warn('Wallet reconcile failed — will be created on first use.');
             }
+        }
+        catch (err) {
+            walletSpinner.warn(`Wallet reconcile deferred: ${err.message}`);
         }
         // Summary.
         console.log('');
