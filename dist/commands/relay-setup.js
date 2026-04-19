@@ -275,13 +275,16 @@ export async function relaySetupCommand() {
     if (available.length > 0) {
         log.success(`Found: ${chalk.bold(available.map((d) => d.cli).join(", "))}`);
         if (hasMissing) {
-            log.message(chalk.dim("(ClawMoney supports claude, codex, gemini, and antigravity — only these were detected on this machine)"));
+            log.message(chalk.dim("(ClawMoney supports claude, codex, gemini, antigravity, " +
+                "zai / moonshot / kimi-coding / qwen-coding / openai (static-key), " +
+                "and minimax (OAuth or static-key) — only these were detected on this machine)"));
         }
     }
     if (available.length === 0) {
         log.error("No supported CLI clients found locally. Install at least one of: " +
             chalk.cyan("claude, codex, gemini") +
-            " — or run `clawmoney antigravity login` to link a Google account.");
+            " — or run `clawmoney antigravity login` to link a Google account, " +
+            "or `openclaw onboard` to link any supported subscription.");
         cancel("Setup aborted");
         process.exit(1);
     }
