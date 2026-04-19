@@ -25,6 +25,19 @@ import {
   preflightAntigravityApi,
   getAntigravityRateGuardSnapshot,
 } from "./upstream/antigravity-api.js";
+import {
+  callMinimaxApi,
+  preflightMinimaxApi,
+  getMinimaxRateGuardSnapshot,
+} from "./upstream/minimax-api.js";
+import {
+  callPassthroughApi,
+  preflightPassthroughApi,
+  getPassthroughRateGuardSnapshot,
+} from "./upstream/passthrough-api.js";
+// Side-effect import: registers all static-key passthrough specs at module
+// load time (zai, zai-coding, moonshot, kimi-coding, qwen-coding, openai).
+import { PASSTHROUGH_CLI_TYPES } from "./upstream/passthrough-specs.js";
 import { apiGet, apiPost } from "../utils/api.js";
 
 /**
@@ -43,8 +56,17 @@ function getRateGuardSnapshotForCli(
       return getGeminiRateGuardSnapshot();
     case "antigravity":
       return getAntigravityRateGuardSnapshot();
+    case "minimax":
+      return getMinimaxRateGuardSnapshot();
     case "claude":
+      return getClaudeRateGuardSnapshot();
     default:
+      // Passthrough cli_types share the generic rate-guard shape but track
+      // per-cli load independently. Returns null for unknown cli_types,
+      // which is fine — the Hub treats missing snapshots as "no signal".
+      if (PASSTHROUGH_CLI_TYPES.has(cli)) {
+        return getPassthroughRateGuardSnapshot(cli);
+      }
       return getClaudeRateGuardSnapshot();
   }
 }
@@ -54,6 +76,7 @@ import type {
   RelayProviderConfig,
   RelayProviderSettings,
   RelayIncomingEvent,
+  RelayRateGuardConfig,
   RelayRequest,
   RelayResponse,
 } from "./types.js";
@@ -400,6 +423,25 @@ async function executeRelayRequest(
         model,
         maxTokens: max_budget_usd ? undefined : 8192,
       });
+    } else if (cliType === "minimax") {
+      parsed = await callMinimaxApi({
+        prompt,
+        passthroughBody: request.passthrough_body,
+        model,
+        maxTokens: max_budget_usd ? undefined : 8192,
+        onRawEvent: sendChunk,
+      });
+    } else if (PASSTHROUGH_CLI_TYPES.has(cliType)) {
+      // Static-key OpenAI-compat providers (zai / moonshot / kimi / qwen / openai).
+      // Single shared wire, spec selected by cli_type.
+      parsed = await callPassthroughApi({
+        cliType,
+        prompt,
+        passthroughBody: request.passthrough_body,
+        model,
+        maxTokens: max_budget_usd ? undefined : 4096,
+        onRawEvent: sendChunk,
+      });
     } else {
       // Claude: two modes.
       //
@@ -525,7 +567,13 @@ function getPreflightFn(cliType: string) {
       return preflightGeminiApi;
     case "antigravity":
       return preflightAntigravityApi;
+    case "minimax":
+      return preflightMinimaxApi;
     default:
+      if (PASSTHROUGH_CLI_TYPES.has(cliType)) {
+        return (config?: RelayRateGuardConfig) =>
+          preflightPassthroughApi(cliType, config);
+      }
       return null;
   }
 }

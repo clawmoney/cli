@@ -12,6 +12,7 @@ import { API_PRICES, PLATFORM_FEE } from "../relay/pricing.js";
 import { hasClaudeFingerprint, bootstrapClaudeFingerprint, } from "../relay/upstream/claude-bootstrap.js";
 import { hasGeminiFingerprint, bootstrapGeminiFingerprint, } from "../relay/upstream/gemini-bootstrap.js";
 import { hasCodexFingerprint, bootstrapCodexFingerprint, } from "../relay/upstream/codex-bootstrap.js";
+import { listOpenclawOAuthProviders, listOpenclawApiKeyProviders, } from "../relay/upstream/openclaw-creds.js";
 // ── Per-cli_type model catalogs ──
 //
 // `RECOMMENDED_MODELS` is what gets registered when the user picks "all
@@ -74,6 +75,23 @@ const RECOMMENDED_MODELS = {
         "antigravity-gemini-3-flash",
         "antigravity-gemini-2.5-pro",
     ],
+    // ── Z.AI / GLM ──
+    // One cli_type per openclaw onboarding choice. Coding-plan variants share
+    // the same recommended catalog — the cli_type distinguishes the upstream
+    // baseUrl at call time, not the model id.
+    "zai-coding": ["glm-5", "glm-4.7", "glm-4.7-flash", "glm-4.5-air"],
+    zai: ["glm-5", "glm-4.7", "glm-4.7-flash", "glm-4.5-air"],
+    // ── Moonshot / Kimi ──
+    moonshot: ["kimi-k2.5", "kimi-k2-thinking", "kimi-k2-turbo"],
+    "kimi-coding": ["kimi-code"],
+    // ── Qwen Coding Plan ──
+    "qwen-coding": ["qwen3.6-plus", "qwen-coder-plus", "qwen3-coder"],
+    // ── MiniMax ──
+    minimax: ["MiniMax-M2.7", "MiniMax-M2.7-highspeed"],
+    // ── OpenAI API-key (distinct from "codex" subscription adapter) ──
+    // Uses the buyer's own API key; same model catalog as codex Coding CLI
+    // plus the o-series reasoning models that codex can't serve.
+    openai: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "o4-mini"],
 };
 function modelsForCli(cli) {
     const all = Object.keys(API_PRICES);
@@ -95,6 +113,25 @@ function modelsForCli(cli) {
         // the antigravity cli_type, not the standalone gemini cli_type.
         return all.filter((m) => m.startsWith("gemini-") && !m.startsWith("antigravity-"));
     }
+    if (cli === "zai-coding" || cli === "zai") {
+        return all.filter((m) => m.startsWith("glm-"));
+    }
+    if (cli === "moonshot") {
+        return all.filter((m) => m.startsWith("kimi-k2"));
+    }
+    if (cli === "kimi-coding") {
+        return ["kimi-code"].filter((m) => m in API_PRICES);
+    }
+    if (cli === "qwen-coding") {
+        return all.filter((m) => m.startsWith("qwen"));
+    }
+    if (cli === "minimax") {
+        return all.filter((m) => m.startsWith("MiniMax-"));
+    }
+    if (cli === "openai") {
+        // OpenAI API-key passthrough — gpt-5.x + o-series reasoning models.
+        return all.filter((m) => m.startsWith("gpt-") || m === "o3" || m === "o4-mini");
+    }
     return [];
 }
 function detectInstalledClis() {
@@ -103,6 +140,17 @@ function detectInstalledClis() {
     // validate OAuth state here — the daemon's preflight does that on
     // first start, and probing OAuth from a sync setup wizard would be
     // brittle (keychain prompts, refresh-token races, etc).
+    // Map clawmoney cli_type → openclaw provider id. Used so a machine with
+    // only openclaw installed still surfaces the relevant subscriptions via
+    // ~/.openclaw/agents/*/agent/auth-profiles.json instead of requiring the
+    // underlying official CLI binary. The adapters (claude-api / codex-api /
+    // gemini-api) transparently fall back to those profiles at runtime.
+    const openclawProviders = new Set(listOpenclawOAuthProviders());
+    const openclawProviderFor = {
+        claude: "anthropic",
+        codex: "openai-codex",
+        gemini: "google",
+    };
     const binaries = [
         { cli: "claude", bin: "claude" },
         { cli: "codex", bin: "codex" },
@@ -117,14 +165,58 @@ function detectInstalledClis() {
         catch {
             installed = false;
         }
-        results.push({
-            cli,
-            available: installed,
-            hint: installed
-                ? "binary in PATH (login state will be validated when daemon starts)"
-                : `${bin} not found in PATH`,
-        });
+        const hasOpenclawProfile = openclawProviders.has(openclawProviderFor[cli]);
+        const available = installed || hasOpenclawProfile;
+        let hint;
+        if (installed) {
+            hint = "binary in PATH (login state will be validated when daemon starts)";
+        }
+        else if (hasOpenclawProfile) {
+            hint = "OpenClaw OAuth profile detected (no official CLI binary needed)";
+        }
+        else {
+            hint = `${bin} not found in PATH`;
+        }
+        results.push({ cli, available, hint });
     }
+    // ── Static-key passthrough providers ──
+    // No binary to probe — each maps to an openclaw api_key profile or an
+    // env var. Pair of (provider-id-in-openclaw, env-var-name, cli_type).
+    const passthroughDetection = [
+        { cli: "zai-coding", openclawProvider: "zai", env: "ZAI_API_KEY" },
+        { cli: "zai", openclawProvider: "zai", env: "ZAI_API_KEY" },
+        { cli: "moonshot", openclawProvider: "moonshot", env: "MOONSHOT_API_KEY" },
+        { cli: "kimi-coding", openclawProvider: "kimi", env: "KIMI_API_KEY" },
+        { cli: "qwen-coding", openclawProvider: "qwen", env: "BAILIAN_CODING_PLAN_API_KEY" },
+        { cli: "openai", openclawProvider: "openai", env: "OPENAI_API_KEY" },
+    ];
+    const openclawApiKeyProviders = new Set(listOpenclawApiKeyProviders());
+    for (const { cli, openclawProvider, env } of passthroughDetection) {
+        const hasOpenclawKey = openclawApiKeyProviders.has(openclawProvider);
+        const hasEnv = !!process.env[env];
+        const available = hasOpenclawKey || hasEnv;
+        let hint;
+        if (hasOpenclawKey)
+            hint = `OpenClaw api_key profile (${openclawProvider})`;
+        else if (hasEnv)
+            hint = `${env} env var set`;
+        else
+            hint = `no key found (openclaw ${openclawProvider} profile or ${env})`;
+        results.push({ cli, available, hint });
+    }
+    // MiniMax: OAuth Coding Plan OR api_key fallback. List separately so the
+    // hint can explain which path was detected.
+    const hasMinimaxOauth = openclawProviders.has("minimax-portal");
+    const hasMinimaxKey = openclawApiKeyProviders.has("minimax") || !!process.env.MINIMAX_API_KEY;
+    results.push({
+        cli: "minimax",
+        available: hasMinimaxOauth || hasMinimaxKey,
+        hint: hasMinimaxOauth
+            ? "OpenClaw minimax-portal OAuth profile"
+            : hasMinimaxKey
+                ? "MiniMax api_key (openclaw or MINIMAX_API_KEY)"
+                : "no MiniMax credential (run `openclaw onboard --auth-choice minimax-global-oauth` or export MINIMAX_API_KEY)",
+    });
     // Antigravity is OAuth-file based — there's no `antigravity` binary
     // installed locally. We check for the OAuth credentials file that
     // `clawmoney antigravity login` writes.

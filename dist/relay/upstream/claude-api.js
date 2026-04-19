@@ -26,6 +26,7 @@ import { ProxyAgent, setGlobalDispatcher } from "undici";
 import { relayLogger as logger } from "../logger.js";
 import { RateGuard, RateGuardBudgetExceededError, RateGuardCooldownError, } from "./rate-guard.js";
 import { calculateCost } from "../pricing.js";
+import { readOpenclawOAuthProfile, persistOpenclawOAuthProfile, } from "./openclaw-creds.js";
 export { RateGuardBudgetExceededError, RateGuardCooldownError };
 // ── Constants (sourced from sub2api + claude-cli/2.1.100 capture) ──
 const OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
@@ -480,24 +481,44 @@ function loadClaudeOAuth() {
     const fromKeychain = readCredentialsFromKeychain();
     const fromFile = fromKeychain ? null : readCredentialsFromFile();
     const raw = fromKeychain ?? fromFile;
-    if (!raw) {
-        throw new Error("Claude Code credentials not found. Log in with `claude` first.");
+    if (raw) {
+        const oauth = raw.claudeAiOauth;
+        if (!oauth?.accessToken) {
+            throw new Error("Credentials file missing claudeAiOauth.accessToken");
+        }
+        return {
+            source: fromKeychain ? "keychain" : "file",
+            filePath: fromKeychain ? undefined : CLAUDE_CREDENTIALS_FILE_PATH,
+            accessToken: oauth.accessToken,
+            refreshToken: oauth.refreshToken,
+            expiresAt: oauth.expiresAt,
+            scopes: oauth.scopes ?? [],
+            subscriptionType: oauth.subscriptionType,
+            rateLimitTier: oauth.rateLimitTier,
+            _rawWrapper: raw,
+        };
     }
-    const oauth = raw.claudeAiOauth;
-    if (!oauth?.accessToken) {
-        throw new Error("Credentials file missing claudeAiOauth.accessToken");
+    // Fallback: openclaw's auth-profiles.json. Anthropic subscription OAuth
+    // stored under provider="anthropic". openclaw does not record scopes /
+    // subscriptionType / rateLimitTier, so those stay undefined — preflight
+    // logs will show "subscription=? tier=?", which is accurate ("we don't
+    // know"). Refresh responses from Anthropic's OAuth endpoint echo the
+    // scopes array back, so the field gets populated on the first refresh.
+    const openclawProfile = readOpenclawOAuthProfile("anthropic");
+    if (openclawProfile) {
+        logger.info(`[claude-api] using OpenClaw credential fallback (profile=${openclawProfile.profileKey}, store=${openclawProfile.storePath})`);
+        return {
+            source: "openclaw",
+            openclawProfile,
+            accessToken: openclawProfile.access,
+            refreshToken: openclawProfile.refresh,
+            expiresAt: openclawProfile.expires,
+            scopes: [],
+        };
     }
-    return {
-        source: fromKeychain ? "keychain" : "file",
-        filePath: fromKeychain ? undefined : CLAUDE_CREDENTIALS_FILE_PATH,
-        accessToken: oauth.accessToken,
-        refreshToken: oauth.refreshToken,
-        expiresAt: oauth.expiresAt,
-        scopes: oauth.scopes ?? [],
-        subscriptionType: oauth.subscriptionType,
-        rateLimitTier: oauth.rateLimitTier,
-        _rawWrapper: raw,
-    };
+    throw new Error("Claude Code credentials not found (checked keychain, ~/.claude/.credentials.json, " +
+        "and ~/.openclaw/agents/*/agent/auth-profiles.json). " +
+        "Log in with `claude` or `openclaw onboard` first.");
 }
 function writeCredentialsToKeychain(wrapper) {
     if (process.platform !== "darwin") {
@@ -579,9 +600,43 @@ function isAuthBrokenError(err) {
         /token refresh failed:\s*40[0134]/.test(msg));
 }
 async function doRefreshAndPersist(current) {
-    logger.info("[claude-api] refreshing OAuth token...");
+    logger.info(`[claude-api] refreshing OAuth token (source=${current.source})...`);
     const fresh = await refreshUpstreamToken(current.refreshToken);
-    const wrapper = { ...current._rawWrapper };
+    // IMPORTANT: persist BEFORE advancing the in-memory state. If the keychain
+    // write silently fails we must NOT start using the new access/refresh token
+    // — doing so creates a "two valid tokens in flight" pattern that looks to
+    // Anthropic like account hijacking (same account_id, two access_tokens
+    // issued within the 3-minute refresh skew window). The correct fallback is
+    // to keep serving on the old token until the next refresh cycle retries
+    // the persist, so on-disk and in-memory state always agree.
+    if (current.source === "openclaw" && current.openclawProfile) {
+        try {
+            persistOpenclawOAuthProfile(current.openclawProfile, {
+                access: fresh.accessToken,
+                refresh: fresh.refreshToken,
+                expires: fresh.expiresAt,
+            });
+            logger.info(`[claude-api] OpenClaw profile ${current.openclawProfile.profileKey} updated (${current.openclawProfile.storePath})`);
+        }
+        catch (err) {
+            logger.error(`[claude-api] CRITICAL: openclaw persist failed — keeping old token to avoid account-hijack detection signal: ${err.message}`);
+            return current;
+        }
+        return {
+            ...current,
+            accessToken: fresh.accessToken,
+            refreshToken: fresh.refreshToken,
+            expiresAt: fresh.expiresAt,
+            scopes: fresh.scopes.length > 0 ? fresh.scopes : current.scopes,
+            openclawProfile: {
+                ...current.openclawProfile,
+                access: fresh.accessToken,
+                refresh: fresh.refreshToken,
+                expires: fresh.expiresAt,
+            },
+        };
+    }
+    const wrapper = { ...(current._rawWrapper ?? {}) };
     wrapper.claudeAiOauth = {
         ...wrapper.claudeAiOauth,
         accessToken: fresh.accessToken,
@@ -591,13 +646,6 @@ async function doRefreshAndPersist(current) {
             ? fresh.scopes
             : wrapper.claudeAiOauth.scopes,
     };
-    // IMPORTANT: persist BEFORE advancing the in-memory state. If the keychain
-    // write silently fails we must NOT start using the new access/refresh token
-    // — doing so creates a "two valid tokens in flight" pattern that looks to
-    // Anthropic like account hijacking (same account_id, two access_tokens
-    // issued within the 3-minute refresh skew window). The correct fallback is
-    // to keep serving on the old token until the next refresh cycle retries
-    // the persist, so on-disk and in-memory state always agree.
     if (current.source === "keychain") {
         try {
             writeCredentialsToKeychain(wrapper);

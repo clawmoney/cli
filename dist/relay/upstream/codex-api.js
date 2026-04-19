@@ -41,6 +41,7 @@ import { ProxyAgent as UndiciProxyAgent, setGlobalDispatcher } from "undici";
 import { relayLogger as logger } from "../logger.js";
 import { RateGuard, RateGuardBudgetExceededError, RateGuardCooldownError, } from "./rate-guard.js";
 import { calculateCost } from "../pricing.js";
+import { readOpenclawOAuthProfile, persistOpenclawOAuthProfile, } from "./openclaw-creds.js";
 export { RateGuardBudgetExceededError, RateGuardCooldownError };
 // ── Constants ──
 const OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -181,21 +182,42 @@ function decodeJwtExp(jwt) {
 }
 // ── Credential I/O ──
 function loadCodexAuth() {
-    if (!existsSync(CODEX_AUTH_FILE)) {
-        throw new Error(`Codex auth not found at ${CODEX_AUTH_FILE}. Log in with \`codex login\` first.`);
+    // Prefer ~/.codex/auth.json when present — that's the canonical Codex CLI
+    // location and refresh behavior has been field-tested against it longest.
+    if (existsSync(CODEX_AUTH_FILE)) {
+        const raw = JSON.parse(readFileSync(CODEX_AUTH_FILE, "utf-8"));
+        const tok = raw?.tokens;
+        if (!tok?.access_token || !tok?.refresh_token || !tok?.account_id) {
+            throw new Error(`Codex auth.json missing required fields (tokens.access_token / tokens.refresh_token / tokens.account_id)`);
+        }
+        return {
+            source: "codex-file",
+            accessToken: tok.access_token,
+            refreshToken: tok.refresh_token,
+            accountId: tok.account_id,
+            expiresAt: decodeJwtExp(tok.access_token),
+            _rawFile: raw,
+        };
     }
-    const raw = JSON.parse(readFileSync(CODEX_AUTH_FILE, "utf-8"));
-    const tok = raw?.tokens;
-    if (!tok?.access_token || !tok?.refresh_token || !tok?.account_id) {
-        throw new Error(`Codex auth.json missing required fields (tokens.access_token / tokens.refresh_token / tokens.account_id)`);
+    // Fallback: openclaw's auth-profiles.json. Providers who onboarded with
+    // `openclaw onboard` + Codex subscription have their token here instead.
+    const openclawProfile = readOpenclawOAuthProfile("openai-codex");
+    if (openclawProfile) {
+        if (!openclawProfile.accountId) {
+            throw new Error(`OpenClaw openai-codex profile at ${openclawProfile.storePath} is missing accountId; re-run \`openclaw onboard\`.`);
+        }
+        logger.info(`[codex-api] using OpenClaw credential fallback (profile=${openclawProfile.profileKey}, store=${openclawProfile.storePath})`);
+        return {
+            source: "openclaw",
+            accessToken: openclawProfile.access,
+            refreshToken: openclawProfile.refresh,
+            accountId: openclawProfile.accountId,
+            expiresAt: openclawProfile.expires,
+            _openclawProfile: openclawProfile,
+        };
     }
-    return {
-        accessToken: tok.access_token,
-        refreshToken: tok.refresh_token,
-        accountId: tok.account_id,
-        expiresAt: decodeJwtExp(tok.access_token),
-        _rawFile: raw,
-    };
+    throw new Error(`Codex auth not found at ${CODEX_AUTH_FILE} and no openai-codex OAuth profile in ~/.openclaw/agents/. ` +
+        `Log in with \`codex login\` or \`openclaw onboard\` first.`);
 }
 function writeCodexAuth(file) {
     writeFileSync(CODEX_AUTH_FILE, JSON.stringify(file, null, 2), "utf-8");
@@ -235,35 +257,66 @@ async function refreshUpstreamToken(refreshToken) {
 let cachedCreds = null;
 let refreshInflight = null;
 async function doRefreshAndPersist(current) {
-    logger.info("[codex-api] refreshing OAuth token...");
+    logger.info(`[codex-api] refreshing OAuth token (source=${current.source})...`);
     const fresh = await refreshUpstreamToken(current.refreshToken);
-    const updatedFile = {
-        ...current._rawFile,
-        last_refresh: new Date().toISOString(),
-        tokens: {
-            ...current._rawFile.tokens,
-            access_token: fresh.accessToken,
-            refresh_token: fresh.refreshToken,
-        },
-    };
     // Persist FIRST, then advance in-memory state. If the on-disk write fails
-    // we keep serving on the old token — see claude-api.ts doRefreshAndPersist
-    // for the full rationale (OpenAI/ChatGPT would see two valid access tokens
-    // in flight for the same account and mark it as hijacked otherwise).
+    // we keep serving on the old token — OpenAI/ChatGPT would see two valid
+    // access tokens in flight for the same account and mark it as hijacked
+    // otherwise.
+    if (current.source === "codex-file") {
+        const updatedFile = {
+            ...current._rawFile,
+            last_refresh: new Date().toISOString(),
+            tokens: {
+                ...current._rawFile.tokens,
+                access_token: fresh.accessToken,
+                refresh_token: fresh.refreshToken,
+            },
+        };
+        try {
+            writeCodexAuth(updatedFile);
+            logger.info("[codex-api] ~/.codex/auth.json updated");
+        }
+        catch (err) {
+            logger.error(`[codex-api] CRITICAL: persist failed — keeping old token to avoid account-hijack detection signal: ${err.message}`);
+            return current;
+        }
+        return {
+            source: "codex-file",
+            accessToken: fresh.accessToken,
+            refreshToken: fresh.refreshToken,
+            accountId: current.accountId,
+            expiresAt: fresh.expiresAt,
+            _rawFile: updatedFile,
+        };
+    }
+    // openclaw path: write refreshed triple back into the same auth-profiles.json
+    // profile we read from, so openclaw's own runtime stays in sync.
     try {
-        writeCodexAuth(updatedFile);
-        logger.info("[codex-api] ~/.codex/auth.json updated");
+        persistOpenclawOAuthProfile(current._openclawProfile, {
+            access: fresh.accessToken,
+            refresh: fresh.refreshToken,
+            expires: fresh.expiresAt,
+            accountId: current.accountId,
+        });
+        logger.info(`[codex-api] OpenClaw profile ${current._openclawProfile.profileKey} updated (${current._openclawProfile.storePath})`);
     }
     catch (err) {
-        logger.error(`[codex-api] CRITICAL: persist failed — keeping old token to avoid account-hijack detection signal: ${err.message}`);
+        logger.error(`[codex-api] CRITICAL: openclaw persist failed — keeping old token to avoid account-hijack detection signal: ${err.message}`);
         return current;
     }
     return {
+        source: "openclaw",
         accessToken: fresh.accessToken,
         refreshToken: fresh.refreshToken,
         accountId: current.accountId,
         expiresAt: fresh.expiresAt,
-        _rawFile: updatedFile,
+        _openclawProfile: {
+            ...current._openclawProfile,
+            access: fresh.accessToken,
+            refresh: fresh.refreshToken,
+            expires: fresh.expiresAt,
+        },
     };
 }
 async function getFreshCreds() {

@@ -59,6 +59,43 @@ export const API_PRICES = {
     "antigravity-claude-opus-4-6-thinking": { input: 5, output: 25 },
     "antigravity-claude-sonnet-4-6": { input: 3, output: 15 },
     "antigravity-claude-sonnet-4-5": { input: 3, output: 15 },
+    // ── Z.AI / GLM ──
+    // GLM models are paid per-token; Coding Plan is a flat monthly rate but
+    // we still bill relay by tokens so providers see their opportunity cost
+    // approximately. Numbers sourced from z.ai/pricing + LiteLLM; trimmed to
+    // the bundled openclaw catalog + widely-used legacy ids.
+    "glm-5.1": { input: 0.60, output: 3.00 },
+    "glm-5": { input: 0.60, output: 3.00 },
+    "glm-5-turbo": { input: 0.20, output: 1.00 },
+    "glm-4.7": { input: 0.60, output: 2.20 },
+    "glm-4.7-flash": { input: 0.10, output: 0.40 },
+    "glm-4.7-flashx": { input: 0.05, output: 0.20 },
+    "glm-4.6": { input: 0.60, output: 2.20 },
+    "glm-4.5": { input: 0.60, output: 2.20 },
+    "glm-4.5-air": { input: 0.20, output: 1.10 },
+    "glm-4.5-flash": { input: 0.10, output: 0.40 },
+    // ── Moonshot / Kimi K2 ──
+    // Moonshot public pricing.  Kimi K2 family on Moonshot Open Platform.
+    "kimi-k2.5": { input: 0.60, output: 2.50 },
+    "kimi-k2-thinking": { input: 0.60, output: 2.50 },
+    "kimi-k2-thinking-turbo": { input: 1.15, output: 8.00 },
+    "kimi-k2-turbo": { input: 1.15, output: 5.00 },
+    // Kimi Coding product (separate key / endpoint from Moonshot API).
+    // Pricing here is placeholder — Kimi Coding is a subscription product,
+    // so there's no official token price; we use Kimi K2.5 Open Platform
+    // rates as a proxy so providers see comparable opportunity-cost billing.
+    "kimi-code": { input: 0.60, output: 2.50 },
+    // ── Qwen / Alibaba ModelStudio Coding Plan ──
+    // Coding Plan is flat monthly; same proxy-price approach as kimi-code.
+    // Based on public DashScope Qwen pricing (qwen-plus / qwen-max tier).
+    "qwen3.6-plus": { input: 1.20, output: 3.60 },
+    "qwen3.5-plus": { input: 0.80, output: 2.40 },
+    "qwen-coder-plus": { input: 0.80, output: 2.40 },
+    "qwen3-coder": { input: 0.80, output: 2.40 },
+    // ── MiniMax ──
+    // From openclaw provider catalog (docs/providers/minimax.md).
+    "MiniMax-M2.7": { input: 0.30, output: 1.20 },
+    "MiniMax-M2.7-highspeed": { input: 0.60, output: 2.40 },
     // ── Google (Gemini) ──
     // Verified against LiteLLM pricing DB.
     "gemini-3.1-pro-preview": { input: 2, output: 12 },

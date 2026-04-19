@@ -22,6 +22,7 @@ import { ProxyAgent, setGlobalDispatcher } from "undici";
 import { relayLogger as logger } from "../logger.js";
 import { RateGuard, RateGuardBudgetExceededError, RateGuardCooldownError, } from "./rate-guard.js";
 import { calculateCost } from "../pricing.js";
+import { readOpenclawOAuthProfile, persistOpenclawOAuthProfile, } from "./openclaw-creds.js";
 export { RateGuardBudgetExceededError, RateGuardCooldownError };
 // ── Constants ──
 const OAUTH_CLIENT_ID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
@@ -119,18 +120,38 @@ function getMaskedRequestId() {
     logger.info(`[gemini-api] new masked request_id ${maskedRequestId.slice(0, 8)}... (previous expired)`);
     return maskedRequestId;
 }
-// ── OAuth credential I/O ──
+let credsSource = "native-file";
+let credsOpenclawProfile = null;
 function loadGeminiOAuth() {
-    if (!existsSync(GEMINI_CREDS_FILE)) {
-        throw new Error(`Gemini credentials not found at ${GEMINI_CREDS_FILE}. ` +
-            `Run \`gemini auth login\` to authenticate first.`);
+    if (existsSync(GEMINI_CREDS_FILE)) {
+        const raw = JSON.parse(readFileSync(GEMINI_CREDS_FILE, "utf-8"));
+        if (!raw.access_token || !raw.refresh_token) {
+            throw new Error(`Gemini credentials at ${GEMINI_CREDS_FILE} are missing access_token or refresh_token. ` +
+                `Run \`gemini auth login\` to re-authenticate.`);
+        }
+        credsSource = "native-file";
+        credsOpenclawProfile = null;
+        return raw;
     }
-    const raw = JSON.parse(readFileSync(GEMINI_CREDS_FILE, "utf-8"));
-    if (!raw.access_token || !raw.refresh_token) {
-        throw new Error(`Gemini credentials at ${GEMINI_CREDS_FILE} are missing access_token or refresh_token. ` +
-            `Run \`gemini auth login\` to re-authenticate.`);
+    // Fallback: openclaw's auth-profiles.json with provider="google".
+    // Openclaw stores expires as ms; Google's oauth creds uses expiry_date
+    // also in ms, so no conversion needed. scope / id_token / token_type
+    // are not recorded by openclaw — we use sane defaults, and the first
+    // refresh response will populate them properly.
+    const profile = readOpenclawOAuthProfile("google");
+    if (profile) {
+        logger.info(`[gemini-api] using OpenClaw credential fallback (profile=${profile.profileKey}, store=${profile.storePath})`);
+        credsSource = "openclaw";
+        credsOpenclawProfile = profile;
+        return {
+            access_token: profile.access,
+            refresh_token: profile.refresh,
+            expiry_date: profile.expires,
+            token_type: "Bearer",
+        };
     }
-    return raw;
+    throw new Error(`Gemini credentials not found (checked ${GEMINI_CREDS_FILE} and ~/.openclaw/agents/*/agent/auth-profiles.json). ` +
+        `Run \`gemini auth login\` or \`openclaw onboard\` to authenticate first.`);
 }
 /**
  * Persist refreshed credentials to ~/.gemini/oauth_creds.json. Throws on
@@ -195,7 +216,7 @@ let cachedCreds = null;
 let refreshInflight = null;
 const REFRESH_SKEW_MS = 3 * 60 * 1000;
 async function doRefreshAndPersist(current) {
-    logger.info("[gemini-api] refreshing OAuth token...");
+    logger.info(`[gemini-api] refreshing OAuth token (source=${credsSource})...`);
     const fresh = await refreshUpstreamToken(current.refresh_token);
     const next = {
         access_token: fresh.access_token,
@@ -205,8 +226,30 @@ async function doRefreshAndPersist(current) {
         scope: fresh.scope ?? current.scope,
         token_type: fresh.token_type,
     };
-    // Persist FIRST. If writing to ~/.gemini/oauth_creds.json fails, keep the
-    // old token — see claude-api.ts doRefreshAndPersist for the rationale.
+    // Persist FIRST. If writing fails, keep the old token — Google would see
+    // two valid access tokens in flight for the same account and mark it as
+    // hijacked otherwise.
+    if (credsSource === "openclaw" && credsOpenclawProfile) {
+        try {
+            persistOpenclawOAuthProfile(credsOpenclawProfile, {
+                access: next.access_token,
+                refresh: next.refresh_token,
+                expires: next.expiry_date,
+            });
+            credsOpenclawProfile = {
+                ...credsOpenclawProfile,
+                access: next.access_token,
+                refresh: next.refresh_token,
+                expires: next.expiry_date,
+            };
+            logger.info(`[gemini-api] OpenClaw profile ${credsOpenclawProfile.profileKey} updated (${credsOpenclawProfile.storePath})`);
+        }
+        catch (err) {
+            logger.error(`[gemini-api] CRITICAL: openclaw persist failed — keeping old token to avoid account-hijack detection signal: ${err.message}`);
+            return current;
+        }
+        return next;
+    }
     try {
         writeGeminiOAuth(next);
     }
