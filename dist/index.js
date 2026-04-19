@@ -8,7 +8,7 @@ import { walletStatusCommand, walletBalanceCommand, walletAddressCommand, wallet
 import { tweetCommand } from './commands/tweet.js';
 import { gigCreateCommand, gigBrowseCommand, gigDetailCommand, gigAcceptCommand, gigDeliverCommand, gigApproveCommand, gigDisputeCommand, } from './commands/gig.js';
 import { hubStartCommand, hubStopCommand, hubStatusCommand, hubSearchCommand, hubCallCommand, hubRegisterCommand, hubSkillsCommand, hubOrderCommand, hubHistoryCommand, } from './commands/hub.js';
-import { relayRegisterCommand, relayStartCommand, relayStopCommand, relayStatusCommand, relayModelsCommand, relayLogsCommand, } from './commands/relay.js';
+import { relayRegisterCommand, relayStartCommand, relayStopCommand, relayStatusCommand, relayModelsCommand, relayLogsCommand, relayPreflightCommand, } from './commands/relay.js';
 import { antigravityLoginCommand, antigravityStatusCommand, } from './commands/antigravity.js';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
@@ -543,6 +543,19 @@ relay
     .action(async () => {
     try {
         await relayModelsCommand();
+    }
+    catch (err) {
+        console.error(err.message);
+        process.exit(1);
+    }
+});
+relay
+    .command('preflight')
+    .description('Validate upstream credentials without starting the daemon (useful for verifying openclaw fallback, keychain state, etc.)')
+    .option('--cli <type>', 'Check a single cli_type (claude, codex, gemini, antigravity, minimax, zai, zai-coding, moonshot, kimi-coding, qwen-coding, openai). Default: claude+codex+gemini+antigravity.')
+    .action(async (options) => {
+    try {
+        await relayPreflightCommand(options);
     }
     catch (err) {
         console.error(err.message);

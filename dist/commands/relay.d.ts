@@ -18,4 +18,7 @@ export declare function relayLogsCommand(options: {
 }): Promise<void>;
 export declare function relayStatusCommand(): Promise<void>;
 export declare function relayModelsCommand(): Promise<void>;
+export declare function relayPreflightCommand(options: {
+    cli?: string;
+}): Promise<void>;
 export {};

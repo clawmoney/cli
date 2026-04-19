@@ -39,6 +39,7 @@ import {
   relayStatusCommand,
   relayModelsCommand,
   relayLogsCommand,
+  relayPreflightCommand,
 } from './commands/relay.js';
 import {
   antigravityLoginCommand,
@@ -590,6 +591,19 @@ relay
   .action(async () => {
     try {
       await relayModelsCommand();
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+relay
+  .command('preflight')
+  .description('Validate upstream credentials without starting the daemon (useful for verifying openclaw fallback, keychain state, etc.)')
+  .option('--cli <type>', 'Check a single cli_type (claude, codex, gemini, antigravity, minimax, zai, zai-coding, moonshot, kimi-coding, qwen-coding, openai). Default: claude+codex+gemini+antigravity.')
+  .action(async (options) => {
+    try {
+      await relayPreflightCommand(options);
     } catch (err) {
       console.error((err as Error).message);
       process.exit(1);

@@ -575,3 +575,105 @@ export async function relayModelsCommand(): Promise<void> {
   }
 }
 
+// ── relay preflight ──
+//
+// Standalone credential validation. Runs each upstream adapter's preflight
+// function against the provider's local auth state (native CLI file,
+// keychain, OpenClaw profile, or env var) WITHOUT starting the WebSocket
+// daemon or contacting the Hub. Useful for operators who want to verify
+// "my openclaw profile is being picked up" before committing to a real
+// `relay start`.
+//
+// With --cli <type> we preflight just that one. Without, we loop over a
+// sensible default set (claude / codex / gemini / api-key) and report
+// each independently — a failure in one cli_type doesn't short-circuit
+// the others.
+
+const PREFLIGHT_DEFAULTS = ["claude", "codex", "gemini", "antigravity"];
+
+export async function relayPreflightCommand(options: {
+  cli?: string;
+}): Promise<void> {
+  const toCheck = options.cli
+    ? [options.cli]
+    : PREFLIGHT_DEFAULTS;
+
+  console.log(chalk.bold("\n  Relay credential preflight\n"));
+
+  let failed = 0;
+  for (const cli of toCheck) {
+    const spin = ora(`  ${cli}`).start();
+    try {
+      const fn = await resolvePreflightFn(cli);
+      if (!fn) {
+        spin.info(chalk.dim(`  ${cli}: no preflight (unknown cli_type)`));
+        continue;
+      }
+      await fn();
+      spin.succeed(chalk.green(`  ${cli}: OK`));
+    } catch (err) {
+      failed++;
+      spin.fail(
+        chalk.red(`  ${cli}: ${(err as Error).message.slice(0, 200)}`)
+      );
+    }
+  }
+
+  console.log("");
+  if (failed === 0) {
+    console.log(chalk.green(`  All ${toCheck.length} preflight checks passed.`));
+  } else {
+    console.log(
+      chalk.yellow(`  ${failed} of ${toCheck.length} preflight checks failed.`)
+    );
+  }
+  console.log("");
+  process.exit(failed === 0 ? 0 : 1);
+}
+
+async function resolvePreflightFn(
+  cli: string
+): Promise<(() => Promise<void>) | null> {
+  switch (cli) {
+    case "claude": {
+      const { preflightClaudeApi } = await import(
+        "../relay/upstream/claude-api.js"
+      );
+      return () => preflightClaudeApi();
+    }
+    case "codex": {
+      const { preflightCodexApi } = await import(
+        "../relay/upstream/codex-api.js"
+      );
+      return () => preflightCodexApi();
+    }
+    case "gemini": {
+      const { preflightGeminiApi } = await import(
+        "../relay/upstream/gemini-api.js"
+      );
+      return () => preflightGeminiApi();
+    }
+    case "antigravity": {
+      const { preflightAntigravityApi } = await import(
+        "../relay/upstream/antigravity-api.js"
+      );
+      return () => preflightAntigravityApi();
+    }
+    case "minimax": {
+      const { preflightMinimaxApi } = await import(
+        "../relay/upstream/minimax-api.js"
+      );
+      return () => preflightMinimaxApi();
+    }
+    default: {
+      // Passthrough cli_type (zai / moonshot / kimi-coding / qwen-coding / openai).
+      const { preflightPassthroughApi, getPassthroughSpec } = await import(
+        "../relay/upstream/passthrough-api.js"
+      );
+      await import("../relay/upstream/passthrough-specs.js");
+      if (!getPassthroughSpec(cli)) return null;
+      return () => preflightPassthroughApi(cli);
+    }
+  }
+}
+
