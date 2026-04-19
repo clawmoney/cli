@@ -37,6 +37,7 @@ import {
   listOpenclawOAuthProviders,
   listOpenclawApiKeyProviders,
 } from "../relay/upstream/openclaw-creds.js";
+import { hubCliTypeFor } from "../relay/upstream/passthrough-specs.js";
 
 // ── Per-cli_type model catalogs ──
 //
@@ -685,9 +686,15 @@ export async function relaySetupCommand(): Promise<void> {
   const regSpin = spinner();
   regSpin.start(`Registering ${registrations.length} providers...`);
 
+  // Hub only recognizes a closed set of cli_types (claude / codex / gemini /
+  // antigravity / api-key / session-token). Our fine-grained internal names
+  // (zai-coding / moonshot / qwen-coding / minimax / …) all fold to api-key
+  // on the wire — the daemon does the actual upstream routing by model
+  // prefix at request time. Preserve the fine-grained label only in the
+  // wizard UI for operator readability.
   const batchBody = {
     providers: registrations.map((r) => ({
-      cli_type: r.cli,
+      cli_type: hubCliTypeFor(r.cli),
       model: r.model,
       mode: "chat",
       concurrency,
@@ -777,7 +784,7 @@ export async function relaySetupCommand(): Promise<void> {
       "/api/v1/relay/providers/prune",
       {
         keep: registrations.map((r) => ({
-          cli_type: r.cli,
+          cli_type: hubCliTypeFor(r.cli),
           model: r.model,
         })),
       },

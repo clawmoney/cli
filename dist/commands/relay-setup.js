@@ -13,6 +13,7 @@ import { hasClaudeFingerprint, bootstrapClaudeFingerprint, } from "../relay/upst
 import { hasGeminiFingerprint, bootstrapGeminiFingerprint, } from "../relay/upstream/gemini-bootstrap.js";
 import { hasCodexFingerprint, bootstrapCodexFingerprint, } from "../relay/upstream/codex-bootstrap.js";
 import { listOpenclawOAuthProviders, listOpenclawApiKeyProviders, } from "../relay/upstream/openclaw-creds.js";
+import { hubCliTypeFor } from "../relay/upstream/passthrough-specs.js";
 // ── Per-cli_type model catalogs ──
 //
 // `RECOMMENDED_MODELS` is what gets registered when the user picks "all
@@ -523,9 +524,15 @@ export async function relaySetupCommand() {
     const failures = [];
     const regSpin = spinner();
     regSpin.start(`Registering ${registrations.length} providers...`);
+    // Hub only recognizes a closed set of cli_types (claude / codex / gemini /
+    // antigravity / api-key / session-token). Our fine-grained internal names
+    // (zai-coding / moonshot / qwen-coding / minimax / …) all fold to api-key
+    // on the wire — the daemon does the actual upstream routing by model
+    // prefix at request time. Preserve the fine-grained label only in the
+    // wizard UI for operator readability.
     const batchBody = {
         providers: registrations.map((r) => ({
-            cli_type: r.cli,
+            cli_type: hubCliTypeFor(r.cli),
             model: r.model,
             mode: "chat",
             concurrency,
@@ -592,7 +599,7 @@ export async function relaySetupCommand() {
     try {
         const pruneResp = await apiPost("/api/v1/relay/providers/prune", {
             keep: registrations.map((r) => ({
-                cli_type: r.cli,
+                cli_type: hubCliTypeFor(r.cli),
                 model: r.model,
             })),
         }, config.api_key);

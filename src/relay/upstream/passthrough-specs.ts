@@ -92,7 +92,8 @@ registerPassthroughSpec({
 
 // Catalog of every cli_type served by the passthrough engine. Exported so
 // provider.ts can switch on membership in one line instead of per-cli-type
-// cases.
+// cases. These are INTERNAL cli_type names — the Hub sees all of them
+// under the single "api-key" cli_type (see `ApiKeyInternalRoute` below).
 export const PASSTHROUGH_CLI_TYPES = new Set<string>([
   "zai-coding",
   "zai",
@@ -101,3 +102,59 @@ export const PASSTHROUGH_CLI_TYPES = new Set<string>([
   "qwen-coding",
   "openai",
 ]);
+
+// ── Hub-side cli_type mapping ─────────────────────────────────────────────
+//
+// bnbot-api only recognizes a closed set of cli_types (see
+// backend/app/core/relay_catalog.py:_ALL_CLI_TYPES). For static-key and
+// bearer-passthrough upstreams the canonical value is `api-key` — the
+// fine-grained internal names above (zai-coding, moonshot, etc.) are
+// clawmoney-cli concepts only and must be folded to `api-key` on the wire
+// when registering providers and when dispatching inbound requests.
+//
+// Routing from `api-key` back to an internal spec is done by model prefix
+// via `resolveSpecByModel()`. Model namespaces don't overlap across the
+// supported upstreams (glm-* is zai, kimi-k2* is moonshot, MiniMax-* is
+// minimax, …) so the mapping is unambiguous. gpt-5.x is the one shared
+// namespace — when the Hub sends `cli_type="codex"` it's subscription
+// OAuth; `cli_type="api-key"` is the OpenAI API-key route.
+export const HUB_CLI_TYPE_FOR_PASSTHROUGH = "api-key";
+
+/**
+ * Map an internal upstream id (what relay-setup shows in the wizard) to
+ * the Hub-recognized cli_type. Used when building the `/providers/batch`
+ * registration payload.
+ */
+export function hubCliTypeFor(internalCli: string): string {
+  if (PASSTHROUGH_CLI_TYPES.has(internalCli)) return HUB_CLI_TYPE_FOR_PASSTHROUGH;
+  if (internalCli === "minimax") return HUB_CLI_TYPE_FOR_PASSTHROUGH;
+  // claude / codex / gemini / antigravity pass through unchanged.
+  return internalCli;
+}
+
+/**
+ * Resolve a model id back to the daemon-internal spec key. Returns `null`
+ * when the model doesn't match any known passthrough family — callers then
+ * throw a clear "unknown api-key model" error so provider.ts doesn't
+ * silently route mystery models to the wrong upstream.
+ *
+ * Special case: "minimax" is not a passthrough spec (MiniMax has its own
+ * OAuth-aware adapter in minimax-api.ts) but we surface it from this
+ * function so provider.ts only has one switch to read.
+ */
+export function resolveSpecByModel(model: string): string | null {
+  if (!model) return null;
+  if (model.startsWith("MiniMax-")) return "minimax";
+  if (model.startsWith("glm-") || model.startsWith("zai-")) return "zai-coding";
+  if (model.startsWith("kimi-k2")) return "moonshot";
+  if (model === "kimi-code") return "kimi-coding";
+  if (model.startsWith("qwen")) return "qwen-coding";
+  // OpenAI API-key path serves the same gpt-* / o-series catalog the
+  // codex OAuth path does, but dispatch comes in under cli_type="api-key"
+  // so there's no ambiguity at this point — codex traffic never reaches
+  // the resolver.
+  if (model.startsWith("gpt-") || model === "o3" || model === "o4-mini") {
+    return "openai";
+  }
+  return null;
+}

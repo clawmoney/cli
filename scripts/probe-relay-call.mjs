@@ -86,7 +86,11 @@ delete process.env.ZAI_API_KEY;
 
 writeFixture({ minimaxExpiresAt: Date.now() + 60 * 60 * 1000 }); // fresh
 
-const [{ callPassthroughApi, getPassthroughSpec }, _specs, { callMinimaxApi }] = await Promise.all([
+const [
+  { callPassthroughApi, getPassthroughSpec },
+  { resolveSpecByModel, hubCliTypeFor },
+  { callMinimaxApi },
+] = await Promise.all([
   import("../dist/relay/upstream/passthrough-api.js"),
   import("../dist/relay/upstream/passthrough-specs.js"),
   import("../dist/relay/upstream/minimax-api.js"),
@@ -220,6 +224,60 @@ try {
   // minimax: fresh vs expired
   await probeMinimaxFresh();
   await probeMinimaxExpired();
+
+  // api-key dispatch: Hub-canonical cli_type resolves to correct internal spec
+  // via model prefix. Covers each family the resolver handles.
+  const dispatchCases = [
+    { model: "glm-5",         expected: "zai-coding" },
+    { model: "kimi-k2.5",     expected: "moonshot" },
+    { model: "kimi-code",     expected: "kimi-coding" },
+    { model: "qwen3.6-plus",  expected: "qwen-coding" },
+    { model: "MiniMax-M2.7",  expected: "minimax" },
+    { model: "gpt-5.4",       expected: "openai" },
+    { model: "o4-mini",       expected: "openai" },
+    { model: "unknown-model", expected: null },
+  ];
+  let dispatchFails = 0;
+  for (const { model, expected } of dispatchCases) {
+    const got = resolveSpecByModel(model);
+    const ok = got === expected;
+    if (!ok) {
+      dispatchFails++;
+      console.log(`  FAIL  resolveSpecByModel(${model}) — got=${got} expected=${expected}`);
+    }
+  }
+  record(
+    "api-key model → spec resolver (8 cases)",
+    dispatchFails === 0,
+    dispatchFails === 0 ? null : `${dispatchFails} mismatched`
+  );
+
+  // hubCliTypeFor collapses fine-grained → "api-key" and leaves legacy OAuth
+  // cli_types untouched.
+  const collapseCases = [
+    { internal: "zai-coding",  hub: "api-key" },
+    { internal: "moonshot",    hub: "api-key" },
+    { internal: "qwen-coding", hub: "api-key" },
+    { internal: "openai",      hub: "api-key" },
+    { internal: "minimax",     hub: "api-key" },
+    { internal: "claude",      hub: "claude" },
+    { internal: "codex",       hub: "codex" },
+    { internal: "gemini",      hub: "gemini" },
+    { internal: "antigravity", hub: "antigravity" },
+  ];
+  let collapseFails = 0;
+  for (const { internal, hub } of collapseCases) {
+    const got = hubCliTypeFor(internal);
+    if (got !== hub) {
+      collapseFails++;
+      console.log(`  FAIL  hubCliTypeFor(${internal}) — got=${got} expected=${hub}`);
+    }
+  }
+  record(
+    "hub cli_type collapse (9 cases)",
+    collapseFails === 0,
+    collapseFails === 0 ? null : `${collapseFails} mismatched`
+  );
 } catch (err) {
   console.error("\nfatal:", err?.stack ?? err);
   process.exit(2);

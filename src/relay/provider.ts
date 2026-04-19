@@ -37,7 +37,10 @@ import {
 } from "./upstream/passthrough-api.js";
 // Side-effect import: registers all static-key passthrough specs at module
 // load time (zai, zai-coding, moonshot, kimi-coding, qwen-coding, openai).
-import { PASSTHROUGH_CLI_TYPES } from "./upstream/passthrough-specs.js";
+import {
+  PASSTHROUGH_CLI_TYPES,
+  resolveSpecByModel,
+} from "./upstream/passthrough-specs.js";
 import { apiGet, apiPost } from "../utils/api.js";
 
 /**
@@ -58,6 +61,12 @@ function getRateGuardSnapshotForCli(
       return getAntigravityRateGuardSnapshot();
     case "minimax":
       return getMinimaxRateGuardSnapshot();
+    case "api-key":
+      // api-key multiplexes multiple internal specs; without model context
+      // we can't pick one snapshot. Hub treats null as "no signal", which
+      // is accurate here — each internal spec has its own per-cli rate-guard
+      // state, none of which is canonical for the whole api-key bucket.
+      return null;
     case "claude":
       return getClaudeRateGuardSnapshot();
     default:
@@ -423,7 +432,39 @@ async function executeRelayRequest(
         model,
         maxTokens: max_budget_usd ? undefined : 8192,
       });
+    } else if (cliType === "api-key") {
+      // Canonical Hub cli_type for every static-key / Bearer-passthrough
+      // upstream. The Hub doesn't know (or care) which third-party provider
+      // is on the other side — it just sees "OpenAI-compat, uses a Bearer
+      // token". Daemon resolves the actual upstream by model prefix.
+      const internalSpec = resolveSpecByModel(model);
+      if (!internalSpec) {
+        throw new Error(
+          `api-key dispatch failed: model "${model}" matches no known passthrough family ` +
+            `(supported prefixes: glm-*, zai-*, kimi-k2*, kimi-code, qwen*, MiniMax-*, gpt-*, o3, o4-mini)`
+        );
+      }
+      if (internalSpec === "minimax") {
+        parsed = await callMinimaxApi({
+          prompt,
+          passthroughBody: request.passthrough_body,
+          model,
+          maxTokens: max_budget_usd ? undefined : 8192,
+          onRawEvent: sendChunk,
+        });
+      } else {
+        parsed = await callPassthroughApi({
+          cliType: internalSpec,
+          prompt,
+          passthroughBody: request.passthrough_body,
+          model,
+          maxTokens: max_budget_usd ? undefined : 4096,
+          onRawEvent: sendChunk,
+        });
+      }
     } else if (cliType === "minimax") {
+      // Legacy fine-grained cli_type kept for the probe harness; Hub never
+      // sends this value in production.
       parsed = await callMinimaxApi({
         prompt,
         passthroughBody: request.passthrough_body,
@@ -432,8 +473,8 @@ async function executeRelayRequest(
         onRawEvent: sendChunk,
       });
     } else if (PASSTHROUGH_CLI_TYPES.has(cliType)) {
-      // Static-key OpenAI-compat providers (zai / moonshot / kimi / qwen / openai).
-      // Single shared wire, spec selected by cli_type.
+      // Same story — fine-grained cli_type path retained so local probe
+      // scripts can target a specific spec without faking the Hub side.
       parsed = await callPassthroughApi({
         cliType,
         prompt,
@@ -569,6 +610,13 @@ function getPreflightFn(cliType: string) {
       return preflightAntigravityApi;
     case "minimax":
       return preflightMinimaxApi;
+    case "api-key":
+      // Credential validation for api-key happens lazily on first request —
+      // we can't know which internal specs to preflight without the list of
+      // registered models, and the adapters throw clear errors on missing
+      // creds anyway. Return a trivial resolved preflight so the daemon
+      // launcher doesn't log a "no preflight registered" warning.
+      return async () => undefined;
     default:
       if (PASSTHROUGH_CLI_TYPES.has(cliType)) {
         return (config?: RelayRateGuardConfig) =>
