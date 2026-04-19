@@ -8,6 +8,7 @@ import { callCodexApi, callCodexApiPassthrough, preflightCodexApi, getRateGuardS
 import { callGeminiApi, preflightGeminiApi, getGeminiRateGuardSnapshot, } from "./upstream/gemini-api.js";
 import { callAntigravityApi, preflightAntigravityApi, getAntigravityRateGuardSnapshot, } from "./upstream/antigravity-api.js";
 import { callMinimaxApi, preflightMinimaxApi, getMinimaxRateGuardSnapshot, } from "./upstream/minimax-api.js";
+import { callKimiCodingApi, preflightKimiCodingApi, getKimiCodingRateGuardSnapshot, } from "./upstream/kimi-coding-api.js";
 import { callPassthroughApi, preflightPassthroughApi, getPassthroughRateGuardSnapshot, } from "./upstream/passthrough-api.js";
 // Side-effect import: registers all static-key passthrough specs at module
 // load time (zai, zai-coding, moonshot, kimi-coding, qwen-coding, openai).
@@ -29,6 +30,8 @@ function getRateGuardSnapshotForCli(cli) {
             return getAntigravityRateGuardSnapshot();
         case "minimax":
             return getMinimaxRateGuardSnapshot();
+        case "kimi-coding":
+            return getKimiCodingRateGuardSnapshot();
         case "api-key":
             // api-key multiplexes multiple internal specs; without model context
             // we can't pick one snapshot. Hub treats null as "no signal", which
@@ -363,6 +366,16 @@ async function executeRelayRequest(request, config, sendChunk) {
                     onRawEvent: sendChunk,
                 });
             }
+            else if (internalSpec === "kimi-coding") {
+                // OAuth-aware Kimi adapter — reads kimi-cli's local token store.
+                parsed = await callKimiCodingApi({
+                    prompt,
+                    passthroughBody: request.passthrough_body,
+                    model,
+                    maxTokens: max_budget_usd ? undefined : 8192,
+                    onRawEvent: sendChunk,
+                });
+            }
             else {
                 parsed = await callPassthroughApi({
                     cliType: internalSpec,
@@ -378,6 +391,16 @@ async function executeRelayRequest(request, config, sendChunk) {
             // Legacy fine-grained cli_type kept for the probe harness; Hub never
             // sends this value in production.
             parsed = await callMinimaxApi({
+                prompt,
+                passthroughBody: request.passthrough_body,
+                model,
+                maxTokens: max_budget_usd ? undefined : 8192,
+                onRawEvent: sendChunk,
+            });
+        }
+        else if (cliType === "kimi-coding") {
+            // Ditto — kept for direct probes. Production traffic arrives as "api-key".
+            parsed = await callKimiCodingApi({
                 prompt,
                 passthroughBody: request.passthrough_body,
                 model,
@@ -515,6 +538,8 @@ function getPreflightFn(cliType) {
             return preflightAntigravityApi;
         case "minimax":
             return preflightMinimaxApi;
+        case "kimi-coding":
+            return preflightKimiCodingApi;
         case "api-key":
             // Credential validation for api-key happens lazily on first request —
             // we can't know which internal specs to preflight without the list of

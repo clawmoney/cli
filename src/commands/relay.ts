@@ -665,6 +665,12 @@ async function resolvePreflightFn(
       );
       return () => preflightMinimaxApi();
     }
+    case "kimi-coding": {
+      const { preflightKimiCodingApi } = await import(
+        "../relay/upstream/kimi-coding-api.js"
+      );
+      return () => preflightKimiCodingApi();
+    }
     default: {
       // Passthrough cli_type (zai / moonshot / kimi-coding / qwen-coding / openai).
       const { preflightPassthroughApi, getPassthroughSpec } = await import(

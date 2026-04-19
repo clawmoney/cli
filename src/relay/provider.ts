@@ -31,6 +31,11 @@ import {
   getMinimaxRateGuardSnapshot,
 } from "./upstream/minimax-api.js";
 import {
+  callKimiCodingApi,
+  preflightKimiCodingApi,
+  getKimiCodingRateGuardSnapshot,
+} from "./upstream/kimi-coding-api.js";
+import {
   callPassthroughApi,
   preflightPassthroughApi,
   getPassthroughRateGuardSnapshot,
@@ -61,6 +66,8 @@ function getRateGuardSnapshotForCli(
       return getAntigravityRateGuardSnapshot();
     case "minimax":
       return getMinimaxRateGuardSnapshot();
+    case "kimi-coding":
+      return getKimiCodingRateGuardSnapshot();
     case "api-key":
       // api-key multiplexes multiple internal specs; without model context
       // we can't pick one snapshot. Hub treats null as "no signal", which
@@ -452,6 +459,15 @@ async function executeRelayRequest(
           maxTokens: max_budget_usd ? undefined : 8192,
           onRawEvent: sendChunk,
         });
+      } else if (internalSpec === "kimi-coding") {
+        // OAuth-aware Kimi adapter — reads kimi-cli's local token store.
+        parsed = await callKimiCodingApi({
+          prompt,
+          passthroughBody: request.passthrough_body,
+          model,
+          maxTokens: max_budget_usd ? undefined : 8192,
+          onRawEvent: sendChunk,
+        });
       } else {
         parsed = await callPassthroughApi({
           cliType: internalSpec,
@@ -466,6 +482,15 @@ async function executeRelayRequest(
       // Legacy fine-grained cli_type kept for the probe harness; Hub never
       // sends this value in production.
       parsed = await callMinimaxApi({
+        prompt,
+        passthroughBody: request.passthrough_body,
+        model,
+        maxTokens: max_budget_usd ? undefined : 8192,
+        onRawEvent: sendChunk,
+      });
+    } else if (cliType === "kimi-coding") {
+      // Ditto — kept for direct probes. Production traffic arrives as "api-key".
+      parsed = await callKimiCodingApi({
         prompt,
         passthroughBody: request.passthrough_body,
         model,
@@ -610,6 +635,8 @@ function getPreflightFn(cliType: string) {
       return preflightAntigravityApi;
     case "minimax":
       return preflightMinimaxApi;
+    case "kimi-coding":
+      return preflightKimiCodingApi;
     case "api-key":
       // Credential validation for api-key happens lazily on first request —
       // we can't know which internal specs to preflight without the list of

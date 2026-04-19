@@ -212,14 +212,12 @@ console.log(`mock upstream at ${MOCK_URL}`);
 console.log("");
 
 try {
-  // openclaw fixture supplies zai's key via api_key profile
-  await probePassthrough("zai-coding", "glm-5", "sk-zai-openclaw");
-  await probePassthrough("zai", "glm-4.7", "sk-zai-openclaw");
-  // others fall back to env
-  await probePassthrough("moonshot", "kimi-k2.5", "sk-moonshot-env");
-  await probePassthrough("kimi-coding", "kimi-code", "sk-kimi-env");
+  // Current subscription-only passthrough catalog:
+  //   zai-coding     ← openclaw api_key
+  //   qwen-coding    ← env var fallback
+  // (moonshot / zai general / openai were removed as pay-per-token.)
+  await probePassthrough("zai-coding",  "glm-5",        "sk-zai-openclaw");
   await probePassthrough("qwen-coding", "qwen3.6-plus", "sk-qwen-env");
-  await probePassthrough("openai", "gpt-5.4", "sk-openai-env");
 
   // minimax: fresh vs expired
   await probeMinimaxFresh();
@@ -229,12 +227,13 @@ try {
   // via model prefix. Covers each family the resolver handles.
   const dispatchCases = [
     { model: "glm-5",         expected: "zai-coding" },
-    { model: "kimi-k2.5",     expected: "moonshot" },
+    { model: "kimi-k2.5",     expected: "kimi-coding" },
     { model: "kimi-code",     expected: "kimi-coding" },
     { model: "qwen3.6-plus",  expected: "qwen-coding" },
     { model: "MiniMax-M2.7",  expected: "minimax" },
-    { model: "gpt-5.4",       expected: "openai" },
-    { model: "o4-mini",       expected: "openai" },
+    // gpt-* no longer mapped — the openai passthrough was removed.
+    { model: "gpt-5.4",       expected: null },
+    { model: "o4-mini",       expected: null },
     { model: "unknown-model", expected: null },
   ];
   let dispatchFails = 0;
@@ -255,15 +254,14 @@ try {
   // hubCliTypeFor collapses fine-grained → "api-key" and leaves legacy OAuth
   // cli_types untouched.
   const collapseCases = [
-    { internal: "zai-coding",  hub: "api-key" },
-    { internal: "moonshot",    hub: "api-key" },
-    { internal: "qwen-coding", hub: "api-key" },
-    { internal: "openai",      hub: "api-key" },
-    { internal: "minimax",     hub: "api-key" },
-    { internal: "claude",      hub: "claude" },
-    { internal: "codex",       hub: "codex" },
-    { internal: "gemini",      hub: "gemini" },
-    { internal: "antigravity", hub: "antigravity" },
+    { internal: "zai-coding",   hub: "api-key" },
+    { internal: "qwen-coding",  hub: "api-key" },
+    { internal: "kimi-coding",  hub: "api-key" },
+    { internal: "minimax",      hub: "api-key" },
+    { internal: "claude",       hub: "claude" },
+    { internal: "codex",        hub: "codex" },
+    { internal: "gemini",       hub: "gemini" },
+    { internal: "antigravity",  hub: "antigravity" },
   ];
   let collapseFails = 0;
   for (const { internal, hub } of collapseCases) {

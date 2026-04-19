@@ -76,23 +76,14 @@ const RECOMMENDED_MODELS = {
         "antigravity-gemini-3-flash",
         "antigravity-gemini-2.5-pro",
     ],
-    // ── Z.AI / GLM ──
-    // One cli_type per openclaw onboarding choice. Coding-plan variants share
-    // the same recommended catalog — the cli_type distinguishes the upstream
-    // baseUrl at call time, not the model id.
+    // ── Z.AI GLM Coding Plan ──
     "zai-coding": ["glm-5", "glm-4.7", "glm-4.7-flash", "glm-4.5-air"],
-    zai: ["glm-5", "glm-4.7", "glm-4.7-flash", "glm-4.5-air"],
-    // ── Moonshot / Kimi ──
-    moonshot: ["kimi-k2.5", "kimi-k2-thinking", "kimi-k2-turbo"],
-    "kimi-coding": ["kimi-code"],
+    // ── Kimi Coding Plan ──
+    "kimi-coding": ["kimi-k2.5", "kimi-k2-thinking", "kimi-code"],
     // ── Qwen Coding Plan ──
     "qwen-coding": ["qwen3.6-plus", "qwen-coder-plus", "qwen3-coder"],
-    // ── MiniMax ──
+    // ── MiniMax Coding Plan ──
     minimax: ["MiniMax-M2.7", "MiniMax-M2.7-highspeed"],
-    // ── OpenAI API-key (distinct from "codex" subscription adapter) ──
-    // Uses the buyer's own API key; same model catalog as codex Coding CLI
-    // plus the o-series reasoning models that codex can't serve.
-    openai: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "o4-mini"],
 };
 function modelsForCli(cli) {
     const all = Object.keys(API_PRICES);
@@ -114,24 +105,17 @@ function modelsForCli(cli) {
         // the antigravity cli_type, not the standalone gemini cli_type.
         return all.filter((m) => m.startsWith("gemini-") && !m.startsWith("antigravity-"));
     }
-    if (cli === "zai-coding" || cli === "zai") {
+    if (cli === "zai-coding") {
         return all.filter((m) => m.startsWith("glm-"));
     }
-    if (cli === "moonshot") {
-        return all.filter((m) => m.startsWith("kimi-k2"));
-    }
     if (cli === "kimi-coding") {
-        return ["kimi-code"].filter((m) => m in API_PRICES);
+        return all.filter((m) => m.startsWith("kimi-"));
     }
     if (cli === "qwen-coding") {
         return all.filter((m) => m.startsWith("qwen"));
     }
     if (cli === "minimax") {
         return all.filter((m) => m.startsWith("MiniMax-"));
-    }
-    if (cli === "openai") {
-        // OpenAI API-key passthrough — gpt-5.x + o-series reasoning models.
-        return all.filter((m) => m.startsWith("gpt-") || m === "o3" || m === "o4-mini");
     }
     return [];
 }
@@ -185,11 +169,10 @@ function detectInstalledClis() {
     // env var. Pair of (provider-id-in-openclaw, env-var-name, cli_type).
     const passthroughDetection = [
         { cli: "zai-coding", openclawProvider: "zai", env: "ZAI_API_KEY" },
-        { cli: "zai", openclawProvider: "zai", env: "ZAI_API_KEY" },
-        { cli: "moonshot", openclawProvider: "moonshot", env: "MOONSHOT_API_KEY" },
-        { cli: "kimi-coding", openclawProvider: "kimi", env: "KIMI_API_KEY" },
         { cli: "qwen-coding", openclawProvider: "qwen", env: "BAILIAN_CODING_PLAN_API_KEY" },
-        { cli: "openai", openclawProvider: "openai", env: "OPENAI_API_KEY" },
+        // NOTE: kimi-coding + minimax are intentionally absent — they have their
+        // own OAuth-aware detection blocks below. Pay-per-token cli_types
+        // (moonshot, zai, openai) were removed as provider-hostile.
     ];
     const openclawApiKeyProviders = new Set(listOpenclawApiKeyProviders());
     for (const { cli, openclawProvider, env } of passthroughDetection) {
@@ -205,6 +188,21 @@ function detectInstalledClis() {
             hint = `no key found (openclaw ${openclawProvider} profile or ${env})`;
         results.push({ cli, available, hint });
     }
+    // Kimi Coding: OAuth via kimi-cli (~/.kimi/credentials/kimi-code.json),
+    // or api_key fallback from openclaw / env. Listed separately so the hint
+    // can explain which path will actually be used at runtime.
+    const kimiOAuthPath = join(homedir(), ".kimi", "credentials", "kimi-code.json");
+    const hasKimiOAuth = existsSync(kimiOAuthPath);
+    const hasKimiKey = openclawApiKeyProviders.has("kimi") || !!process.env.KIMI_API_KEY;
+    results.push({
+        cli: "kimi-coding",
+        available: hasKimiOAuth || hasKimiKey,
+        hint: hasKimiOAuth
+            ? "kimi-cli OAuth token (~/.kimi/credentials/kimi-code.json)"
+            : hasKimiKey
+                ? "Kimi api_key (openclaw or KIMI_API_KEY env)"
+                : "no Kimi credential (run `kimi login` via kimi-cli, export KIMI_API_KEY, or `openclaw onboard --auth-choice kimi-code-api-key`)",
+    });
     // MiniMax: OAuth Coding Plan OR api_key fallback. List separately so the
     // hint can explain which path was detected.
     const hasMinimaxOauth = openclawProviders.has("minimax-portal");

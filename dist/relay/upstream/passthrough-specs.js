@@ -16,10 +16,23 @@ function envOr(name, fallback) {
     const v = process.env[name];
     return v && v.length > 0 ? v : fallback;
 }
-// ── Z.AI / GLM ────────────────────────────────────────────────────────────
-// Two coding-plan variants (global + cn) and two general-API variants,
-// all sharing the `zai` openclaw provider id and the `ZAI_API_KEY` env var.
-// cli_type is the only field distinguishing them on the relay side.
+// ── Design note: subscription-only catalog ───────────────────────────────
+//
+// clawmoney relay only supports upstreams where the provider is selling
+// *idle capacity from a fixed monthly subscription*. Pay-per-token API
+// keys (Moonshot Open Platform, generic Z.AI API, openai.com API, raw
+// DashScope) are deliberately NOT registered here: a provider would spend
+// real money per request while the buyer only pays 20% of the API price
+// (RELAY_DISCOUNT) — a guaranteed loss on every call. Keeping only
+// subscription-backed cli_types means every entry is actually usable.
+//
+// Anthropic follows the same rule: no "anthropic" api-key spec, only the
+// `claude` OAuth subscription path + `antigravity` (Google Ultra quota
+// that also serves Claude models).
+// ── Z.AI GLM Coding Plan ──────────────────────────────────────────────────
+// Z.AI sells a monthly Coding Plan subscription separately from their
+// token-priced general API. Only the subscription endpoint is routable
+// from clawmoney.
 registerPassthroughSpec({
     cliType: "zai-coding",
     openclawProvider: "zai",
@@ -28,37 +41,14 @@ registerPassthroughSpec({
     api: "openai-completions",
     label: "Z.AI Coding Plan",
 });
-registerPassthroughSpec({
-    cliType: "zai",
-    openclawProvider: "zai",
-    envVarName: "ZAI_API_KEY",
-    baseUrl: envOr("ZAI_BASE_URL", "https://api.z.ai/api/paas/v4"),
-    api: "openai-completions",
-    label: "Z.AI General",
-});
-// ── Moonshot / Kimi K2 ────────────────────────────────────────────────────
-registerPassthroughSpec({
-    cliType: "moonshot",
-    openclawProvider: "moonshot",
-    envVarName: "MOONSHOT_API_KEY",
-    baseUrl: envOr("MOONSHOT_BASE_URL", "https://api.moonshot.ai/v1"),
-    api: "openai-completions",
-    label: "Moonshot (Kimi K2)",
-});
-// Kimi Coding is a separate product from Moonshot's public API: different
-// key, different endpoint, different catalog. Per openclaw docs the keys
-// are not interchangeable.
-registerPassthroughSpec({
-    cliType: "kimi-coding",
-    openclawProvider: "kimi",
-    envVarName: "KIMI_API_KEY",
-    baseUrl: envOr("KIMI_CODING_BASE_URL", "https://api.moonshot.ai/v1"),
-    api: "openai-completions",
-    label: "Kimi Coding",
-});
+// kimi-coding + minimax are subscription-based too but have OAuth flows
+// that need refresh handling, so they ship as dedicated adapters
+// (kimi-coding-api.ts, minimax-api.ts) and are dispatched directly from
+// provider.ts rather than through this passthrough engine.
 // ── Qwen / Alibaba ModelStudio Coding Plan ────────────────────────────────
-// Qwen's OAuth free tier was killed 2026-04-15; paid usage goes through
-// the ModelStudio Coding Plan (BAILIAN_CODING_PLAN_API_KEY, OpenAI-compat).
+// Paid subscription (the OAuth free tier was killed 2026-04-15). Uses a
+// static BAILIAN_CODING_PLAN_API_KEY against an OpenAI-compat endpoint,
+// so it fits the passthrough engine cleanly.
 registerPassthroughSpec({
     cliType: "qwen-coding",
     openclawProvider: "qwen",
@@ -67,26 +57,17 @@ registerPassthroughSpec({
     api: "openai-completions",
     label: "Qwen Coding Plan",
 });
-// ── OpenAI API key (distinct from cli_type "codex" which uses subscription OAuth) ──
-registerPassthroughSpec({
-    cliType: "openai",
-    openclawProvider: "openai",
-    envVarName: "OPENAI_API_KEY",
-    baseUrl: envOr("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-    api: "openai-completions",
-    label: "OpenAI API",
-});
 // Catalog of every cli_type served by the passthrough engine. Exported so
 // provider.ts can switch on membership in one line instead of per-cli-type
 // cases. These are INTERNAL cli_type names — the Hub sees all of them
 // under the single "api-key" cli_type (see `ApiKeyInternalRoute` below).
 export const PASSTHROUGH_CLI_TYPES = new Set([
     "zai-coding",
-    "zai",
-    "moonshot",
-    "kimi-coding",
     "qwen-coding",
-    "openai",
+    // Note: "kimi-coding" and "minimax" are NOT here — they have dedicated
+    // OAuth-aware adapters in kimi-coding-api.ts and minimax-api.ts.
+    // Pay-per-token cli_types (moonshot, zai, openai) were removed because
+    // they guarantee a loss to the provider under the flat RELAY_DISCOUNT.
 ]);
 // ── Hub-side cli_type mapping ─────────────────────────────────────────────
 //
@@ -112,8 +93,13 @@ export const HUB_CLI_TYPE_FOR_PASSTHROUGH = "api-key";
 export function hubCliTypeFor(internalCli) {
     if (PASSTHROUGH_CLI_TYPES.has(internalCli))
         return HUB_CLI_TYPE_FOR_PASSTHROUGH;
-    if (internalCli === "minimax")
+    // minimax + kimi-coding have dedicated adapters but still register as
+    // Hub-canonical "api-key" — to the Hub they're just Bearer-auth
+    // OpenAI-compat providers, the OAuth + refresh lives entirely in the
+    // daemon.
+    if (internalCli === "minimax" || internalCli === "kimi-coding") {
         return HUB_CLI_TYPE_FOR_PASSTHROUGH;
+    }
     // claude / codex / gemini / antigravity pass through unchanged.
     return internalCli;
 }
@@ -134,18 +120,12 @@ export function resolveSpecByModel(model) {
         return "minimax";
     if (model.startsWith("glm-") || model.startsWith("zai-"))
         return "zai-coding";
-    if (model.startsWith("kimi-k2"))
-        return "moonshot";
-    if (model === "kimi-code")
+    if (model.startsWith("kimi-k2") || model === "kimi-code")
         return "kimi-coding";
     if (model.startsWith("qwen"))
         return "qwen-coding";
-    // OpenAI API-key path serves the same gpt-* / o-series catalog the
-    // codex OAuth path does, but dispatch comes in under cli_type="api-key"
-    // so there's no ambiguity at this point — codex traffic never reaches
-    // the resolver.
-    if (model.startsWith("gpt-") || model === "o3" || model === "o4-mini") {
-        return "openai";
-    }
+    // Intentionally nothing for gpt-*/o3/o4-mini — codex OAuth subscription
+    // is the only sanctioned path; raw openai.com API-key passthrough was
+    // removed because the provider would lose money on every buyer request.
     return null;
 }
