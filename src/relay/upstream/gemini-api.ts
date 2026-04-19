@@ -542,8 +542,14 @@ export async function preflightGeminiApi(
 ): Promise<void> {
   configureDispatcher();
   configureGeminiRateGuard(config);
-  const fingerprint = loadFingerprint();
+
+  // Auth first: a missing credential is a higher-priority, more actionable
+  // failure than a missing fingerprint. Openclaw-only providers see the
+  // right "run `openclaw onboard --auth-choice google-personal-oauth`"
+  // hint from loadGeminiOAuth() instead of a misleading "capture the
+  // fingerprint first" error.
   const creds = await getFreshCreds();
+  const fingerprint = loadFingerprint();
   logger.info(
     `[gemini-api] preflight OK (project=${cachedFingerprint?.project_id ?? "?"}, ` +
       `ua=${cachedFingerprint?.user_agent ?? "?"})`

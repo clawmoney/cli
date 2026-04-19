@@ -353,8 +353,13 @@ async function warmupLoadCodeAssist(projectId, accessToken, userAgent, xGoogApiC
 export async function preflightGeminiApi(config) {
     configureDispatcher();
     configureGeminiRateGuard(config);
-    const fingerprint = loadFingerprint();
+    // Auth first: a missing credential is a higher-priority, more actionable
+    // failure than a missing fingerprint. Openclaw-only providers see the
+    // right "run `openclaw onboard --auth-choice google-personal-oauth`"
+    // hint from loadGeminiOAuth() instead of a misleading "capture the
+    // fingerprint first" error.
     const creds = await getFreshCreds();
+    const fingerprint = loadFingerprint();
     logger.info(`[gemini-api] preflight OK (project=${cachedFingerprint?.project_id ?? "?"}, ` +
         `ua=${cachedFingerprint?.user_agent ?? "?"})`);
     // Warmup call — mirror real CLI startup before the first user prompt.
