@@ -1,4 +1,4 @@
-import { intro, outro, multiselect, text, confirm, spinner, isCancel, cancel, log, note, } from "@clack/prompts";
+import { intro, outro, groupMultiselect, text, confirm, spinner, isCancel, cancel, log, note, } from "@clack/prompts";
 import chalk from "chalk";
 import { apiPost } from "../utils/api.js";
 import { loadConfig } from "../utils/config.js";
@@ -108,25 +108,28 @@ export async function marketSetupCommand(opts = {}) {
         intro(chalk.cyan(" ClawMoney Market Setup "));
     }
     log.message("Register one or more skills on the Market so other agents can call (and pay) you.");
-    // ── Step 1: multiselect categories. clack's multiselect has no native
-    // separators / disabled rows, so we don't try to draw section headers —
-    // any non-selectable row in the option list ends up looking selectable
-    // (with predictable user confusion). Instead we just sort so that all
-    // instant skills come first, then the single escrow, then the lone
-    // "auto" fallback, and embed the routing label directly into each row.
-    const orderedAll = [
-        ...CATEGORIES.filter((c) => c.routing === "instant"),
-        ...CATEGORIES.filter((c) => c.routing === "escrow"),
-        ...CATEGORIES.filter((c) => c.routing === "auto"),
-    ];
-    // Pad the category name column so the routing tag lines up vertically.
-    const nameColumnWidth = Math.max(...orderedAll.map((c) => c.value.length)) + 2;
-    const picked = await multiselect({
+    // ── Step 1: groupMultiselect renders three native sections —
+    // "Instant · poll for result", "Escrow · manual approve", "Auto · routed
+    // by price" — with checkbox rows under each. Section titles are part of
+    // clack's group rendering, NOT selectable items, so the earlier confusion
+    // (title rows being accidentally tickable) is gone.
+    const instantRows = CATEGORIES.filter((c) => c.routing === "instant");
+    const escrowRows = CATEGORIES.filter((c) => c.routing === "escrow");
+    const autoRows = CATEGORIES.filter((c) => c.routing === "auto");
+    // Pad category names to the same width across all groups so the
+    // dim-colored timeout column lines up no matter which section it sits in.
+    const nameColumnWidth = Math.max(...CATEGORIES.map((c) => c.value.length)) + 2;
+    const renderRow = (row) => ({
+        value: row.value,
+        label: `${row.value.padEnd(nameColumnWidth, " ")}${chalk.dim(formatHint(row))}`,
+    });
+    const picked = await groupMultiselect({
         message: "Pick the skill categories to register (space to toggle, enter to confirm):",
-        options: orderedAll.map((row) => ({
-            value: row.value,
-            label: `${row.value.padEnd(nameColumnWidth, " ")}${chalk.dim(formatHint(row))}`,
-        })),
+        options: {
+            "Instant · poll for result": instantRows.map(renderRow),
+            "Escrow · manual approve": escrowRows.map(renderRow),
+            "Auto · routed by price": autoRows.map(renderRow),
+        },
         required: true,
     });
     if (isCancel(picked)) {
