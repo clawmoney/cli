@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, statSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { isProcessed, markProcessed } from "./dedup.js";
 import { replaceLocalPaths, uploadFile } from "./media.js";
 import { logger } from "./logger.js";
@@ -123,8 +125,83 @@ function validateImageDelivery(output) {
         return "Image upload to R2 failed.";
     }
 }
+// ── Codex generated-image directory watcher ──
+//
+// codex saves all image_gen output under $CODEX_HOME/generated_images/
+// in a per-thread subdir. Once the .png lands on disk and reaches a stable
+// size, the deliverable is ready — everything codex does after (cp,
+// verification, final reasoning) is overhead the buyer doesn't see. We
+// snapshot the directory before spawning codex, then poll for any new
+// thread dir that contains a stable image file. When we find one we
+// fabricate a synthetic agent_message into the stdout stream so the
+// downstream parser picks up the path naturally, then SIGTERM codex.
+const CODEX_HOME = process.env.CODEX_HOME || join(homedir(), ".codex");
+const CODEX_GEN_DIR = join(CODEX_HOME, "generated_images");
+const FILE_STABLE_MS = 1500;
+const POLL_INTERVAL_MS = 400;
+function snapshotCodexThreads() {
+    try {
+        return new Set(readdirSync(CODEX_GEN_DIR));
+    }
+    catch {
+        // Directory may not exist yet on a fresh install — that's fine,
+        // codex will create it the first time it generates anything.
+        return new Set();
+    }
+}
+function findNewCodexImage(baseline) {
+    let entries;
+    try {
+        entries = readdirSync(CODEX_GEN_DIR);
+    }
+    catch {
+        return null;
+    }
+    for (const entry of entries) {
+        if (baseline.has(entry))
+            continue;
+        // A new per-thread directory has appeared. Look inside for the
+        // first image file the model dropped there.
+        const dir = join(CODEX_GEN_DIR, entry);
+        let files;
+        try {
+            files = readdirSync(dir);
+        }
+        catch {
+            continue;
+        }
+        for (const f of files) {
+            if (IMAGE_EXT_RE.test(f))
+                return join(dir, f);
+        }
+    }
+    return null;
+}
+async function waitForStableSize(filePath) {
+    let lastSize = -1;
+    let stableSince = 0;
+    // Cap at 20s in case the file truly never settles — let the rest of
+    // the flow handle that as a delivery failure rather than hanging.
+    const deadline = Date.now() + 20_000;
+    while (Date.now() < deadline) {
+        try {
+            const size = statSync(filePath).size;
+            if (size !== lastSize) {
+                lastSize = size;
+                stableSince = Date.now();
+            }
+            else if (size > 0 && Date.now() - stableSince >= FILE_STABLE_MS) {
+                return;
+            }
+        }
+        catch {
+            // file may have moved between stat() calls — try again
+        }
+        await new Promise((r) => setTimeout(r, 200));
+    }
+}
 // ── CLI execution (openclaw agent / claude -p) ──
-function runCli(command, prompt, timeoutMs, orderId) {
+function runCli(command, prompt, timeoutMs, orderId, watchForImage) {
     return new Promise((resolve) => {
         // Build args based on command
         let args;
@@ -166,6 +243,9 @@ function runCli(command, prompt, timeoutMs, orderId) {
             // claude -p "..." --output-format json --dangerously-skip-permissions
             args = ["-p", prompt, "--output-format", "json", "--dangerously-skip-permissions"];
         }
+        // For codex generation/image calls, snapshot the generated-images dir
+        // BEFORE spawning so we can identify the new thread dir later.
+        const dirBaseline = watchForImage && command === "codex" ? snapshotCodexThreads() : null;
         const child = spawn(command, args, {
             stdio: ["ignore", "pipe", "pipe"],
             timeout: timeoutMs,
@@ -174,36 +254,57 @@ function runCli(command, prompt, timeoutMs, orderId) {
         let stdout = "";
         let stderr = "";
         let earlyResolved = false;
-        const tryEarlyExit = () => {
+        let pollHandle = null;
+        const finishWithEarlyImage = async (imagePath) => {
             if (earlyResolved)
                 return;
-            // Only attempt early exit for codex — others either don't stream
-            // events with this shape, or already finish promptly after their
-            // last output. Codex on xhigh/high reasoning_effort wastes 60–90s
-            // doing "final reflection" reasoning even after the agent_message
-            // is already emitted with the image_path. Once we see that
-            // message in the JSONL stream the deliverable is fully on disk
-            // and we can ship the order — kill the child to avoid burning
-            // buyer wall-time on reasoning we won't read.
-            if (command !== "codex")
-                return;
-            if (!hasCodexDeliverable(stdout))
+            // Wait until the file size stops growing before we tell the rest
+            // of the flow it's ready — otherwise we might upload a partial PNG
+            // and confuse R2 / the buyer's image viewer.
+            await waitForStableSize(imagePath);
+            if (earlyResolved)
                 return;
             earlyResolved = true;
-            // SIGTERM is enough; codex closes its writer and we'll get a
-            // 'close' event shortly. Don't await — let the resolve below
-            // return the snapshot we already have.
+            if (pollHandle) {
+                clearInterval(pollHandle);
+                pollHandle = null;
+            }
             try {
                 child.kill("SIGTERM");
             }
             catch {
                 // pid may already be gone
             }
+            // Inject a synthetic agent_message into the stream so the codex
+            // JSONL parser downstream picks up the image_path naturally,
+            // without us needing to plumb a separate "early path" through
+            // the rest of executeTask.
+            const synthetic = JSON.stringify({
+                type: "item.completed",
+                item: {
+                    type: "agent_message",
+                    text: JSON.stringify({ image_path: imagePath }),
+                },
+            });
+            stdout += "\n" + synthetic + "\n";
             resolve({ stdout, stderr, exitCode: 0 });
         };
+        if (dirBaseline) {
+            pollHandle = setInterval(() => {
+                if (earlyResolved)
+                    return;
+                const newImage = findNewCodexImage(dirBaseline);
+                if (newImage) {
+                    if (pollHandle) {
+                        clearInterval(pollHandle);
+                        pollHandle = null;
+                    }
+                    void finishWithEarlyImage(newImage);
+                }
+            }, POLL_INTERVAL_MS);
+        }
         child.stdout.on("data", (chunk) => {
             stdout += chunk.toString();
-            tryEarlyExit();
         });
         child.stderr.on("data", (chunk) => {
             stderr += chunk.toString();
@@ -211,61 +312,23 @@ function runCli(command, prompt, timeoutMs, orderId) {
         child.on("close", (code) => {
             if (earlyResolved)
                 return;
+            if (pollHandle) {
+                clearInterval(pollHandle);
+                pollHandle = null;
+            }
             resolve({ stdout, stderr, exitCode: code });
         });
         child.on("error", (err) => {
             if (earlyResolved)
                 return;
+            if (pollHandle) {
+                clearInterval(pollHandle);
+                pollHandle = null;
+            }
             stderr += err.message;
             resolve({ stdout, stderr, exitCode: null });
         });
     });
-}
-/**
- * Detect whether codex's JSONL stream already contains a final
- * agent_message event whose text parses to JSON with an `image_path`.
- * That's the signal that the image is on disk and the agent has
- * acknowledged it — everything codex does after this point is its
- * own final reasoning loop, which the buyer never sees.
- *
- * Scans newest-to-oldest so we exit as soon as we find the marker.
- */
-function hasCodexDeliverable(streamSoFar) {
-    const lines = streamSoFar.split("\n");
-    for (let i = lines.length - 1; i >= 0; i--) {
-        const line = lines[i].trim();
-        if (!line.startsWith("{"))
-            continue;
-        let event;
-        try {
-            event = JSON.parse(line);
-        }
-        catch {
-            continue;
-        }
-        if (event.type !== "item.completed")
-            continue;
-        const item = event.item;
-        if (item?.type !== "agent_message")
-            continue;
-        const text = item.text;
-        if (typeof text !== "string")
-            continue;
-        // Cheap pre-check before JSON.parse: must mention image_path.
-        if (!text.includes("image_path"))
-            continue;
-        try {
-            const parsed = JSON.parse(text);
-            const path = parsed.image_path;
-            if (typeof path === "string" && path.length > 0)
-                return true;
-        }
-        catch {
-            // text wasn't JSON; agent might be talking about image_path
-            // in prose. Keep looking — don't early-exit on prose.
-        }
-    }
-    return false;
 }
 // ── JSON parser ──
 function parseJsonOutput(raw) {
@@ -587,7 +650,11 @@ export class Executor {
             const timeoutS = Math.max(call.timeout - TIMEOUT_BUFFER_S, 30);
             const command = this.config.provider.cli_command;
             logger.info(`Executing: ${command} for skill="${call.skill}" order=${call.order_id} (timeout=${timeoutS}s)`);
-            const { stdout, stderr, exitCode } = await runCli(command, prompt, timeoutS * 1000, call.order_id);
+            const { stdout, stderr, exitCode } = await runCli(command, prompt, timeoutS * 1000, call.order_id, 
+            // Watch the codex image dir for generation/image so we can
+            // ship the moment the file lands, skipping codex's final
+            // reasoning tail (~60–90s of pure overhead).
+            call.category?.startsWith("generation/image"));
             if (exitCode !== 0) {
                 const errMsg = stderr.trim() || `CLI exited with code ${exitCode}`;
                 logger.error(`CLI failed (code=${exitCode}):`, errMsg);
