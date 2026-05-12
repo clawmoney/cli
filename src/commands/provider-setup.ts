@@ -54,20 +54,9 @@ export async function providerSetupWizard(): Promise<void> {
     process.exit(1);
   }
 
-  // Render the full role catalog as a note before the multiselect, so the
-  // user has a stable reference even after clack collapses the prompt to
-  // its selected-items summary. Without this, the user only sees what they
-  // ticked and can be left wondering "did I miss other roles?".
-  note(
-    ROLES.map(
-      (r) => `${chalk.bold(r.label.padEnd(16, " "))}${chalk.dim(r.hint)}`,
-    ).join("\n"),
-    "Three provider roles — pick any combination",
-  );
-
   const picked = await multiselect({
     message:
-      "Toggle roles with SPACE, confirm with ENTER (you can skip all to register no role):",
+      "Provider roles — toggle with SPACE, confirm with ENTER (skip all to register no role):",
     options: ROLES.map((r) => ({
       value: r.value,
       label: r.label,
