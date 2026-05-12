@@ -168,44 +168,35 @@ export async function marketSetupCommand(
     "Register one or more skills on the Market so other agents can call (and pay) you."
   );
 
-  // ── Step 1: multiselect categories. Grouped visually: Instant first,
-  // then Escrow, then Auto. clack's multiselect has no native separators,
-  // so we fake them with disabled-looking header rows whose value is a
-  // sentinel — selecting one is a no-op (filtered out downstream). ──
-  const INSTANT_HEADER = "__hdr_instant__";
-  const ESCROW_HEADER = "__hdr_escrow__";
-  const AUTO_HEADER = "__hdr_auto__";
-  const HEADERS = new Set([INSTANT_HEADER, ESCROW_HEADER, AUTO_HEADER]);
-
-  const instantRows = CATEGORIES.filter((c) => c.routing === "instant");
-  const escrowRows = CATEGORIES.filter((c) => c.routing === "escrow");
-  const autoRows = CATEGORIES.filter((c) => c.routing === "auto");
-
-  const groupedOptions = [
-    { value: INSTANT_HEADER, label: chalk.dim("── Instant · poll for result ──"), hint: "" },
-    ...instantRows.map((row) => ({ value: row.value, label: `  ${row.value}`, hint: formatHint(row) })),
-    { value: ESCROW_HEADER, label: chalk.dim("── Escrow · manual approve ──"), hint: "" },
-    ...escrowRows.map((row) => ({ value: row.value, label: `  ${row.value}`, hint: formatHint(row) })),
-    { value: AUTO_HEADER, label: chalk.dim("── Auto · routed by price ──"), hint: "" },
-    ...autoRows.map((row) => ({ value: row.value, label: `  ${row.value}`, hint: formatHint(row) })),
+  // ── Step 1: multiselect categories. clack's multiselect has no native
+  // separators / disabled rows, so we don't try to draw section headers —
+  // any non-selectable row in the option list ends up looking selectable
+  // (with predictable user confusion). Instead we just sort so that all
+  // instant skills come first, then the single escrow, then the lone
+  // "auto" fallback, and embed the routing label directly into each row.
+  const orderedAll = [
+    ...CATEGORIES.filter((c) => c.routing === "instant"),
+    ...CATEGORIES.filter((c) => c.routing === "escrow"),
+    ...CATEGORIES.filter((c) => c.routing === "auto"),
   ];
+
+  // Pad the category name column so the routing tag lines up vertically.
+  const nameColumnWidth = Math.max(...orderedAll.map((c) => c.value.length)) + 2;
 
   const picked = await multiselect({
     message:
       "Pick the skill categories to register (space to toggle, enter to confirm):",
-    options: groupedOptions,
+    options: orderedAll.map((row) => ({
+      value: row.value,
+      label: `${row.value.padEnd(nameColumnWidth, " ")}${chalk.dim(formatHint(row))}`,
+    })),
     required: true,
   });
   if (isCancel(picked)) {
     cancel("Setup cancelled");
     process.exit(0);
   }
-  // Strip header sentinels — they're visual-only group separators.
-  const pickedCategories = (picked as string[]).filter((v) => !HEADERS.has(v));
-  if (pickedCategories.length === 0) {
-    cancel("No categories selected");
-    process.exit(0);
-  }
+  const pickedCategories = picked as string[];
 
   // Preserve the canonical CATEGORIES order rather than the click order —
   // makes the per-skill prompts and the review table read consistently.
