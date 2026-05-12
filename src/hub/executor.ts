@@ -204,9 +204,35 @@ function runCli(
 
     let stdout = "";
     let stderr = "";
+    let earlyResolved = false;
+
+    const tryEarlyExit = () => {
+      if (earlyResolved) return;
+      // Only attempt early exit for codex — others either don't stream
+      // events with this shape, or already finish promptly after their
+      // last output. Codex on xhigh/high reasoning_effort wastes 60–90s
+      // doing "final reflection" reasoning even after the agent_message
+      // is already emitted with the image_path. Once we see that
+      // message in the JSONL stream the deliverable is fully on disk
+      // and we can ship the order — kill the child to avoid burning
+      // buyer wall-time on reasoning we won't read.
+      if (command !== "codex") return;
+      if (!hasCodexDeliverable(stdout)) return;
+      earlyResolved = true;
+      // SIGTERM is enough; codex closes its writer and we'll get a
+      // 'close' event shortly. Don't await — let the resolve below
+      // return the snapshot we already have.
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // pid may already be gone
+      }
+      resolve({ stdout, stderr, exitCode: 0 });
+    };
 
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
+      tryEarlyExit();
     });
 
     child.stderr.on("data", (chunk: Buffer) => {
@@ -214,14 +240,55 @@ function runCli(
     });
 
     child.on("close", (code) => {
+      if (earlyResolved) return;
       resolve({ stdout, stderr, exitCode: code });
     });
 
     child.on("error", (err) => {
+      if (earlyResolved) return;
       stderr += err.message;
       resolve({ stdout, stderr, exitCode: null });
     });
   });
+}
+
+/**
+ * Detect whether codex's JSONL stream already contains a final
+ * agent_message event whose text parses to JSON with an `image_path`.
+ * That's the signal that the image is on disk and the agent has
+ * acknowledged it — everything codex does after this point is its
+ * own final reasoning loop, which the buyer never sees.
+ *
+ * Scans newest-to-oldest so we exit as soon as we find the marker.
+ */
+function hasCodexDeliverable(streamSoFar: string): boolean {
+  const lines = streamSoFar.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (!line.startsWith("{")) continue;
+    let event: Record<string, unknown>;
+    try {
+      event = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (event.type !== "item.completed") continue;
+    const item = event.item as Record<string, unknown> | undefined;
+    if (item?.type !== "agent_message") continue;
+    const text = item.text;
+    if (typeof text !== "string") continue;
+    // Cheap pre-check before JSON.parse: must mention image_path.
+    if (!text.includes("image_path")) continue;
+    try {
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      const path = parsed.image_path;
+      if (typeof path === "string" && path.length > 0) return true;
+    } catch {
+      // text wasn't JSON; agent might be talking about image_path
+      // in prose. Keep looking — don't early-exit on prose.
+    }
+  }
+  return false;
 }
 
 // ── JSON parser ──
