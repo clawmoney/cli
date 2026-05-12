@@ -1,7 +1,7 @@
 import {
   intro,
   outro,
-  select,
+  multiselect,
   text,
   confirm,
   spinner,
@@ -35,22 +35,26 @@ interface CategoryRow {
   timeoutS: number | null;       // null when not applicable (escrow / auto)
   suggestedPrice: number;        // USDC per call
   priceRange: [number, number];  // shown as a hint, not enforced
+  // Sensible defaults that make the batch flow fast. The user can still
+  // overwrite these for any skill they care to customize.
+  defaultName: string;
+  placeholderDesc: string;
 }
 
 const CATEGORIES: CategoryRow[] = [
-  { value: "generation/image",         routing: "instant", timeoutS: 120, suggestedPrice: 0.02, priceRange: [0.01, 0.50] },
-  { value: "generation/video",         routing: "instant", timeoutS: 300, suggestedPrice: 0.10, priceRange: [0.05, 1.00] },
-  { value: "generation/video_long",    routing: "escrow",  timeoutS: null, suggestedPrice: 5.00, priceRange: [1.00, 50.00] },
-  { value: "generation/text",          routing: "instant", timeoutS: 120, suggestedPrice: 0.01, priceRange: [0.005, 0.20] },
-  { value: "generation/audio",         routing: "instant", timeoutS: 180, suggestedPrice: 0.05, priceRange: [0.02, 0.50] },
-  { value: "transformation/translate", routing: "instant", timeoutS: 60,  suggestedPrice: 0.01, priceRange: [0.005, 0.10] },
-  { value: "transformation/tts",       routing: "instant", timeoutS: 120, suggestedPrice: 0.02, priceRange: [0.01, 0.20] },
-  { value: "transformation/stt",       routing: "instant", timeoutS: 120, suggestedPrice: 0.02, priceRange: [0.01, 0.20] },
-  { value: "search/web",               routing: "instant", timeoutS: 60,  suggestedPrice: 0.01, priceRange: [0.005, 0.10] },
-  { value: "analysis/data",            routing: "instant", timeoutS: 180, suggestedPrice: 0.05, priceRange: [0.02, 0.50] },
-  { value: "coding/generation",        routing: "instant", timeoutS: 240, suggestedPrice: 0.05, priceRange: [0.02, 0.50] },
-  { value: "coding/review",            routing: "instant", timeoutS: 180, suggestedPrice: 0.05, priceRange: [0.02, 0.50] },
-  { value: "other",                    routing: "auto",    timeoutS: null, suggestedPrice: 0.02, priceRange: [0.01, 1.00] },
+  { value: "generation/image",         routing: "instant", timeoutS: 120, suggestedPrice: 0.02, priceRange: [0.01, 0.50],   defaultName: "gen-image",      placeholderDesc: "Generate a 1024x1024 image from a text prompt" },
+  { value: "generation/video",         routing: "instant", timeoutS: 300, suggestedPrice: 0.10, priceRange: [0.05, 1.00],   defaultName: "gen-video",      placeholderDesc: "Generate a short AI video clip from a text prompt" },
+  { value: "generation/video_long",    routing: "escrow",  timeoutS: null, suggestedPrice: 5.00, priceRange: [1.00, 50.00], defaultName: "gen-video-long", placeholderDesc: "Generate long-form narrated video (escrow)" },
+  { value: "generation/text",          routing: "instant", timeoutS: 120, suggestedPrice: 0.01, priceRange: [0.005, 0.20],  defaultName: "gen-text",       placeholderDesc: "Generate text from a prompt" },
+  { value: "generation/audio",         routing: "instant", timeoutS: 180, suggestedPrice: 0.05, priceRange: [0.02, 0.50],   defaultName: "gen-audio",      placeholderDesc: "Generate music or sound effects from a prompt" },
+  { value: "transformation/translate", routing: "instant", timeoutS: 60,  suggestedPrice: 0.01, priceRange: [0.005, 0.10],  defaultName: "translate",      placeholderDesc: "Translate text between languages" },
+  { value: "transformation/tts",       routing: "instant", timeoutS: 120, suggestedPrice: 0.02, priceRange: [0.01, 0.20],   defaultName: "tts",            placeholderDesc: "Convert text to natural-sounding speech" },
+  { value: "transformation/stt",       routing: "instant", timeoutS: 120, suggestedPrice: 0.02, priceRange: [0.01, 0.20],   defaultName: "stt",            placeholderDesc: "Transcribe speech to text" },
+  { value: "search/web",               routing: "instant", timeoutS: 60,  suggestedPrice: 0.01, priceRange: [0.005, 0.10],  defaultName: "web-search",     placeholderDesc: "Search the web and return relevant results" },
+  { value: "analysis/data",            routing: "instant", timeoutS: 180, suggestedPrice: 0.05, priceRange: [0.02, 0.50],   defaultName: "data-analysis",  placeholderDesc: "Analyze a dataset and return insights" },
+  { value: "coding/generation",        routing: "instant", timeoutS: 240, suggestedPrice: 0.05, priceRange: [0.02, 0.50],   defaultName: "code-gen",       placeholderDesc: "Generate code from a natural-language spec" },
+  { value: "coding/review",            routing: "instant", timeoutS: 180, suggestedPrice: 0.05, priceRange: [0.02, 0.50],   defaultName: "code-review",    placeholderDesc: "Review a diff or PR for bugs and style issues" },
+  { value: "other",                    routing: "auto",    timeoutS: null, suggestedPrice: 0.02, priceRange: [0.01, 1.00],  defaultName: "",                placeholderDesc: "Describe what this skill does" },
 ];
 
 const PRICE_THRESHOLD_FOR_ESCROW = 1.0;  // mirrors backend constant
@@ -120,6 +124,19 @@ function validatePrice(value: string): string | undefined {
 
 // ── Main wizard ──
 
+interface DraftSkill {
+  category: string;        // SkillCategory enum value
+  name: string;            // url-safe slug
+  description: string;
+  price: number;           // USDC per call
+}
+
+interface RegistrationResult {
+  draft: DraftSkill;
+  ok: boolean;
+  detail?: string;         // populated on failure
+}
+
 export async function marketSetupCommand(): Promise<void> {
   // Step 0: ensure the agent is logged in. Mirrors relaySetupCommand's
   // handoff to setupCommand so first-time users get a clean flow instead
@@ -143,88 +160,127 @@ export async function marketSetupCommand(): Promise<void> {
 
   intro(chalk.cyan(" ClawMoney Market Setup "));
   log.message(
-    "Register a skill on the Market so other agents can call (and pay) you."
+    "Register one or more skills on the Market so other agents can call (and pay) you."
   );
 
-  // ── Step 1: category ──
-  const category = await select({
-    message: "Pick the skill category:",
+  // ── Step 1: multiselect categories (the big difference vs relay setup —
+  // each picked category becomes one skill, no dupes within this run) ──
+  const picked = await multiselect({
+    message:
+      "Pick the skill categories to register (space to toggle, enter to confirm):",
     options: CATEGORIES.map((row) => ({
       value: row.value,
       label: row.value,
       hint: formatHint(row),
     })),
-    initialValue: "generation/image",
+    required: true,
   });
-  if (isCancel(category)) {
+  if (isCancel(picked)) {
     cancel("Setup cancelled");
     process.exit(0);
   }
-  const categoryStr = category as string;
-  const categoryRow = CATEGORIES.find((c) => c.value === categoryStr)!;
+  const pickedCategories = picked as string[];
 
-  // ── Step 2: skill name ──
-  const skillName = await text({
-    message: "Skill name (used in URLs, e.g. gen-image):",
-    placeholder: "gen-image",
-    validate: validateSkillName,
-  });
-  if (isCancel(skillName)) {
-    cancel("Setup cancelled");
-    process.exit(0);
+  // Preserve the canonical CATEGORIES order rather than the click order —
+  // makes the per-skill prompts and the review table read consistently.
+  const orderedRows: CategoryRow[] = CATEGORIES.filter((c) =>
+    pickedCategories.includes(c.value),
+  );
+
+  // ── Step 2: for each category, collect name / description / price ──
+  const drafts: DraftSkill[] = [];
+  for (let i = 0; i < orderedRows.length; i++) {
+    const row = orderedRows[i];
+    log.step(
+      `${chalk.cyan(row.value)}  (${i + 1}/${orderedRows.length})  ${chalk.dim(
+        formatHint(row),
+      )}`,
+    );
+
+    const skillName = await text({
+      message: "  Skill name:",
+      placeholder: row.defaultName || "my-skill",
+      initialValue: row.defaultName,
+      validate: validateSkillName,
+    });
+    if (isCancel(skillName)) {
+      cancel("Setup cancelled — nothing was registered");
+      process.exit(0);
+    }
+
+    const description = await text({
+      message: "  Description:",
+      placeholder: row.placeholderDesc,
+      validate: validateDescription,
+    });
+    if (isCancel(description)) {
+      cancel("Setup cancelled — nothing was registered");
+      process.exit(0);
+    }
+
+    const priceInput = await text({
+      message: `  Price per call in USDC ${chalk.dim(
+        `(suggested $${row.suggestedPrice.toFixed(2)}, range $${
+          row.priceRange[0]
+        }–$${row.priceRange[1]})`,
+      )}:`,
+      placeholder: row.suggestedPrice.toFixed(2),
+      initialValue: row.suggestedPrice.toFixed(2),
+      validate: validatePrice,
+    });
+    if (isCancel(priceInput)) {
+      cancel("Setup cancelled — nothing was registered");
+      process.exit(0);
+    }
+
+    drafts.push({
+      category: row.value,
+      name: (skillName as string).trim(),
+      description: (description as string).trim(),
+      price: Number((priceInput as string).trim()),
+    });
   }
-  const skillNameStr = (skillName as string).trim();
 
-  // ── Step 3: description ──
-  const description = await text({
-    message: "One-line description (what does this skill do?):",
-    placeholder: "Generate a 1024x1024 image from a text prompt",
-    validate: validateDescription,
+  // ── Step 3: review the batch (show resolved skill_type for each so the
+  // user knows which ones will go through escrow before they confirm) ──
+  const reviewLines = drafts.map((d, idx) => {
+    const skillType = resolveSkillType(d.category, d.price);
+    return `  ${String(idx + 1).padStart(2, " ")}. ${chalk.cyan(
+      d.name.padEnd(18),
+    )} ${d.category.padEnd(26)} ${chalk.green(
+      `$${d.price.toFixed(2)}`.padStart(6, " "),
+    )}  ${
+      skillType === "escrow" ? chalk.yellow("escrow") : chalk.dim("instant")
+    }`;
   });
-  if (isCancel(description)) {
-    cancel("Setup cancelled");
-    process.exit(0);
-  }
-  const descriptionStr = (description as string).trim();
 
-  // ── Step 4: price (suggested default per category) ──
-  const priceInput = await text({
-    message: `Price per call in USDC (suggested $${categoryRow.suggestedPrice.toFixed(
-      2
-    )}, range $${categoryRow.priceRange[0]}–$${categoryRow.priceRange[1]}):`,
-    placeholder: categoryRow.suggestedPrice.toFixed(2),
-    initialValue: categoryRow.suggestedPrice.toFixed(2),
-    validate: validatePrice,
-  });
-  if (isCancel(priceInput)) {
-    cancel("Setup cancelled");
-    process.exit(0);
-  }
-  const price = Number((priceInput as string).trim());
-
-  // ── Step 5: review (show the resolved skill_type so the user knows
-  // what they're agreeing to before commit) ──
-  const skillType = resolveSkillType(categoryStr, price);
-  const routingLabel =
-    skillType === "escrow"
-      ? "escrow (manual approve required)"
-      : "instant (poll for result)";
+  // Tell the user only if escrow skills are in the batch — otherwise the
+  // extra explanation is noise.
+  const hasEscrow = drafts.some(
+    (d) => resolveSkillType(d.category, d.price) === "escrow",
+  );
 
   note(
     [
-      `Name:        ${chalk.cyan(skillNameStr)}`,
-      `Category:    ${chalk.cyan(categoryStr)}`,
-      `Price:       ${chalk.green(`$${price.toFixed(2)} USDC / call`)}`,
-      `Description: "${descriptionStr}"`,
-      "",
-      `Routing:     ${chalk.bold(routingLabel)}`,
-      chalk.dim(routingExplanation(skillType)),
+      ...reviewLines,
+      ...(hasEscrow
+        ? [
+            "",
+            chalk.dim(
+              `Escrow skills require manual approve from the caller — funds`,
+            ),
+            chalk.dim(
+              `stay locked until you deliver and they release. Good for tasks`,
+            ),
+            chalk.dim(`that take minutes to hours (e.g. long video).`),
+          ]
+        : []),
     ].join("\n"),
-    "Review"
+    `Review · ${drafts.length} ${drafts.length === 1 ? "skill" : "skills"} to register`,
   );
 
   const proceed = await confirm({
-    message: "Confirm and register?",
+    message: `Confirm and register ${drafts.length === 1 ? "this skill" : `all ${drafts.length} skills`}?`,
     initialValue: true,
   });
   if (isCancel(proceed) || !proceed) {
@@ -232,48 +288,65 @@ export async function marketSetupCommand(): Promise<void> {
     process.exit(0);
   }
 
-  // ── Step 6: register ──
-  const submitSpin = spinner();
-  submitSpin.start("Registering skill...");
+  // ── Step 4: sequential register. One failure does not abort the rest;
+  // we show a per-skill summary at the end so the user can re-run for the
+  // failures. Atomicity would need a backend batch endpoint we don't have. ──
+  const results: RegistrationResult[] = [];
+  for (const draft of drafts) {
+    const s = spinner();
+    s.start(`Registering ${chalk.cyan(draft.name)}...`);
 
-  // Backend's AgentSkillCreate has extra='forbid', so we send ONLY the
-  // four allowed fields. skill_type is intentionally not sent — the server
-  // derives it from category and the routing rule we previewed above.
-  const resp = await apiPost<{ id?: string; detail?: unknown }>(
-    "/api/v1/market/skills",
-    {
-      skill_name: skillNameStr,
-      category: categoryStr,
-      description: descriptionStr,
-      price,
-    },
-    config.api_key
-  );
+    // Backend's AgentSkillCreate has extra='forbid', so we send ONLY the
+    // four allowed fields. skill_type is intentionally not sent — the
+    // server derives it from category and the routing rule previewed above.
+    const resp = await apiPost<{ id?: string; detail?: unknown }>(
+      "/api/v1/market/skills",
+      {
+        skill_name: draft.name,
+        category: draft.category,
+        description: draft.description,
+        price: draft.price,
+      },
+      config.api_key,
+    );
 
-  if (!resp.ok) {
-    const raw =
-      resp.data && typeof resp.data === "object" && "detail" in resp.data
-        ? (resp.data as Record<string, unknown>).detail
-        : resp.data;
-    const detail = typeof raw === "string" ? raw : JSON.stringify(raw);
-    submitSpin.stop(chalk.red(`Failed (${resp.status}): ${detail}`));
-    process.exit(1);
+    if (resp.ok) {
+      s.stop(`${chalk.green("✓")} ${draft.name}`);
+      results.push({ draft, ok: true });
+    } else {
+      const raw =
+        resp.data && typeof resp.data === "object" && "detail" in resp.data
+          ? (resp.data as Record<string, unknown>).detail
+          : resp.data;
+      const detail = typeof raw === "string" ? raw : JSON.stringify(raw);
+      s.stop(`${chalk.red("✗")} ${draft.name} ${chalk.dim(`(${detail})`)}`);
+      results.push({ draft, ok: false, detail });
+    }
   }
 
-  submitSpin.stop(chalk.green("Skill registered."));
+  const okCount = results.filter((r) => r.ok).length;
+  const failCount = results.length - okCount;
 
   outro(
     [
-      chalk.green("Done."),
+      failCount === 0
+        ? chalk.green(`All ${okCount} skills registered.`)
+        : okCount === 0
+          ? chalk.red(`None registered (${failCount} failed).`)
+          : chalk.yellow(`${okCount} registered, ${failCount} failed.`),
       "",
       chalk.dim(
         `Next: run ${chalk.cyan(
-          "clawmoney market start"
-        )} to accept incoming calls in the background.`
+          "clawmoney market start",
+        )} to accept incoming calls in the background.`,
       ),
       chalk.dim(
-        `      See your skill listed: ${chalk.cyan("clawmoney market skills")}`
+        `      See your skills listed: ${chalk.cyan("clawmoney market skills")}`,
       ),
-    ].join("\n")
+    ].join("\n"),
   );
+
+  if (failCount > 0) {
+    process.exit(1);
+  }
 }
