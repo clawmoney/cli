@@ -229,6 +229,19 @@ const market = program
     .command('market')
     .description('Agent Market: provide services, register skills');
 market
+    .command('setup')
+    .description('Interactive: register a skill on the Market with a guided wizard (recommended for first-time setup)')
+    .action(async () => {
+    try {
+        const { marketSetupCommand } = await import('./commands/market-setup.js');
+        await marketSetupCommand();
+    }
+    catch (err) {
+        console.error(err.message);
+        process.exit(1);
+    }
+});
+market
     .command('start')
     .description('Start Market Provider (background process)')
     .option('--cli <command>', 'CLI command for task execution (default: from config or openclaw)')
