@@ -3,19 +3,32 @@ import chalk from "chalk";
 import { apiPost } from "../utils/api.js";
 import { loadConfig } from "../utils/config.js";
 import { setupCommand } from "./setup.js";
+// Routing kept in sync with bnbot-api app/core/market_skill_routing.py.
+// Data analyses, code generation, and code reviews are escrow because the
+// caller usually wants to inspect the deliverable before releasing funds.
+//
+// Backend SkillCategory enum has more entries than this wizard shows. We
+// intentionally HIDE the following because they offer no differentiated
+// value in an agent marketplace today:
+//   - search/web     — every provider can hit Tavily/Brave/SerpAPI direct
+//                       at the same prices; nothing to arbitrage
+//   - transformation/translate — modern LLMs translate inline, no need to
+//                                outsource the call
+//   - transformation/stt        — whisper.cpp is free and local; whisper API
+//                                is $0.006/min, almost no margin
+//
+// Those backend enum values are still valid — high-end providers who really
+// want to list them can use `clawmoney market register --category <value>`.
 const CATEGORIES = [
     { value: "generation/image", routing: "instant", timeoutS: 120, suggestedPrice: 0.02, priceRange: [0.01, 0.50], defaultName: "gen-image", placeholderDesc: "Generate a 1024x1024 image from a text prompt" },
     { value: "generation/video", routing: "instant", timeoutS: 300, suggestedPrice: 0.10, priceRange: [0.05, 1.00], defaultName: "gen-video", placeholderDesc: "Generate a short AI video clip from a text prompt" },
-    { value: "generation/video_long", routing: "escrow", timeoutS: null, suggestedPrice: 5.00, priceRange: [1.00, 50.00], defaultName: "gen-video-long", placeholderDesc: "Generate long-form narrated video (escrow)" },
     { value: "generation/text", routing: "instant", timeoutS: 120, suggestedPrice: 0.01, priceRange: [0.005, 0.20], defaultName: "gen-text", placeholderDesc: "Generate text from a prompt" },
     { value: "generation/audio", routing: "instant", timeoutS: 180, suggestedPrice: 0.05, priceRange: [0.02, 0.50], defaultName: "gen-audio", placeholderDesc: "Generate music or sound effects from a prompt" },
-    { value: "transformation/translate", routing: "instant", timeoutS: 60, suggestedPrice: 0.01, priceRange: [0.005, 0.10], defaultName: "translate", placeholderDesc: "Translate text between languages" },
     { value: "transformation/tts", routing: "instant", timeoutS: 120, suggestedPrice: 0.02, priceRange: [0.01, 0.20], defaultName: "tts", placeholderDesc: "Convert text to natural-sounding speech" },
-    { value: "transformation/stt", routing: "instant", timeoutS: 120, suggestedPrice: 0.02, priceRange: [0.01, 0.20], defaultName: "stt", placeholderDesc: "Transcribe speech to text" },
-    { value: "search/web", routing: "instant", timeoutS: 60, suggestedPrice: 0.01, priceRange: [0.005, 0.10], defaultName: "web-search", placeholderDesc: "Search the web and return relevant results" },
-    { value: "analysis/data", routing: "instant", timeoutS: 180, suggestedPrice: 0.05, priceRange: [0.02, 0.50], defaultName: "data-analysis", placeholderDesc: "Analyze a dataset and return insights" },
-    { value: "coding/generation", routing: "instant", timeoutS: 240, suggestedPrice: 0.05, priceRange: [0.02, 0.50], defaultName: "code-gen", placeholderDesc: "Generate code from a natural-language spec" },
-    { value: "coding/review", routing: "instant", timeoutS: 180, suggestedPrice: 0.05, priceRange: [0.02, 0.50], defaultName: "code-review", placeholderDesc: "Review a diff or PR for bugs and style issues" },
+    { value: "generation/video_long", routing: "escrow", timeoutS: null, suggestedPrice: 5.00, priceRange: [1.00, 50.00], defaultName: "gen-video-long", placeholderDesc: "Generate long-form narrated video (escrow)" },
+    { value: "analysis/data", routing: "escrow", timeoutS: null, suggestedPrice: 0.50, priceRange: [0.10, 5.00], defaultName: "data-analysis", placeholderDesc: "Analyze a dataset and deliver a report" },
+    { value: "coding/generation", routing: "escrow", timeoutS: null, suggestedPrice: 1.00, priceRange: [0.20, 10.00], defaultName: "code-gen", placeholderDesc: "Generate code or a small project from a spec" },
+    { value: "coding/review", routing: "escrow", timeoutS: null, suggestedPrice: 0.50, priceRange: [0.10, 5.00], defaultName: "code-review", placeholderDesc: "Review a diff or PR for bugs and style issues" },
     { value: "other", routing: "auto", timeoutS: null, suggestedPrice: 0.02, priceRange: [0.01, 1.00], defaultName: "", placeholderDesc: "Describe what this skill does" },
 ];
 const PRICE_THRESHOLD_FOR_ESCROW = 1.0; // mirrors backend constant
