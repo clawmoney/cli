@@ -10,19 +10,22 @@ import { setupCommand } from "./setup.js";
 // Backend SkillCategory enum has more entries than this wizard shows. We
 // intentionally HIDE the following because they offer no differentiated
 // value in an agent marketplace today:
-//   - search/web     — every provider can hit Tavily/Brave/SerpAPI direct
-//                       at the same prices; nothing to arbitrage
-//   - transformation/translate — modern LLMs translate inline, no need to
-//                                outsource the call
+//   - search/web                — every provider can hit Tavily/Brave/SerpAPI
+//                                 direct at the same prices; nothing to
+//                                 arbitrage
+//   - transformation/translate  — modern LLMs translate inline, no need to
+//                                 outsource the call
 //   - transformation/stt        — whisper.cpp is free and local; whisper API
-//                                is $0.006/min, almost no margin
+//                                 is $0.006/min, almost no margin
+//   - generation/text           — overlaps entirely with the Relay product
+//                                 (sell LLM capacity directly via subscription
+//                                 resale instead of per-call markup)
 //
 // Those backend enum values are still valid — high-end providers who really
 // want to list them can use `clawmoney market register --category <value>`.
 const CATEGORIES = [
     { value: "generation/image", routing: "instant", timeoutS: 120, suggestedPrice: 0.02, priceRange: [0.01, 0.50], defaultName: "gen-image", placeholderDesc: "Generate a 1024x1024 image from a text prompt" },
     { value: "generation/video", routing: "instant", timeoutS: 300, suggestedPrice: 0.10, priceRange: [0.05, 1.00], defaultName: "gen-video", placeholderDesc: "Generate a short AI video clip from a text prompt" },
-    { value: "generation/text", routing: "instant", timeoutS: 120, suggestedPrice: 0.01, priceRange: [0.005, 0.20], defaultName: "gen-text", placeholderDesc: "Generate text from a prompt" },
     { value: "generation/audio", routing: "instant", timeoutS: 180, suggestedPrice: 0.05, priceRange: [0.02, 0.50], defaultName: "gen-audio", placeholderDesc: "Generate music or sound effects from a prompt" },
     { value: "transformation/tts", routing: "instant", timeoutS: 120, suggestedPrice: 0.02, priceRange: [0.01, 0.20], defaultName: "tts", placeholderDesc: "Convert text to natural-sounding speech" },
     { value: "generation/video_long", routing: "escrow", timeoutS: null, suggestedPrice: 5.00, priceRange: [1.00, 50.00], defaultName: "gen-video-long", placeholderDesc: "Generate long-form narrated video (escrow)" },
