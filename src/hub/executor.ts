@@ -171,8 +171,23 @@ function runCli(
       // back to either drawing the image with Python in /tmp (slow, ugly)
       // or hallucinating an image_path with no file behind it (worst
       // case, since the buyer pays for a nonexistent file). Verified on
-      // codex 0.128.0 + gpt-5.5 xhigh, 2026-05-12.
-      args = ["exec", "-s", "workspace-write", prompt, "--json", "--skip-git-repo-check"];
+      // codex 0.128.0 + gpt-5.5, 2026-05-12.
+      //
+      // -c model_reasoning_effort=medium overrides whatever the provider
+      // has in ~/.codex/config.toml (often "high" or "xhigh" for their
+      // own deep-thinking sessions). Hub buyers don't need that level of
+      // reasoning — for image gen the only reasoning step worth doing is
+      // "pick the right tool", everything after image_gen finishes is
+      // pure overhead that adds 60–90s per call. medium keeps quality
+      // similar to codex defaults but caps the tail latency.
+      args = [
+        "exec",
+        "-s", "workspace-write",
+        "-c", "model_reasoning_effort=medium",
+        prompt,
+        "--json",
+        "--skip-git-repo-check",
+      ];
     } else if (command === "gemini") {
       // gemini -p "..." -o json --yolo
       args = ["-p", prompt, "-o", "json", "--yolo"];
