@@ -187,10 +187,10 @@ export async function setupCommand(): Promise<void> {
     });
 
     // Always hit /me/wallet/balance to (a) let the backend reconcile
-    // legacy awal addresses to the canonical CDP address (the /login/verify
-    // response may still carry the stale awal value from DB), and (b) cache
-    // the authoritative address back to config. The returned `address` is
-    // the CDP account address after _ensure_agent_wallet has run.
+    // any pre-CDP wallet address still on the agent row to the canonical
+    // Coinbase server wallet, and (b) cache the authoritative address
+    // back to config. The returned `address` is the CDP server-wallet
+    // account address after _ensure_agent_wallet has run.
     let walletAddress = '';
     const walletSpinner = ora('Reconciling CDP wallet...').start();
     try {
@@ -206,7 +206,7 @@ export async function setupCommand(): Promise<void> {
           walletSpinner.succeed(
             `Wallet migrated: ${prior} → ${walletAddress}`
           );
-          console.log(chalk.yellow(`  (Your old awal address ${prior} is no longer`));
+          console.log(chalk.yellow(`  (Your previous address ${prior} is no longer`));
           console.log(chalk.yellow(`   used by this CLI. Transfer any remaining funds manually.)`));
         } else {
           walletSpinner.succeed(`Wallet ready: ${walletAddress}`);

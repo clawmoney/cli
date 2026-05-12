@@ -204,7 +204,7 @@ promote
   });
 
 // wallet
-const wallet = program.command('wallet').description('Wallet commands (via awal)');
+const wallet = program.command('wallet').description('Wallet commands (Coinbase server wallet)');
 
 wallet
   .command('status')
