@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { existsSync, statSync } from "node:fs";
 import { isProcessed, markProcessed } from "./dedup.js";
 import { replaceLocalPaths, uploadFile } from "./media.js";
 import { logger } from "./logger.js";
@@ -26,6 +27,91 @@ function buildPrompt(call, config) {
     }
     lines.push("Execute this task and return the result as JSON.", "If you generate any files (images, videos, etc.), save them and include their file paths in the output.", "Return ONLY the JSON result, no other text.");
     return lines.join("\n");
+}
+// ── Image-output validation ──
+//
+// Codex / Gemini / generic-claude paths don't have a structured response
+// schema like OpenClaw, so providers using those CLIs can return
+// `{"image_path":"/tmp/whatever.png"}` even when the model never actually
+// generated an image — either by writing Python that fakes a bitmap, or
+// (worse) by hallucinating the path entirely without spawning any tool.
+//
+// `extractClaimedPaths` walks an output object and collects every local
+// file path the provider is claiming to have produced. Used so we can
+// physically verify each file exists before we deliver to the buyer.
+const FILE_PATH_KEYS = ["image_path", "video_path", "audio_path", "file_path", "primary_file"];
+const IMAGE_EXT_RE = /\.(png|jpg|jpeg|webp|gif)$/i;
+const CDN_URL_RE = /^https?:\/\//i;
+function extractClaimedPaths(output) {
+    const out = [];
+    const visit = (node) => {
+        if (!node || typeof node !== "object")
+            return;
+        const obj = node;
+        for (const key of FILE_PATH_KEYS) {
+            const v = obj[key];
+            if (typeof v === "string" && v.startsWith("/"))
+                out.push(v);
+        }
+        const files = obj.files;
+        if (Array.isArray(files)) {
+            for (const f of files) {
+                if (typeof f === "string" && f.startsWith("/"))
+                    out.push(f);
+            }
+        }
+        // Recurse into nested .result so providers wrapping output in
+        // { result: { image_path: ... } } don't bypass the check.
+        if (obj.result && typeof obj.result === "object")
+            visit(obj.result);
+    };
+    visit(output);
+    return Array.from(new Set(out));
+}
+/**
+ * After `replaceLocalPaths` has run, every successful image upload is
+ * promoted from `image_path` (local) to `image_url` (CDN). If the upload
+ * silently failed (file didn't exist), `image_path` stays in the output
+ * and we deliver a broken result — UNLESS we catch it here.
+ *
+ * Returns null when the delivery is OK for a `generation/image` call,
+ * otherwise an error string explaining why it isn't.
+ */
+function validateImageDelivery(output) {
+    // CDN URL anywhere in the output? Then a real file got uploaded.
+    const top = output;
+    if (typeof top.image_url === "string" && CDN_URL_RE.test(top.image_url))
+        return null;
+    if (Array.isArray(top.files)) {
+        const hasCdnImage = top.files.some((f) => typeof f === "string" && CDN_URL_RE.test(f) && IMAGE_EXT_RE.test(f));
+        if (hasCdnImage)
+            return null;
+    }
+    // No real image URL delivered. Why?
+    const claimedPaths = extractClaimedPaths(output);
+    if (claimedPaths.length === 0) {
+        return "Provider returned no image (model likely lacks an image-generation tool).";
+    }
+    const missing = claimedPaths.filter((p) => !existsSync(p));
+    if (missing.length > 0) {
+        return `Provider claimed image at ${missing[0]} but the file does not exist (hallucinated path).`;
+    }
+    // Files exist but none are images, or upload failed for a different reason.
+    const hasImagePath = claimedPaths.some((p) => IMAGE_EXT_RE.test(p));
+    if (!hasImagePath) {
+        return "Provider produced non-image files only for a generation/image task.";
+    }
+    // File exists and is .png/.jpg/.webp/.gif but upload still failed.
+    // Most likely cause: file is empty or permission denied. Surface bytes.
+    try {
+        const stats = claimedPaths
+            .filter((p) => IMAGE_EXT_RE.test(p))
+            .map((p) => `${p} (${statSync(p).size}B)`);
+        return `Image file exists but R2 upload failed: ${stats.join(", ")}`;
+    }
+    catch {
+        return "Image upload to R2 failed.";
+    }
 }
 // ── CLI execution (openclaw agent / claude -p) ──
 function runCli(command, prompt, timeoutMs, orderId) {
@@ -500,6 +586,25 @@ export class Executor {
                 output = parsed ?? { result: stdout.trim().slice(0, 5000) };
                 // Upload local files via generic path replacement
                 output = await replaceLocalPaths(output, this.config);
+            }
+            // Image-output validation. The OpenClaw branch above does this inline
+            // (using its richer parseOpenClawResponse files list); for everything
+            // else we re-run the check on the post-upload output so the buyer
+            // never gets `{image_path: "/tmp/elon.png"}` when the file doesn't
+            // exist and uploadFile silently returned null. Skip the check for the
+            // OpenClaw branch — it already validated and may have set _meta etc.
+            if (command !== "openclaw" &&
+                call.category?.startsWith("generation/image")) {
+                const reason = validateImageDelivery(output);
+                if (reason) {
+                    logger.error(`Image validation failed for order=${call.order_id} (${command}): ${reason}`);
+                    this.send({
+                        event: "deliver",
+                        order_id: call.order_id,
+                        error: reason,
+                    });
+                    return;
+                }
             }
             const sent = this.send({
                 event: "deliver",
