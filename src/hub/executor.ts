@@ -36,13 +36,24 @@ function buildPrompt(call: ServiceCallEvent, config: ProviderConfig): string {
     "",
   ];
 
-  // Category-specific instructions
+  // Category-specific instructions. Skill names differ per CLI runtime —
+  // openclaw exposes nano-banana-pro, codex exposes built-in imagegen,
+  // claude/gemini surface image generation via their own tools. We pick
+  // the right hint so the model goes straight to the real tool instead
+  // of trying to "be helpful" by writing PIL code or hallucinating a path.
   if (call.category?.startsWith("generation/image")) {
+    const cli = config.provider.cli_command;
+    const skillHint =
+      cli === "codex"
+        ? "Use the imagegen skill (the built-in image_gen tool — do NOT use shell/python to draw an image)"
+        : cli === "openclaw"
+          ? "Use the nano-banana-pro skill"
+          : "Use your native image generation tool";
     lines.push(
-      "IMPORTANT: Use the nano-banana-pro skill (or any image generation tool) to generate a real PNG/JPG image.",
-      "Do NOT write SVG, HTML, or any code to fake an image.",
-      "If no image generation tool is available, return {\"success\": false, \"error\": \"No image generation tool available\"}.",
-      "Save the generated image and include the file path in your output.",
+      `IMPORTANT: ${skillHint} to generate a real PNG/JPG image.`,
+      "Do NOT write SVG, HTML, Python (PIL), or any code to fake an image.",
+      "If no image generation tool is available in this environment, return {\"success\": false, \"error\": \"No image generation tool available\"}.",
+      "Save the generated image and include the absolute file path in your JSON output as \"image_path\".",
     );
   }
 
@@ -153,8 +164,15 @@ function runCli(
       // openclaw agent --message "..." --session-id <order_id> --json
       args = ["agent", "--message", prompt, "--session-id", orderId || "hub-task", "--json"];
     } else if (command === "codex") {
-      // codex exec "..." --json --skip-git-repo-check
-      args = ["exec", prompt, "--json", "--skip-git-repo-check"];
+      // -s workspace-write is required so the built-in image_gen tool can
+      // write files under $CODEX_HOME/generated_images and so the model
+      // can mv/cp the result to the user-named path. With the default
+      // read-only sandbox, image_gen silently degrades — the model falls
+      // back to either drawing the image with Python in /tmp (slow, ugly)
+      // or hallucinating an image_path with no file behind it (worst
+      // case, since the buyer pays for a nonexistent file). Verified on
+      // codex 0.128.0 + gpt-5.5 xhigh, 2026-05-12.
+      args = ["exec", "-s", "workspace-write", prompt, "--json", "--skip-git-repo-check"];
     } else if (command === "gemini") {
       // gemini -p "..." -o json --yolo
       args = ["-p", prompt, "-o", "json", "--yolo"];
