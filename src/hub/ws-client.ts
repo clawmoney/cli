@@ -128,7 +128,20 @@ export class WsClient {
     this.stopHeartbeat();
     this.heartbeatTimer = setInterval(() => {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.ping();
+        // Application-level heartbeat. Backend's `event == "heartbeat"`
+        // handler is what updates ClawAgent.last_heartbeat_at, which in
+        // turn drives the `agent_is_online` field on /market/skills/search
+        // results. A WS protocol-level ping/pong (this.ws.ping()) keeps
+        // the TCP connection alive but the backend never sees it as a
+        // JSON message — so DB heartbeat would only ever get bumped at
+        // initial connect, then go stale after 600s and the agent would
+        // disappear from search results despite the daemon being fine.
+        try {
+          this.ws.send(JSON.stringify({ event: "heartbeat" }));
+        } catch {
+          // Send failure is non-fatal; the reconnect loop will pick up
+          // a real socket close if the connection is actually dead.
+        }
       }
     }, HEARTBEAT_INTERVAL_MS);
     this.heartbeatTimer.unref();
