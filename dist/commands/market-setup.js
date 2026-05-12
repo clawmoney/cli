@@ -173,7 +173,11 @@ export async function marketSetupCommand(opts = {}) {
         }
         const description = await text({
             message: "  Description:",
-            placeholder: row.placeholderDesc,
+            // initialValue (not placeholder) so the user can just hit ENTER
+            // to accept the default copy. They can still edit before pressing
+            // enter — backspace clears the prefilled text if they want to
+            // write their own.
+            initialValue: row.placeholderDesc,
             validate: validateDescription,
         });
         if (isCancel(description)) {
