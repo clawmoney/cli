@@ -56,7 +56,20 @@ export interface TestResponseEvent {
     order_id: string;
     output: Record<string, unknown>;
 }
-export type OutgoingEvent = DeliverEvent | TestResponseEvent;
+/**
+ * Live in-flight progress reported back to backend during a service_call.
+ * Backend stashes the text at hub:progress:<order_id> in Redis with a
+ * 10-minute TTL; clawmoney-web's playground poll picks it up via the
+ * HubOrderPublic.progress field. Fire-and-forget — backend doesn't
+ * ack, so dropped progress messages just mean the UI sees a slightly
+ * stale stage label.
+ */
+export interface ProgressEvent {
+    event: "progress";
+    order_id: string;
+    progress: string;
+}
+export type OutgoingEvent = DeliverEvent | TestResponseEvent | ProgressEvent;
 export interface ProviderSettings {
     cli_command: string;
     max_concurrent: number;

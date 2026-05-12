@@ -9,12 +9,13 @@ import type {
   EscrowTaskEvent,
   DeliverEvent,
   TestResponseEvent,
+  ProgressEvent,
 } from "./types.js";
 import { isProcessed, markProcessed } from "./dedup.js";
 import { replaceLocalPaths, uploadFile } from "./media.js";
 import { logger } from "./logger.js";
 
-type SendFn = (event: DeliverEvent | TestResponseEvent) => boolean;
+type SendFn = (event: DeliverEvent | TestResponseEvent | ProgressEvent) => boolean;
 
 const TIMEOUT_BUFFER_S = 15;
 
@@ -231,6 +232,7 @@ function runCli(
   timeoutMs: number,
   orderId?: string,
   watchForImage?: boolean,
+  onProgress?: (text: string) => void,
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   return new Promise((resolve) => {
     // Build args based on command
@@ -320,6 +322,10 @@ function runCli(
     };
 
     if (dirBaseline) {
+      // Report once when codex actually starts working — the spawn ack
+      // is fast but the first reasoning step can take ~10s and we want
+      // the UI to know "we're actually running, not just queued".
+      onProgress?.("Generating image…");
       pollHandle = setInterval(() => {
         if (earlyResolved) return;
         const newImage = findNewCodexImage(dirBaseline);
@@ -328,6 +334,7 @@ function runCli(
             clearInterval(pollHandle);
             pollHandle = null;
           }
+          onProgress?.("Image generated, finalizing…");
           void finishWithEarlyImage(newImage);
         }
       }, POLL_INTERVAL_MS);
@@ -511,6 +518,22 @@ export class Executor {
 
   get activeCount(): number {
     return this.activeTasks.size;
+  }
+
+  /**
+   * Fire a progress update for an in-flight order. The buyer-facing UI
+   * (clawmoney-web playground) polls /market/orders/{id} and reads the
+   * `progress` field that backend Redis-caches from these events.
+   * Best-effort: failed sends are non-fatal (the UI just sees a slightly
+   * stale stage label until the next progress fires).
+   */
+  private sendProgress(orderId: string, text: string): void {
+    try {
+      this.send({ event: "progress", order_id: orderId, progress: text });
+    } catch {
+      // Ignore — WS may be reconnecting; the next progress event will
+      // pick up where we left off.
+    }
   }
 
   handleServiceCall(call: ServiceCallEvent): void {
@@ -752,6 +775,8 @@ export class Executor {
         `Executing: ${command} for skill="${call.skill}" order=${call.order_id} (timeout=${timeoutS}s)`
       );
 
+      this.sendProgress(call.order_id, `Spawning ${command}…`);
+
       const { stdout, stderr, exitCode } = await runCli(
         command,
         prompt,
@@ -761,6 +786,9 @@ export class Executor {
         // ship the moment the file lands, skipping codex's final
         // reasoning tail (~60–90s of pure overhead).
         call.category?.startsWith("generation/image"),
+        // Progress callback fired inside runCli when we cross
+        // observable milestones (image landing on disk, etc).
+        (text) => this.sendProgress(call.order_id, text),
       );
 
       if (exitCode !== 0) {
@@ -814,6 +842,9 @@ export class Executor {
         }
 
         // Upload local files to R2
+        if (allFiles.length > 0) {
+          this.sendProgress(call.order_id, "Uploading to CDN…");
+        }
         for (const filePath of allFiles) {
           const cdnUrl = await uploadFile(filePath, this.config);
           if (cdnUrl) {

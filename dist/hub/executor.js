@@ -201,7 +201,7 @@ async function waitForStableSize(filePath) {
     }
 }
 // ── CLI execution (openclaw agent / claude -p) ──
-function runCli(command, prompt, timeoutMs, orderId, watchForImage) {
+function runCli(command, prompt, timeoutMs, orderId, watchForImage, onProgress) {
     return new Promise((resolve) => {
         // Build args based on command
         let args;
@@ -290,6 +290,10 @@ function runCli(command, prompt, timeoutMs, orderId, watchForImage) {
             resolve({ stdout, stderr, exitCode: 0 });
         };
         if (dirBaseline) {
+            // Report once when codex actually starts working — the spawn ack
+            // is fast but the first reasoning step can take ~10s and we want
+            // the UI to know "we're actually running, not just queued".
+            onProgress?.("Generating image…");
             pollHandle = setInterval(() => {
                 if (earlyResolved)
                     return;
@@ -299,6 +303,7 @@ function runCli(command, prompt, timeoutMs, orderId, watchForImage) {
                         clearInterval(pollHandle);
                         pollHandle = null;
                     }
+                    onProgress?.("Image generated, finalizing…");
                     void finishWithEarlyImage(newImage);
                 }
             }, POLL_INTERVAL_MS);
@@ -455,6 +460,22 @@ export class Executor {
     }
     get activeCount() {
         return this.activeTasks.size;
+    }
+    /**
+     * Fire a progress update for an in-flight order. The buyer-facing UI
+     * (clawmoney-web playground) polls /market/orders/{id} and reads the
+     * `progress` field that backend Redis-caches from these events.
+     * Best-effort: failed sends are non-fatal (the UI just sees a slightly
+     * stale stage label until the next progress fires).
+     */
+    sendProgress(orderId, text) {
+        try {
+            this.send({ event: "progress", order_id: orderId, progress: text });
+        }
+        catch {
+            // Ignore — WS may be reconnecting; the next progress event will
+            // pick up where we left off.
+        }
     }
     handleServiceCall(call) {
         if (isProcessed(call.order_id)) {
@@ -650,11 +671,15 @@ export class Executor {
             const timeoutS = Math.max(call.timeout - TIMEOUT_BUFFER_S, 30);
             const command = this.config.provider.cli_command;
             logger.info(`Executing: ${command} for skill="${call.skill}" order=${call.order_id} (timeout=${timeoutS}s)`);
+            this.sendProgress(call.order_id, `Spawning ${command}…`);
             const { stdout, stderr, exitCode } = await runCli(command, prompt, timeoutS * 1000, call.order_id, 
             // Watch the codex image dir for generation/image so we can
             // ship the moment the file lands, skipping codex's final
             // reasoning tail (~60–90s of pure overhead).
-            call.category?.startsWith("generation/image"));
+            call.category?.startsWith("generation/image"), 
+            // Progress callback fired inside runCli when we cross
+            // observable milestones (image landing on disk, etc).
+            (text) => this.sendProgress(call.order_id, text));
             if (exitCode !== 0) {
                 const errMsg = stderr.trim() || `CLI exited with code ${exitCode}`;
                 logger.error(`CLI failed (code=${exitCode}):`, errMsg);
@@ -701,6 +726,9 @@ export class Executor {
                     }
                 }
                 // Upload local files to R2
+                if (allFiles.length > 0) {
+                    this.sendProgress(call.order_id, "Uploading to CDN…");
+                }
                 for (const filePath of allFiles) {
                     const cdnUrl = await uploadFile(filePath, this.config);
                     if (cdnUrl) {
