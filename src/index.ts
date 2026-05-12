@@ -60,7 +60,7 @@ program
 // setup
 program
   .command('setup')
-  .description('One-click agent onboarding: wallet + registration')
+  .description('One-stop setup: register agent (first run) + pick provider roles (market / relay / verifier)')
   .action(async () => {
     try {
       await setupCommand();

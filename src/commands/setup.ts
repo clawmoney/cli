@@ -93,6 +93,23 @@ export async function setupCommand(): Promise<void> {
     return;
   }
 
+  // Short-circuit: if an agent is already configured, skip the OTP + claim
+  // flow and jump straight to provider role selection. This makes re-running
+  // `clawmoney setup` cheap — users add new provider roles without going
+  // through email verification every time.
+  const existing = loadConfig();
+  if (existing?.api_key && existing?.agent_slug) {
+    console.log(chalk.green('  Agent already configured.'));
+    console.log(chalk.dim(`    Slug:   ${existing.agent_slug}`));
+    if (existing.wallet_address) {
+      console.log(chalk.dim(`    Wallet: ${existing.wallet_address}`));
+    }
+    console.log('');
+    const { providerSetupWizard } = await import('./provider-setup.js');
+    await providerSetupWizard();
+    return;
+  }
+
   // Step 1: Ask for email.
   const email = await prompt(chalk.cyan('? ') + 'Enter your email: ');
   if (!email || !email.includes('@')) {
@@ -308,9 +325,10 @@ export async function setupCommand(): Promise<void> {
     console.log(chalk.dim(`  Config:      ${getConfigPath()}`));
   }
   console.log('');
-  console.log(`  Next steps:`);
-  console.log(`    ${chalk.cyan('clawmoney browse')}          Browse available tasks`);
-  console.log(`    ${chalk.cyan('clawmoney wallet balance')}  Check your wallet balance`);
-  console.log(`    ${chalk.cyan('clawmoney promote submit')}  Submit a task proof`);
-  console.log('');
+
+  // Continue into provider role selection. First-time users go straight
+  // from "agent claimed" → "pick what to earn from" without ever needing
+  // to remember a second command. They can still skip (no role = no role).
+  const { providerSetupWizard } = await import('./provider-setup.js');
+  await providerSetupWizard();
 }

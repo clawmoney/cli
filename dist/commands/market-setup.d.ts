@@ -1,1 +1,3 @@
-export declare function marketSetupCommand(): Promise<void>;
+export declare function marketSetupCommand(opts?: {
+    nested?: boolean;
+}): Promise<void>;

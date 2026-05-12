@@ -137,10 +137,13 @@ interface RegistrationResult {
   detail?: string;         // populated on failure
 }
 
-export async function marketSetupCommand(): Promise<void> {
+export async function marketSetupCommand(
+  opts: { nested?: boolean } = {},
+): Promise<void> {
   // Step 0: ensure the agent is logged in. Mirrors relaySetupCommand's
   // handoff to setupCommand so first-time users get a clean flow instead
-  // of "No config found" mid-wizard.
+  // of "No config found" mid-wizard. Skipped when nested under
+  // `clawmoney setup` since that command already guarantees a config.
   let existing = loadConfig();
   if (!existing) {
     await setupCommand();
@@ -158,28 +161,51 @@ export async function marketSetupCommand(): Promise<void> {
 
   const config = existing;
 
-  intro(chalk.cyan(" ClawMoney Market Setup "));
+  if (!opts.nested) {
+    intro(chalk.cyan(" ClawMoney Market Setup "));
+  }
   log.message(
     "Register one or more skills on the Market so other agents can call (and pay) you."
   );
 
-  // ── Step 1: multiselect categories (the big difference vs relay setup —
-  // each picked category becomes one skill, no dupes within this run) ──
+  // ── Step 1: multiselect categories. Grouped visually: Instant first,
+  // then Escrow, then Auto. clack's multiselect has no native separators,
+  // so we fake them with disabled-looking header rows whose value is a
+  // sentinel — selecting one is a no-op (filtered out downstream). ──
+  const INSTANT_HEADER = "__hdr_instant__";
+  const ESCROW_HEADER = "__hdr_escrow__";
+  const AUTO_HEADER = "__hdr_auto__";
+  const HEADERS = new Set([INSTANT_HEADER, ESCROW_HEADER, AUTO_HEADER]);
+
+  const instantRows = CATEGORIES.filter((c) => c.routing === "instant");
+  const escrowRows = CATEGORIES.filter((c) => c.routing === "escrow");
+  const autoRows = CATEGORIES.filter((c) => c.routing === "auto");
+
+  const groupedOptions = [
+    { value: INSTANT_HEADER, label: chalk.dim("── Instant · poll for result ──"), hint: "" },
+    ...instantRows.map((row) => ({ value: row.value, label: `  ${row.value}`, hint: formatHint(row) })),
+    { value: ESCROW_HEADER, label: chalk.dim("── Escrow · manual approve ──"), hint: "" },
+    ...escrowRows.map((row) => ({ value: row.value, label: `  ${row.value}`, hint: formatHint(row) })),
+    { value: AUTO_HEADER, label: chalk.dim("── Auto · routed by price ──"), hint: "" },
+    ...autoRows.map((row) => ({ value: row.value, label: `  ${row.value}`, hint: formatHint(row) })),
+  ];
+
   const picked = await multiselect({
     message:
       "Pick the skill categories to register (space to toggle, enter to confirm):",
-    options: CATEGORIES.map((row) => ({
-      value: row.value,
-      label: row.value,
-      hint: formatHint(row),
-    })),
+    options: groupedOptions,
     required: true,
   });
   if (isCancel(picked)) {
     cancel("Setup cancelled");
     process.exit(0);
   }
-  const pickedCategories = picked as string[];
+  // Strip header sentinels — they're visual-only group separators.
+  const pickedCategories = (picked as string[]).filter((v) => !HEADERS.has(v));
+  if (pickedCategories.length === 0) {
+    cancel("No categories selected");
+    process.exit(0);
+  }
 
   // Preserve the canonical CATEGORIES order rather than the click order —
   // makes the per-skill prompts and the review table read consistently.
@@ -327,26 +353,32 @@ export async function marketSetupCommand(): Promise<void> {
   const okCount = results.filter((r) => r.ok).length;
   const failCount = results.length - okCount;
 
-  outro(
-    [
-      failCount === 0
-        ? chalk.green(`All ${okCount} skills registered.`)
-        : okCount === 0
-          ? chalk.red(`None registered (${failCount} failed).`)
-          : chalk.yellow(`${okCount} registered, ${failCount} failed.`),
-      "",
-      chalk.dim(
-        `Next: run ${chalk.cyan(
-          "clawmoney market start",
-        )} to accept incoming calls in the background.`,
-      ),
-      chalk.dim(
-        `      See your skills listed: ${chalk.cyan("clawmoney market skills")}`,
-      ),
-    ].join("\n"),
-  );
+  const summary = [
+    failCount === 0
+      ? chalk.green(`All ${okCount} skills registered.`)
+      : okCount === 0
+        ? chalk.red(`None registered (${failCount} failed).`)
+        : chalk.yellow(`${okCount} registered, ${failCount} failed.`),
+    "",
+    chalk.dim(
+      `Next: run ${chalk.cyan(
+        "clawmoney market start",
+      )} to accept incoming calls in the background.`,
+    ),
+    chalk.dim(
+      `      See your skills listed: ${chalk.cyan("clawmoney market skills")}`,
+    ),
+  ].join("\n");
 
-  if (failCount > 0) {
+  if (opts.nested) {
+    // Don't close the parent wizard's intro frame — emit the summary as a
+    // log message and let the parent wrap up the whole flow at the end.
+    log.message(summary);
+  } else {
+    outro(summary);
+  }
+
+  if (failCount > 0 && !opts.nested) {
     process.exit(1);
   }
 }
