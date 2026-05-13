@@ -14,6 +14,16 @@ export interface ClawConfig {
     max_concurrent?: number;
     [key: string]: unknown;
   };
+  // SpareAPI data-provider role: this agent's bnbot serves browser-delegated
+  // requests for the platforms listed below. Customer flow:
+  //   customer → SpareAPI → ClawMoney router → this operator's bnbot →
+  //   real Chrome → target platform → JSON back to customer.
+  api_provider?: {
+    platforms: string[];     // platform slugs the operator opted in to serve
+    enabled_at: string;      // ISO timestamp
+    bnbot_port?: number;     // local WS port bnbot listens on (default 18900)
+    max_rpm?: number;        // soft cap per platform per minute (default 60)
+  };
 }
 
 const CONFIG_DIR = path.join(os.homedir(), '.clawmoney');

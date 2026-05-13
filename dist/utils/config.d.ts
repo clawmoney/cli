@@ -9,6 +9,12 @@ export interface ClawConfig {
         max_concurrent?: number;
         [key: string]: unknown;
     };
+    api_provider?: {
+        platforms: string[];
+        enabled_at: string;
+        bnbot_port?: number;
+        max_rpm?: number;
+    };
 }
 export declare function getConfigPath(): string;
 export declare function loadConfig(): ClawConfig | null;

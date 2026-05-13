@@ -12,7 +12,7 @@ import { loadConfig } from "../utils/config.js";
 // Provider roles enabled from this wizard. Each delegates to an existing
 // per-role setup command — we don't re-implement those flows here, just
 // dispatch in canonical order so the user sees a predictable sequence.
-type ProviderRole = "market" | "relay" | "verifier";
+type ProviderRole = "market" | "relay" | "api" | "verifier";
 
 interface RoleSpec {
   value: ProviderRole;
@@ -30,6 +30,11 @@ const ROLES: RoleSpec[] = [
     value: "relay",
     label: "Relay",
     hint: "sell idle Claude Max / ChatGPT Pro / Gemini quota at 20% of API price",
+  },
+  {
+    value: "api",
+    label: "API data provider",
+    hint: "serve SpareAPI requests via bnbot — X / XHS / IG / LinkedIn / ... 70% per call",
   },
   {
     value: "verifier",
@@ -105,6 +110,9 @@ export async function providerSetupWizard(): Promise<void> {
       } else if (role === "relay") {
         const { relaySetupCommand } = await import("./relay-setup.js");
         await relaySetupCommand();
+      } else if (role === "api") {
+        const { apiSetupCommand } = await import("./api-setup.js");
+        await apiSetupCommand({ nested: true });
       } else if (role === "verifier") {
         const { verifierSetupCommand } = await import("./verifier-setup.js");
         await verifierSetupCommand({ nested: true });

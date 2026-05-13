@@ -13,6 +13,11 @@ const ROLES = [
         hint: "sell idle Claude Max / ChatGPT Pro / Gemini quota at 20% of API price",
     },
     {
+        value: "api",
+        label: "API data provider",
+        hint: "serve SpareAPI requests via bnbot — X / XHS / IG / LinkedIn / ... 70% per call",
+    },
+    {
         value: "verifier",
         label: "Verifier",
         hint: "witness tweet promote tasks — $0.01 per verification, runs in background",
@@ -67,6 +72,10 @@ export async function providerSetupWizard() {
             else if (role === "relay") {
                 const { relaySetupCommand } = await import("./relay-setup.js");
                 await relaySetupCommand();
+            }
+            else if (role === "api") {
+                const { apiSetupCommand } = await import("./api-setup.js");
+                await apiSetupCommand({ nested: true });
             }
             else if (role === "verifier") {
                 const { verifierSetupCommand } = await import("./verifier-setup.js");
