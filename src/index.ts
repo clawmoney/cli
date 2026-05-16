@@ -17,6 +17,7 @@ import {
   gigBrowseCommand,
   gigDetailCommand,
   gigAcceptCommand,
+  gigSubmitCommand,
   gigDeliverCommand,
   gigApproveCommand,
   gigDisputeCommand,
@@ -466,6 +467,20 @@ gig
   .action(async (taskId) => {
     try {
       await gigAcceptCommand(taskId);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+gig
+  .command('submit <task-id>')
+  .description('Submit an entry for a multi-submission gig')
+  .option('-c, --content <text>', 'Submission content (text)')
+  .option('-u, --url <url>', 'Submission URL or local file path')
+  .action(async (taskId, options) => {
+    try {
+      await gigSubmitCommand(taskId, options);
     } catch (err) {
       console.error((err as Error).message);
       process.exit(1);

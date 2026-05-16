@@ -190,6 +190,9 @@ export async function gigAcceptCommand(taskId) {
                 : resp.data;
             const detail = typeof raw === "string" ? raw : JSON.stringify(raw);
             spinner.fail(chalk.red(`Failed (${resp.status}): ${detail}`));
+            if (detail.includes("/submit") || detail.toLowerCase().includes("multi-submission")) {
+                console.error(chalk.dim(`  Use: clawmoney gig submit ${taskId} --content "..." --url <url-or-file>`));
+            }
             process.exit(1);
         }
         const t = resp.data;
@@ -201,18 +204,19 @@ export async function gigAcceptCommand(taskId) {
         throw err;
     }
 }
-export async function gigDeliverCommand(taskId, options) {
-    const config = requireConfig();
+function assertHasPayload(options) {
     if (!options.content && !options.url) {
         console.error(chalk.red("Must provide --content or --url (or both)."));
         process.exit(1);
     }
-    let deliveryUrl = options.url;
+}
+async function uploadLocalUrlIfNeeded(url, apiKey) {
+    let deliveryUrl = url;
     // If url is a local file path, upload to R2 first
-    if (deliveryUrl && deliveryUrl.startsWith("/") && existsSync(deliveryUrl)) {
+    if (deliveryUrl && existsSync(deliveryUrl)) {
         const uploadSpinner = ora(`Uploading ${deliveryUrl}...`).start();
         const providerConfig = {
-            api_key: config.api_key,
+            api_key: apiKey,
             provider: {
                 cli_command: "openclaw",
                 max_concurrent: 3,
@@ -232,6 +236,49 @@ export async function gigDeliverCommand(taskId, options) {
             uploadSpinner.fail(chalk.yellow("Upload failed, submitting local path as-is"));
         }
     }
+    return deliveryUrl;
+}
+function getErrorDetail(data) {
+    const raw = data && typeof data === "object" && "detail" in data
+        ? data.detail
+        : data;
+    return typeof raw === "string" ? raw : JSON.stringify(raw);
+}
+export async function gigSubmitCommand(taskId, options) {
+    const config = requireConfig();
+    assertHasPayload(options);
+    const deliveryUrl = await uploadLocalUrlIfNeeded(options.url, config.api_key);
+    const spinner = ora("Submitting to multi-submission gig...").start();
+    try {
+        const body = {};
+        if (options.content)
+            body.content = options.content;
+        if (deliveryUrl)
+            body.url = deliveryUrl;
+        const resp = await apiPost(`/api/v1/market/escrow/${taskId}/submit`, body, config.api_key);
+        if (!resp.ok) {
+            spinner.fail(chalk.red(`Failed (${resp.status}): ${getErrorDetail(resp.data)}`));
+            process.exit(1);
+        }
+        const submission = resp.data;
+        spinner.succeed(chalk.green("Submission sent!"));
+        if (submission.id) {
+            console.log(chalk.dim(`  Submission ID: ${submission.id}`));
+        }
+        if (submission.status) {
+            console.log(chalk.dim(`  Status: ${submission.status}`));
+        }
+        console.log(chalk.dim("  Waiting for creator to review and approve."));
+    }
+    catch (err) {
+        spinner.fail(chalk.red("Failed to submit gig entry"));
+        throw err;
+    }
+}
+export async function gigDeliverCommand(taskId, options) {
+    const config = requireConfig();
+    assertHasPayload(options);
+    const deliveryUrl = await uploadLocalUrlIfNeeded(options.url, config.api_key);
     const spinner = ora("Submitting delivery...").start();
     try {
         const body = {};
@@ -241,11 +288,7 @@ export async function gigDeliverCommand(taskId, options) {
             body.url = deliveryUrl;
         const resp = await apiPost(`/api/v1/market/escrow/${taskId}/deliver`, body, config.api_key);
         if (!resp.ok) {
-            const raw = resp.data && typeof resp.data === "object" && "detail" in resp.data
-                ? resp.data.detail
-                : resp.data;
-            const detail = typeof raw === "string" ? raw : JSON.stringify(raw);
-            spinner.fail(chalk.red(`Failed (${resp.status}): ${detail}`));
+            spinner.fail(chalk.red(`Failed (${resp.status}): ${getErrorDetail(resp.data)}`));
             process.exit(1);
         }
         spinner.succeed(chalk.green("Delivery submitted!"));
