@@ -1,6 +1,7 @@
 import { spawn, execSync } from "node:child_process";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 import chalk from "chalk";
 import ora from "ora";
 import { requireConfig } from "../utils/config.js";
@@ -162,8 +163,8 @@ export async function relayStartCommand(options) {
     const spinner = ora("Starting Relay Provider...").start();
     try {
         // Resolve daemon script path relative to this file's directory
-        const thisDir = import.meta.url.replace("file://", "").replace(/\/[^/]+$/, "");
-        const parentDir = thisDir.replace(/\/[^/]+$/, "");
+        const thisDir = dirname(fileURLToPath(import.meta.url));
+        const parentDir = dirname(thisDir);
         const daemonScript = join(parentDir, "relay", "daemon.js");
         const args = [daemonScript];
         if (options.cli) {
