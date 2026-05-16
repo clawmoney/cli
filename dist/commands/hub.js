@@ -5,6 +5,7 @@ import chalk from "chalk";
 import ora from "ora";
 import { requireConfig } from "../utils/config.js";
 import { apiGet, apiPost } from "../utils/api.js";
+import { parseIntegerOption, parseJsonObjectOption, parseNumberOption } from "../utils/validation.js";
 import { readPid, isPidAlive, removePid } from "../hub/provider.js";
 import { CdpProvider } from "../wallet/cdp-provider.js";
 import { x402Fetch } from "../wallet/x402-client.js";
@@ -101,6 +102,14 @@ export async function hubStatusCommand() {
     }
 }
 export async function hubSearchCommand(options) {
+    const limit = parseIntegerOption(options.limit, "--limit", {
+        defaultValue: 10,
+        min: 1,
+        max: 100,
+    });
+    const maxPrice = options.maxPrice
+        ? parseNumberOption(options.maxPrice, "--max-price", { min: 0 })
+        : undefined;
     const spinner = ora("Searching Market...").start();
     try {
         const params = new URLSearchParams();
@@ -110,10 +119,10 @@ export async function hubSearchCommand(options) {
             params.set("category", options.category);
         if (options.sort)
             params.set("sort", options.sort);
-        if (options.limit)
-            params.set("limit", options.limit);
-        if (options.maxPrice)
-            params.set("max_price", options.maxPrice);
+        params.set("limit", String(limit));
+        if (maxPrice !== undefined) {
+            params.set("max_price", String(maxPrice));
+        }
         params.set("online_only", "true");
         const resp = await apiGet(`/api/v1/market/skills/search?${params}`);
         if (!resp.ok) {
@@ -182,15 +191,13 @@ export async function hubCallCommand(options) {
     const config = requireConfig();
     let inputData = {};
     if (options.input) {
-        try {
-            inputData = JSON.parse(options.input);
-        }
-        catch {
-            console.error(chalk.red("Invalid JSON for --input. Example: '{\"prompt\":\"hello\"}'"));
-            process.exit(1);
-        }
+        inputData = parseJsonObjectOption(options.input, "--input");
     }
-    const timeout = options.timeout ? parseInt(options.timeout, 10) : 60;
+    const timeout = parseIntegerOption(options.timeout, "--timeout", {
+        defaultValue: 60,
+        min: 1,
+        max: 3600,
+    });
     const spinner = ora(`Calling ${options.agent}/${options.skill}...`).start();
     try {
         // Look up skill info (price + type)
@@ -353,11 +360,7 @@ export async function hubCallCommand(options) {
 }
 export async function hubRegisterCommand(options) {
     const config = requireConfig();
-    const price = parseFloat(options.price);
-    if (isNaN(price) || price < 0) {
-        console.error(chalk.red("Invalid price. Must be a non-negative number."));
-        process.exit(1);
-    }
+    const price = parseNumberOption(options.price, "--price", { min: 0 });
     const spinner = ora("Registering skill...").start();
     try {
         const resp = await apiPost("/api/v1/market/skills", {
@@ -423,7 +426,11 @@ export async function hubSkillsCommand() {
 }
 export async function hubHistoryCommand(options) {
     const config = requireConfig();
-    const limit = options.limit ?? 10;
+    const limit = parseIntegerOption(options.limit, "--limit", {
+        defaultValue: 10,
+        min: 1,
+        max: 100,
+    });
     const showType = options.type ?? "all";
     console.log(chalk.bold("\n  Market Activity History\n"));
     // Escrow tasks I submitted to (assigned)

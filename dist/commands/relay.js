@@ -5,6 +5,7 @@ import chalk from "chalk";
 import ora from "ora";
 import { requireConfig } from "../utils/config.js";
 import { apiGet, apiPost } from "../utils/api.js";
+import { parseIntegerOption, parseNumberOption } from "../utils/validation.js";
 import { readRelayPid, isRelayPidAlive, removeRelayPid } from "../relay/provider.js";
 import { API_PRICES, RELAY_DISCOUNT } from "../relay/pricing.js";
 const LOG_FILE = join(homedir(), ".clawmoney", "relay.log");
@@ -58,19 +59,28 @@ export async function relayRegisterCommand(options) {
         process.exit(1);
     }
     const priceInput = options.priceInput != null
-        ? parseFloat(options.priceInput)
+        ? parseNumberOption(options.priceInput, "--price-input", { min: 0 })
         : known.input;
     const priceOutput = options.priceOutput != null
-        ? parseFloat(options.priceOutput)
+        ? parseNumberOption(options.priceOutput, "--price-output", { min: 0 })
         : known.output;
+    const concurrency = parseIntegerOption(options.concurrency, "--concurrency", {
+        defaultValue: 5,
+        min: 1,
+        max: 100,
+    });
+    const dailyLimit = parseNumberOption(options.dailyLimit, "--daily-limit", {
+        defaultValue: 20,
+        min: 0,
+    });
     const regSpinner = ora("Registering as relay provider...").start();
     try {
         const body = {
             cli_type: options.cli,
             model: options.model,
             mode: options.mode ?? "chat",
-            concurrency: parseInt(options.concurrency ?? "5", 10),
-            daily_limit_usd: parseFloat(options.dailyLimit ?? "20"),
+            concurrency,
+            daily_limit_usd: dailyLimit,
             price_input_per_m: priceInput,
             price_output_per_m: priceOutput,
         };

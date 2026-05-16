@@ -326,7 +326,7 @@ market
     .option('-l, --limit <n>', 'Number of items to show', '10')
     .action(async (options) => {
     try {
-        await hubHistoryCommand({ type: options.type, limit: parseInt(options.limit ?? '10', 10) });
+        await hubHistoryCommand({ type: options.type, limit: options.limit });
     }
     catch (err) {
         console.error(err.message);
