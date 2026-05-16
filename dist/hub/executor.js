@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
-import { existsSync, statSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, statSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { isProcessed, markProcessed } from "./dedup.js";
-import { replaceLocalPaths, uploadFile } from "./media.js";
+import { isAllowedLocalPath, replaceLocalPaths, uploadFile } from "./media.js";
 import { logger } from "./logger.js";
 const TIMEOUT_BUFFER_S = 15;
 // ── Prompt builder ──
@@ -37,7 +37,7 @@ function buildPrompt(call, config) {
                 : "Use your native image generation tool";
         lines.push(`IMPORTANT: ${skillHint} to generate a real PNG/JPG image.`, "Do NOT write SVG, HTML, Python (PIL), or any code to fake an image.", "If no image generation tool is available in this environment, return {\"success\": false, \"error\": \"No image generation tool available\"}.", "Save the generated image and include the absolute file path in your JSON output as \"image_path\".");
     }
-    lines.push("Execute this task and return the result as JSON.", "If you generate any files (images, videos, etc.), save them and include their file paths in the output.", "Return ONLY the JSON result, no other text.");
+    lines.push("Execute this task and return the result as JSON.", "If you generate any files (images, videos, etc.), save them under the current working directory and include their file paths in the output.", "Return ONLY the JSON result, no other text.");
     return lines.join("\n");
 }
 // ── Image-output validation ──
@@ -89,7 +89,7 @@ function extractClaimedPaths(output) {
  * Returns null when the delivery is OK for a `generation/image` call,
  * otherwise an error string explaining why it isn't.
  */
-function validateImageDelivery(output) {
+function validateImageDelivery(output, allowedRoots) {
     // CDN URL anywhere in the output? Then a real file got uploaded.
     const top = output;
     if (typeof top.image_url === "string" && CDN_URL_RE.test(top.image_url))
@@ -103,6 +103,10 @@ function validateImageDelivery(output) {
     const claimedPaths = extractClaimedPaths(output);
     if (claimedPaths.length === 0) {
         return "Provider returned no image (model likely lacks an image-generation tool).";
+    }
+    const disallowed = claimedPaths.filter((p) => !isAllowedLocalPath(p, allowedRoots));
+    if (disallowed.length > 0) {
+        return "Provider claimed a file outside the task workspace; refusing to upload it.";
     }
     const missing = claimedPaths.filter((p) => !existsSync(p));
     if (missing.length > 0) {
@@ -137,8 +141,18 @@ function validateImageDelivery(output) {
 // downstream parser picks up the path naturally, then SIGTERM codex.
 const CODEX_HOME = process.env.CODEX_HOME || join(homedir(), ".codex");
 const CODEX_GEN_DIR = join(CODEX_HOME, "generated_images");
+const HUB_WORKSPACE_DIR = join(homedir(), ".clawmoney", "hub-workspaces");
 const FILE_STABLE_MS = 1500;
 const POLL_INTERVAL_MS = 400;
+function createTaskWorkspace(taskId) {
+    const safeId = taskId.replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 120) || "hub-task";
+    const workspace = join(HUB_WORKSPACE_DIR, safeId);
+    mkdirSync(workspace, { recursive: true });
+    return workspace;
+}
+function uploadRootsFor(workspace) {
+    return [workspace, CODEX_GEN_DIR];
+}
 function snapshotCodexThreads() {
     try {
         return new Set(readdirSync(CODEX_GEN_DIR));
@@ -201,7 +215,7 @@ async function waitForStableSize(filePath) {
     }
 }
 // ── CLI execution (openclaw agent / claude -p) ──
-function runCli(command, prompt, timeoutMs, orderId, watchForImage, onProgress) {
+function runCli(command, prompt, timeoutMs, orderId, watchForImage, onProgress, cwd) {
     return new Promise((resolve) => {
         // Build args based on command
         let args;
@@ -250,6 +264,7 @@ function runCli(command, prompt, timeoutMs, orderId, watchForImage, onProgress) 
             stdio: ["ignore", "pipe", "pipe"],
             timeout: timeoutMs,
             env: { ...process.env },
+            cwd,
         });
         let stdout = "";
         let stderr = "";
@@ -537,11 +552,13 @@ export class Executor {
             if (task.category?.startsWith("generation/image")) {
                 lines.push("", "IMPORTANT: Generate a real image file (PNG/JPG). Save it to a local path.", "Include the file path in your JSON output as 'image_path'.", "Do NOT generate SVG, HTML, or code to fake an image.");
             }
-            lines.push("", "Return the result as JSON with a 'result' field containing your work.", "If you generate any files (images, videos, etc.), include their absolute file paths in the output.");
+            lines.push("", "Return the result as JSON with a 'result' field containing your work.", "If you generate any files (images, videos, etc.), save them under the current working directory and include their absolute file paths in the output.");
             const prompt = lines.filter(Boolean).join("\n");
             const command = this.config.provider.cli_command;
             logger.info(`Executing multi task via ${command} (timeout=300s)`);
-            const { stdout, stderr, exitCode } = await runCli(command, prompt, 300_000, task.id);
+            const workspace = createTaskWorkspace(task.id);
+            const allowedUploadRoots = uploadRootsFor(workspace);
+            const { stdout, stderr, exitCode } = await runCli(command, prompt, 300_000, task.id, false, undefined, workspace);
             if (exitCode !== 0) {
                 logger.error(`Escrow CLI failed (code=${exitCode}): ${stderr.slice(0, 500)}`);
                 return;
@@ -612,7 +629,7 @@ export class Executor {
             }
             // Upload local files to R2 CDN
             for (const filePath of localFiles) {
-                const cdnUrl = await uploadFile(filePath, this.config);
+                const cdnUrl = await uploadFile(filePath, this.config, allowedUploadRoots);
                 if (cdnUrl) {
                     logger.info(`Escrow ${task.id.slice(0, 8)}: uploaded ${filePath} -> ${cdnUrl}`);
                     // Use the first uploaded file as the submission URL
@@ -670,6 +687,8 @@ export class Executor {
             const prompt = buildPrompt(call, this.config);
             const timeoutS = Math.max(call.timeout - TIMEOUT_BUFFER_S, 30);
             const command = this.config.provider.cli_command;
+            const workspace = createTaskWorkspace(call.order_id);
+            const allowedUploadRoots = uploadRootsFor(workspace);
             logger.info(`Executing: ${command} for skill="${call.skill}" order=${call.order_id} (timeout=${timeoutS}s)`);
             this.sendProgress(call.order_id, `Spawning ${command}…`);
             const { stdout, stderr, exitCode } = await runCli(command, prompt, timeoutS * 1000, call.order_id, 
@@ -679,7 +698,7 @@ export class Executor {
             call.category?.startsWith("generation/image"), 
             // Progress callback fired inside runCli when we cross
             // observable milestones (image landing on disk, etc).
-            (text) => this.sendProgress(call.order_id, text));
+            (text) => this.sendProgress(call.order_id, text), workspace);
             if (exitCode !== 0) {
                 const errMsg = stderr.trim() || `CLI exited with code ${exitCode}`;
                 logger.error(`CLI failed (code=${exitCode}):`, errMsg);
@@ -730,7 +749,7 @@ export class Executor {
                     this.sendProgress(call.order_id, "Uploading to CDN…");
                 }
                 for (const filePath of allFiles) {
-                    const cdnUrl = await uploadFile(filePath, this.config);
+                    const cdnUrl = await uploadFile(filePath, this.config, allowedUploadRoots);
                     if (cdnUrl) {
                         // Replace local path with CDN URL in output (top-level and nested)
                         const replaceInArray = (arr) => {
@@ -779,19 +798,19 @@ export class Executor {
                 const codexText = parseCodexOutput(stdout);
                 const codexParsed = parseJsonOutput(codexText);
                 output = codexParsed ?? { result: codexText.slice(0, 5000) };
-                output = await replaceLocalPaths(output, this.config);
+                output = await replaceLocalPaths(output, this.config, allowedUploadRoots);
             }
             else if (command === "gemini") {
                 // Parse Gemini JSON wrapper: { session_id, response, stats }
                 const geminiText = parseGeminiOutput(stdout);
                 const geminiParsed = parseJsonOutput(geminiText);
                 output = geminiParsed ?? { result: geminiText.slice(0, 5000) };
-                output = await replaceLocalPaths(output, this.config);
+                output = await replaceLocalPaths(output, this.config, allowedUploadRoots);
             }
             else {
                 output = parsed ?? { result: stdout.trim().slice(0, 5000) };
                 // Upload local files via generic path replacement
-                output = await replaceLocalPaths(output, this.config);
+                output = await replaceLocalPaths(output, this.config, allowedUploadRoots);
             }
             // Image-output validation. The OpenClaw branch above does this inline
             // (using its richer parseOpenClawResponse files list); for everything
@@ -801,7 +820,7 @@ export class Executor {
             // OpenClaw branch — it already validated and may have set _meta etc.
             if (command !== "openclaw" &&
                 call.category?.startsWith("generation/image")) {
-                const reason = validateImageDelivery(output);
+                const reason = validateImageDelivery(output, allowedUploadRoots);
                 if (reason) {
                     logger.error(`Image validation failed for order=${call.order_id} (${command}): ${reason}`);
                     this.send({
