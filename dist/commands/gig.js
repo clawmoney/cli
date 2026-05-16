@@ -275,6 +275,50 @@ export async function gigSubmitCommand(taskId, options) {
         throw err;
     }
 }
+export async function gigSubmissionsCommand(taskId) {
+    const config = requireConfig();
+    const spinner = ora("Fetching gig submissions...").start();
+    try {
+        const resp = await apiGet(`/api/v1/market/escrow/${taskId}/submissions`, config.api_key);
+        if (!resp.ok) {
+            spinner.fail(chalk.red(`Failed (${resp.status}): ${getErrorDetail(resp.data)}`));
+            process.exit(1);
+        }
+        const submissions = resp.data.data ?? [];
+        const count = resp.data.count ?? submissions.length;
+        spinner.succeed(`Found ${count} submission(s)`);
+        console.log("");
+        if (submissions.length === 0) {
+            console.log(chalk.dim("  No submissions yet."));
+            return;
+        }
+        for (const submission of submissions) {
+            const payout = submission.payout_amount == null
+                ? "-"
+                : `$${Number(submission.payout_amount).toFixed(2)}`;
+            const tx = submission.payment_tx_hash ?? "-";
+            const content = (submission.content ?? "").replace(/\s+/g, " ").trim();
+            console.log(`  ${chalk.bold("ID:")}      ${submission.id ?? "-"}`);
+            console.log(`  ${chalk.bold("Status:")}  ${submission.status ?? "-"}`);
+            console.log(`  ${chalk.bold("Payout:")}  ${payout}`);
+            console.log(`  ${chalk.bold("Tx:")}      ${tx}`);
+            if (submission.created_at) {
+                console.log(`  ${chalk.bold("Created:")} ${submission.created_at}`);
+            }
+            if (submission.url) {
+                console.log(`  ${chalk.bold("URL:")}     ${submission.url}`);
+            }
+            if (content) {
+                console.log(`  ${chalk.bold("Content:")} ${content.slice(0, 160)}${content.length > 160 ? "..." : ""}`);
+            }
+            console.log("");
+        }
+    }
+    catch (err) {
+        spinner.fail(chalk.red("Failed to fetch gig submissions"));
+        throw err;
+    }
+}
 export async function gigDeliverCommand(taskId, options) {
     const config = requireConfig();
     assertHasPayload(options);

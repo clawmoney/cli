@@ -19,6 +19,7 @@ interface SubmitOptions {
     url?: string;
 }
 export declare function gigSubmitCommand(taskId: string, options: SubmitOptions): Promise<void>;
+export declare function gigSubmissionsCommand(taskId: string): Promise<void>;
 export declare function gigDeliverCommand(taskId: string, options: SubmitOptions): Promise<void>;
 export declare function gigApproveCommand(taskId: string): Promise<void>;
 export declare function gigDisputeCommand(taskId: string): Promise<void>;

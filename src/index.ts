@@ -18,6 +18,7 @@ import {
   gigDetailCommand,
   gigAcceptCommand,
   gigSubmitCommand,
+  gigSubmissionsCommand,
   gigDeliverCommand,
   gigApproveCommand,
   gigDisputeCommand,
@@ -481,6 +482,18 @@ gig
   .action(async (taskId, options) => {
     try {
       await gigSubmitCommand(taskId, options);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+gig
+  .command('submissions <task-id>')
+  .description('List submissions for a multi-submission gig')
+  .action(async (taskId) => {
+    try {
+      await gigSubmissionsCommand(taskId);
     } catch (err) {
       console.error((err as Error).message);
       process.exit(1);
