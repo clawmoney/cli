@@ -12,7 +12,7 @@ import { loadConfig } from "../utils/config.js";
 // Provider roles enabled from this wizard. Each delegates to an existing
 // per-role setup command — we don't re-implement those flows here, just
 // dispatch in canonical order so the user sees a predictable sequence.
-type ProviderRole = "market" | "relay" | "api" | "verifier";
+type ProviderRole = "market" | "api" | "verifier";
 
 interface RoleSpec {
   value: ProviderRole;
@@ -25,11 +25,6 @@ const ROLES: RoleSpec[] = [
     value: "market",
     label: "Market skills",
     hint: "image gen / code / translate / tts / ... — agents pay you per call",
-  },
-  {
-    value: "relay",
-    label: "Relay",
-    hint: "sell idle Claude Max / ChatGPT Pro / Gemini quota at 20% of API price",
   },
   {
     value: "api",
@@ -94,7 +89,7 @@ export async function providerSetupWizard(): Promise<void> {
   }
 
   // Sort picked roles in canonical ROLES order so the wizard always runs
-  // the same sequence (market → relay → verifier) regardless of click order.
+  // the same sequence (market → api → verifier) regardless of click order.
   const ordered = ROLES.filter((r) => roles.includes(r.value)).map((r) => r.value);
 
   for (let i = 0; i < ordered.length; i++) {
@@ -107,9 +102,6 @@ export async function providerSetupWizard(): Promise<void> {
       if (role === "market") {
         const { marketSetupCommand } = await import("./market-setup.js");
         await marketSetupCommand({ nested: true });
-      } else if (role === "relay") {
-        const { relaySetupCommand } = await import("./relay-setup.js");
-        await relaySetupCommand();
       } else if (role === "api") {
         const { apiSetupCommand } = await import("./api-setup.js");
         await apiSetupCommand({ nested: true });
@@ -134,7 +126,6 @@ export async function providerSetupWizard(): Promise<void> {
       chalk.dim("Useful next commands:"),
       `  ${chalk.cyan("clawmoney market skills")}      list your registered skills`,
       `  ${chalk.cyan("clawmoney market start")}       start the market provider daemon`,
-      `  ${chalk.cyan("clawmoney relay start")}        start the relay daemon`,
       `  ${chalk.cyan("tail -f ~/.clawmoney/*.log")}  watch all daemons`,
     ].join("\n"),
     "All done",
