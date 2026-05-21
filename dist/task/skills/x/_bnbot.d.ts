@@ -20,3 +20,27 @@ export interface UserTweetsArgs {
 }
 export declare function bnbotXUserTweets(args: UserTweetsArgs): Promise<unknown[]>;
 export declare function bnbotXThread(tweetId: string): Promise<unknown[]>;
+export interface TrendsArgs {
+    woeid?: number;
+    limit?: number;
+}
+export declare function bnbotXTrends(args?: TrendsArgs): Promise<unknown[]>;
+export interface UserListArgs {
+    username: string;
+    count?: number;
+    cursor?: string;
+}
+export interface BnbotUserListResult {
+    users: unknown[];
+    next_cursor: string | null;
+}
+export declare function bnbotXUserFollowers(args: UserListArgs): Promise<BnbotUserListResult>;
+export declare function bnbotXUserFollowing(args: UserListArgs): Promise<BnbotUserListResult>;
+export interface TweetListArgs {
+    tweet_id: string;
+    count?: number;
+    cursor?: string;
+}
+export declare function bnbotXTweetLikers(args: TweetListArgs): Promise<BnbotUserListResult>;
+export declare function bnbotXTweetRetweeters(args: TweetListArgs): Promise<BnbotUserListResult>;
+export declare function bnbotXTweetArticle(tweetId: string): Promise<unknown>;

@@ -126,3 +126,108 @@ export function tweetConversationToTwitter283(head, replies = []) {
         },
     };
 }
+// ── Tier 3 envelope mappers ──────────────────────────────────────
+/**
+ * Trends envelope. twitter283's /Trends returns a `data.trends`
+ * array of `{name, tweet_volume, url, category?}`. We mirror that
+ * shape — buyer code typically iterates `.data.trends`.
+ */
+export function trendsToTwitter283(trends) {
+    return {
+        data: {
+            trends: trends.map((t) => ({
+                name: t.name ?? "",
+                tweet_volume: typeof t.tweet_volume === "number" ? t.tweet_volume : null,
+                url: t.url ?? "",
+                ...(t.category ? { category: t.category } : {}),
+            })),
+        },
+        meta: { result_count: trends.length },
+    };
+}
+/**
+ * Wrap a single user-list entry in a twitter283-style
+ * user_results.result envelope (matches /UserFollowers, /Following,
+ * /Favoriters, /Retweeters timeline entries).
+ */
+function userListEntryToResult(u) {
+    return {
+        __typename: "User",
+        rest_id: u.rest_id ?? u.id ?? "",
+        legacy: {
+            screen_name: u.screen_name ?? "",
+            name: u.name ?? "",
+            description: u.bio ?? "",
+            followers_count: u.followers ?? 0,
+            friends_count: u.following ?? 0,
+            statuses_count: u.tweets ?? 0,
+            verified: !!u.verified,
+            profile_image_url_https: u.profile_image_url ?? "",
+        },
+        url: u.url ?? "",
+    };
+}
+/**
+ * Full user-list envelope. Covers /UserFollowers,
+ * /UserVerifiedFollowers, /UserFollowing, /TweetFavoriters,
+ * /TweetRetweeters. Includes flat `users` for easy iteration and
+ * `meta.next_cursor` for pagination. Set `verified_only` to drop
+ * non-verified entries (mirrors /UserVerifiedFollowers).
+ */
+export function userListToTwitter283(users, next_cursor = null, opts = {}) {
+    const filtered = opts.verified_only
+        ? users.filter((u) => !!u.verified)
+        : users;
+    return {
+        data: {
+            users: filtered.map((u) => ({
+                result: userListEntryToResult(u),
+            })),
+        },
+        meta: {
+            result_count: filtered.length,
+            next_cursor: next_cursor ?? null,
+        },
+    };
+}
+/**
+ * /FollowersIds, /FollowingIds — twitter283 returns a flat list of
+ * numeric ids. `stringify_ids` controls whether they're emitted as
+ * strings (which is the X v1 default for >32-bit safety) or
+ * numbers.
+ */
+export function userIdsToTwitter283(users, next_cursor = null, opts = {}) {
+    const ids = users
+        .map((u) => u.rest_id ?? u.id ?? "")
+        .filter((s) => s.length > 0);
+    return {
+        ids: opts.stringify_ids ? ids : ids.map((s) => Number(s)),
+        next_cursor: next_cursor ?? null,
+        next_cursor_str: next_cursor ?? "0",
+        previous_cursor: 0,
+        previous_cursor_str: "0",
+    };
+}
+/**
+ * Article envelope. twitter283's /TweetArticle returns the article
+ * payload nested under `data.tweetResult.result.article`. We pass
+ * the bnbot fields straight through (already pre-flattened) plus a
+ * thin wrapper for buyer parity.
+ */
+export function tweetArticleToTwitter283(a) {
+    return {
+        data: {
+            article: {
+                id: a.id ?? "",
+                title: a.title ?? "",
+                preview: a.preview ?? "",
+                content: a.content ?? "",
+                author: a.author ?? "",
+                author_name: a.author_name ?? "",
+                created_at: a.created_at ?? "",
+                cover_image_url: a.cover_image_url ?? null,
+                url: a.url ?? "",
+            },
+        },
+    };
+}

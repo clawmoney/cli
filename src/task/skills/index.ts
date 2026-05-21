@@ -5,7 +5,14 @@ import { xSearchSkill } from "./x/search.js";
 import { xUserByScreenNameSkill } from "./x/user-by-screen-name.js";
 import { xUserTweetsSkill } from "./x/user-tweets.js";
 import { xTweetSkill } from "./x/tweet.js";
-import { makeUnimplementedSkill } from "./x/_unimplemented.js";
+import { xTrendsSkill } from "./x/trends.js";
+import { xUserFollowersSkill } from "./x/user-followers.js";
+import { xUserFollowingSkill } from "./x/user-following.js";
+import { xTweetLikersSkill } from "./x/tweet-likers.js";
+import { xTweetRetweetersSkill } from "./x/tweet-retweeters.js";
+import { xTweetArticleSkill } from "./x/tweet-article.js";
+// `_unimplemented.ts` kept for future stub skills; not used in the
+// registry today.
 
 /**
  * In-process skill registry. Each entry maps a skill_id (the same
@@ -18,9 +25,8 @@ import { makeUnimplementedSkill } from "./x/_unimplemented.js";
  * `x.search.legacy` for older buyers / local debug scripts.
  *
  * Tier 3 skills (followers / following / likers / retweeters /
- * article / trends) are registered as stubs that throw a clear
- * "not yet implemented" error. They'll get real impls once bnbot
- * CLI ships the matching scrape commands.
+ * article / trends) are real implementations backed by bnbot CLI's
+ * tier-3 scrape commands.
  */
 export const SKILL_REGISTRY: Record<string, SkillHandler> = {
   echo: echoSkill,
@@ -31,28 +37,13 @@ export const SKILL_REGISTRY: Record<string, SkillHandler> = {
   "x.tweet": xTweetSkill,
   // Legacy flat-shape version, kept for back-compat with old buyers.
   "x.search.legacy": xSearchLegacy,
-  // Tier 3 — stubs, waiting on bnbot CLI extension
-  "x.trends": makeUnimplementedSkill("x scrape trends", "/Trends"),
-  "x.user_followers": makeUnimplementedSkill(
-    "x scrape user-followers",
-    "/UserFollowers /FollowersIds /UserVerifiedFollowers",
-  ),
-  "x.user_following": makeUnimplementedSkill(
-    "x scrape user-following",
-    "/UserFollowing /FollowingIds",
-  ),
-  "x.tweet_favoriters": makeUnimplementedSkill(
-    "x scrape tweet-likers",
-    "/TweetFavoriters",
-  ),
-  "x.tweet_retweeters": makeUnimplementedSkill(
-    "x scrape tweet-retweeters",
-    "/TweetRetweeters",
-  ),
-  "x.tweet_article": makeUnimplementedSkill(
-    "x scrape tweet-article",
-    "/TweetArticle",
-  ),
+  // Tier 3 — backed by bnbot tier-3 scrape commands
+  "x.trends": xTrendsSkill,
+  "x.user_followers": xUserFollowersSkill,
+  "x.user_following": xUserFollowingSkill,
+  "x.tweet_favoriters": xTweetLikersSkill,
+  "x.tweet_retweeters": xTweetRetweetersSkill,
+  "x.tweet_article": xTweetArticleSkill,
 };
 
 export function listSkills(): string[] {

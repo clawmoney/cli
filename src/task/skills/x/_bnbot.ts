@@ -119,3 +119,120 @@ export async function bnbotXThread(tweetId: string): Promise<unknown[]> {
   }
   return out;
 }
+
+// ── Tier 3 ───────────────────────────────────────────────────────
+
+export interface TrendsArgs {
+  woeid?: number;
+  limit?: number;
+}
+
+export async function bnbotXTrends(args: TrendsArgs = {}): Promise<unknown[]> {
+  const limit = Math.max(1, Math.min(50, args.limit ?? 20));
+  const cli = ["x", "scrape", "trends", "-l", String(limit)];
+  if (typeof args.woeid === "number" && Number.isFinite(args.woeid)) {
+    cli.push("--woeid", String(args.woeid));
+  }
+  const out = await runBnbot(cli);
+  if (!Array.isArray(out)) {
+    throw new Error(`bnbot trends returned non-array: ${typeof out}`);
+  }
+  return out;
+}
+
+export interface UserListArgs {
+  username: string;
+  count?: number;
+  cursor?: string;
+}
+
+export interface BnbotUserListResult {
+  users: unknown[];
+  next_cursor: string | null;
+}
+
+function coerceUserListShape(out: unknown, op: string): BnbotUserListResult {
+  if (!out || typeof out !== "object") {
+    throw new Error(`bnbot ${op} returned non-object: ${typeof out}`);
+  }
+  const o = out as { users?: unknown; next_cursor?: unknown };
+  const users = Array.isArray(o.users) ? o.users : [];
+  const next_cursor =
+    typeof o.next_cursor === "string" && o.next_cursor.length > 0
+      ? o.next_cursor
+      : null;
+  return { users, next_cursor };
+}
+
+export async function bnbotXUserFollowers(
+  args: UserListArgs,
+): Promise<BnbotUserListResult> {
+  const limit = Math.max(1, Math.min(200, args.count ?? 20));
+  const cli = ["x", "scrape", "user-followers", args.username, "-l", String(limit)];
+  if (args.cursor) cli.push("-c", args.cursor);
+  return coerceUserListShape(await runBnbot(cli), "user-followers");
+}
+
+export async function bnbotXUserFollowing(
+  args: UserListArgs,
+): Promise<BnbotUserListResult> {
+  const limit = Math.max(1, Math.min(200, args.count ?? 20));
+  const cli = ["x", "scrape", "user-following", args.username, "-l", String(limit)];
+  if (args.cursor) cli.push("-c", args.cursor);
+  return coerceUserListShape(await runBnbot(cli), "user-following");
+}
+
+export interface TweetListArgs {
+  tweet_id: string;
+  count?: number;
+  cursor?: string;
+}
+
+function tweetIdToUrl(tweetId: string): string {
+  return `https://twitter.com/i/status/${tweetId}`;
+}
+
+export async function bnbotXTweetLikers(
+  args: TweetListArgs,
+): Promise<BnbotUserListResult> {
+  const limit = Math.max(1, Math.min(200, args.count ?? 20));
+  const cli = [
+    "x",
+    "scrape",
+    "tweet-likers",
+    tweetIdToUrl(args.tweet_id),
+    "-l",
+    String(limit),
+  ];
+  if (args.cursor) cli.push("-c", args.cursor);
+  return coerceUserListShape(await runBnbot(cli), "tweet-likers");
+}
+
+export async function bnbotXTweetRetweeters(
+  args: TweetListArgs,
+): Promise<BnbotUserListResult> {
+  const limit = Math.max(1, Math.min(200, args.count ?? 20));
+  const cli = [
+    "x",
+    "scrape",
+    "tweet-retweeters",
+    tweetIdToUrl(args.tweet_id),
+    "-l",
+    String(limit),
+  ];
+  if (args.cursor) cli.push("-c", args.cursor);
+  return coerceUserListShape(await runBnbot(cli), "tweet-retweeters");
+}
+
+export async function bnbotXTweetArticle(tweetId: string): Promise<unknown> {
+  const out = await runBnbot([
+    "x",
+    "scrape",
+    "tweet-article",
+    tweetIdToUrl(tweetId),
+  ]);
+  if (!out || typeof out !== "object") {
+    throw new Error(`bnbot tweet-article returned non-object: ${typeof out}`);
+  }
+  return out;
+}

@@ -65,3 +65,65 @@ export declare function userTweetsToTwitter283(tweets: BnbotTweet[], cursor?: {
 }): unknown;
 /** Wrap a single tweet plus an optional reply list as a conversation. */
 export declare function tweetConversationToTwitter283(head: BnbotTweet, replies?: BnbotTweet[]): unknown;
+export interface BnbotTrend {
+    name?: string;
+    tweet_volume?: number | null;
+    url?: string;
+    category?: string;
+}
+export interface BnbotUserListEntry {
+    rest_id?: string;
+    id?: string;
+    screen_name?: string;
+    name?: string;
+    bio?: string;
+    followers?: number;
+    following?: number;
+    tweets?: number;
+    verified?: boolean;
+    profile_image_url?: string;
+    url?: string;
+}
+export interface BnbotArticle {
+    id?: string;
+    title?: string;
+    preview?: string;
+    content?: string;
+    author?: string;
+    author_name?: string;
+    created_at?: string;
+    cover_image_url?: string | null;
+    url?: string;
+}
+/**
+ * Trends envelope. twitter283's /Trends returns a `data.trends`
+ * array of `{name, tweet_volume, url, category?}`. We mirror that
+ * shape — buyer code typically iterates `.data.trends`.
+ */
+export declare function trendsToTwitter283(trends: BnbotTrend[]): unknown;
+/**
+ * Full user-list envelope. Covers /UserFollowers,
+ * /UserVerifiedFollowers, /UserFollowing, /TweetFavoriters,
+ * /TweetRetweeters. Includes flat `users` for easy iteration and
+ * `meta.next_cursor` for pagination. Set `verified_only` to drop
+ * non-verified entries (mirrors /UserVerifiedFollowers).
+ */
+export declare function userListToTwitter283(users: BnbotUserListEntry[], next_cursor?: string | null, opts?: {
+    verified_only?: boolean;
+}): unknown;
+/**
+ * /FollowersIds, /FollowingIds — twitter283 returns a flat list of
+ * numeric ids. `stringify_ids` controls whether they're emitted as
+ * strings (which is the X v1 default for >32-bit safety) or
+ * numbers.
+ */
+export declare function userIdsToTwitter283(users: BnbotUserListEntry[], next_cursor?: string | null, opts?: {
+    stringify_ids?: boolean;
+}): unknown;
+/**
+ * Article envelope. twitter283's /TweetArticle returns the article
+ * payload nested under `data.tweetResult.result.article`. We pass
+ * the bnbot fields straight through (already pre-flattened) plus a
+ * thin wrapper for buyer parity.
+ */
+export declare function tweetArticleToTwitter283(a: BnbotArticle): unknown;

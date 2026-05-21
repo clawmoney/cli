@@ -10,9 +10,8 @@ import type { SkillHandler } from "../types.js";
  * `x.search.legacy` for older buyers / local debug scripts.
  *
  * Tier 3 skills (followers / following / likers / retweeters /
- * article / trends) are registered as stubs that throw a clear
- * "not yet implemented" error. They'll get real impls once bnbot
- * CLI ships the matching scrape commands.
+ * article / trends) are real implementations backed by bnbot CLI's
+ * tier-3 scrape commands.
  */
 export declare const SKILL_REGISTRY: Record<string, SkillHandler>;
 export declare function listSkills(): string[];
