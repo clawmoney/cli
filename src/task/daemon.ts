@@ -135,6 +135,25 @@ function main(): void {
     process.exit(1);
   }
 
+  // Belt-and-suspenders: even if every other handle (WS, heartbeat,
+  // reconnect timer) somehow goes away simultaneously, this interval
+  // is unref-less and ref-counted into the event loop, so the daemon
+  // never silently exits. Cost: a no-op tick every 60s.
+  const keepAlive = setInterval(() => undefined, 60_000);
+  process.on("exit", () => clearInterval(keepAlive));
+
+  // Last-ditch: log unhandled async errors instead of letting Node's
+  // default abort the process. (uncaught promise rejection is the
+  // most likely silent killer in this WS-heavy loop.)
+  process.on("unhandledRejection", (err: unknown) => {
+    console.error(
+      `[task] unhandledRejection: ${err instanceof Error ? err.stack : String(err)}`,
+    );
+  });
+  process.on("uncaughtException", (err: Error) => {
+    console.error(`[task] uncaughtException: ${err.stack ?? err.message}`);
+  });
+
   const ws = new TaskWsClient(config, (frame: HubFrame) => {
     switch (frame.event) {
       case "connected":

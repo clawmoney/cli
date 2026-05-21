@@ -107,7 +107,12 @@ export class TaskWsClient {
             this.reconnectTimer = null;
             this.connect();
         }, delay);
-        this.reconnectTimer.unref();
+        // NOTE: do NOT .unref() here. The reconnect timer is the only
+        // "live" handle the daemon has between WS close and the next
+        // connect — if we unref it, and the WebSocket + heartbeat are
+        // already torn down, Node's event loop sees nothing keeping it
+        // alive and exits. Empirically this killed the mba daemon
+        // after every 1006 disconnect.
         const { max_ms = 60_000, multiplier = 2 } = this.config.reconnect ?? {};
         this.reconnectDelayMs = Math.min(delay * multiplier, max_ms);
     }
