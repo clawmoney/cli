@@ -10,6 +10,15 @@ import { xUserFollowingSkill } from "./x/user-following.js";
 import { xTweetLikersSkill } from "./x/tweet-likers.js";
 import { xTweetRetweetersSkill } from "./x/tweet-retweeters.js";
 import { xTweetArticleSkill } from "./x/tweet-article.js";
+// YouTube skills (Wave 2)
+import { ytVideoDetailsSkill } from "./youtube/video-details.js";
+import { ytChannelDetailsSkill } from "./youtube/channel-details.js";
+import { ytChannelVideosSkill } from "./youtube/channel-videos.js";
+import { ytTrendingSkill } from "./youtube/trending.js";
+import { ytChannelSearchSkill } from "./youtube/channel-search.js";
+import { ytVideoStreamingSkill } from "./youtube/video-streaming.js";
+import { ytVideoRelatedSkill } from "./youtube/video-related.js";
+import { ytVideoCommentsSkill } from "./youtube/video-comments.js";
 // `_unimplemented.ts` kept for future stub skills; not used in the
 // registry today.
 /**
@@ -42,6 +51,15 @@ export const SKILL_REGISTRY = {
     "x.tweet_favoriters": xTweetLikersSkill,
     "x.tweet_retweeters": xTweetRetweetersSkill,
     "x.tweet_article": xTweetArticleSkill,
+    // YouTube (Wave 2) — chrome extension + youtube.com page reading
+    "yt.video_details": ytVideoDetailsSkill,
+    "yt.channel_details": ytChannelDetailsSkill,
+    "yt.channel_videos": ytChannelVideosSkill,
+    "yt.trending": ytTrendingSkill,
+    "yt.channel_search": ytChannelSearchSkill,
+    "yt.video_streaming": ytVideoStreamingSkill,
+    "yt.video_related": ytVideoRelatedSkill,
+    "yt.video_comments": ytVideoCommentsSkill,
 };
 export function listSkills() {
     return Object.keys(SKILL_REGISTRY);
