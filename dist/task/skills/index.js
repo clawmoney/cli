@@ -19,6 +19,7 @@ import { ytChannelSearchSkill } from "./youtube/channel-search.js";
 import { ytVideoStreamingSkill } from "./youtube/video-streaming.js";
 import { ytVideoRelatedSkill } from "./youtube/video-related.js";
 import { ytVideoCommentsSkill } from "./youtube/video-comments.js";
+import { ytVideoTranscriptSkill } from "./youtube/video-transcript.js";
 // `_unimplemented.ts` kept for future stub skills; not used in the
 // registry today.
 /**
@@ -60,6 +61,7 @@ export const SKILL_REGISTRY = {
     "yt.video_streaming": ytVideoStreamingSkill,
     "yt.video_related": ytVideoRelatedSkill,
     "yt.video_comments": ytVideoCommentsSkill,
+    "yt.video_transcript": ytVideoTranscriptSkill,
 };
 export function listSkills() {
     return Object.keys(SKILL_REGISTRY);
