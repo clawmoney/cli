@@ -20,6 +20,16 @@ import { ytVideoStreamingSkill } from "./youtube/video-streaming.js";
 import { ytVideoRelatedSkill } from "./youtube/video-related.js";
 import { ytVideoCommentsSkill } from "./youtube/video-comments.js";
 import { ytVideoTranscriptSkill } from "./youtube/video-transcript.js";
+// TikTok skills (Wave 1)
+import { tkSearchVideoSkill } from "./tiktok/search.js";
+import { tkSearchAccountSkill } from "./tiktok/search-account.js";
+import { tkUserInfoSkill } from "./tiktok/user-info.js";
+import { tkUserPostsSkill } from "./tiktok/user-posts.js";
+import { tkUserFollowersSkill } from "./tiktok/user-followers.js";
+import { tkPostDetailSkill } from "./tiktok/post-detail.js";
+import { tkPostCommentsSkill } from "./tiktok/post-comments.js";
+import { tkTrendingSkill } from "./tiktok/trending.js";
+import { tkVideoDownloadSkill } from "./tiktok/video-download.js";
 // `_unimplemented.ts` kept for future stub skills; not used in the
 // registry today.
 /**
@@ -62,6 +72,17 @@ export const SKILL_REGISTRY = {
     "yt.video_related": ytVideoRelatedSkill,
     "yt.video_comments": ytVideoCommentsSkill,
     "yt.video_transcript": ytVideoTranscriptSkill,
+    // TikTok (Wave 1) — chrome extension + tiktok.com page reading;
+    // tk.video_download uses yt-dlp directly.
+    "tk.search_video": tkSearchVideoSkill,
+    "tk.search_account": tkSearchAccountSkill,
+    "tk.user_info": tkUserInfoSkill,
+    "tk.user_posts": tkUserPostsSkill,
+    "tk.user_followers": tkUserFollowersSkill,
+    "tk.post_detail": tkPostDetailSkill,
+    "tk.post_comments": tkPostCommentsSkill,
+    "tk.trending": tkTrendingSkill,
+    "tk.video_download": tkVideoDownloadSkill,
 };
 export function listSkills() {
     return Object.keys(SKILL_REGISTRY);
