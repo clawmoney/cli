@@ -75,6 +75,20 @@ import { tkCollectionPostsSkill } from "./tiktok/collection-posts.js";
 import { tkPostCommentRepliesSkill } from "./tiktok/post-comment-replies.js";
 import { tkMusicDownloadSkill } from "./tiktok/music-download.js";
 import { tkUserVideoDownloadBatchSkill } from "./tiktok/user-video-download-batch.js";
+// Douyin skills (Wave 1)
+import { dyUserInfoSkill } from "./douyin/user-info.js";
+import { dyUserPostsSkill } from "./douyin/user-posts.js";
+import { dyUserLikedPostsSkill } from "./douyin/user-liked.js";
+import { dyUserFollowersSkill } from "./douyin/user-followers.js";
+import { dyUserFollowingSkill } from "./douyin/user-following.js";
+import { dyPostCommentsSkill } from "./douyin/post-comments.js";
+import { dyPostCommentRepliesSkill } from "./douyin/post-comment-replies.js";
+import { dySearchGeneralSkill } from "./douyin/search-general.js";
+import { dySearchVideoSkill } from "./douyin/search-video.js";
+import { dySearchAccountSkill } from "./douyin/search-account.js";
+import { dySearchLiveSkill } from "./douyin/search-live.js";
+import { dyChallengePostsSkill } from "./douyin/challenge-posts.js";
+import { dyMusicPostsSkill } from "./douyin/music-posts.js";
 // `_unimplemented.ts` kept for future stub skills; not used in the
 // registry today.
 /**
@@ -184,6 +198,24 @@ export const SKILL_REGISTRY = {
     "tk.post_comment_replies": tkPostCommentRepliesSkill,
     "tk.music_download": tkMusicDownloadSkill,
     "tk.user_video_download_batch": tkUserVideoDownloadBatchSkill,
+    // Douyin (Wave 1) — chrome extension on douyin.com, mirrors the
+    // douyin-api23 RapidAPI surface. secUid is the canonical user id;
+    // pagination cursor flavor varies per endpoint (max_time for
+    // follower/following, cursor for posts/liked/music_posts/comments,
+    // offset for search-general/video/live/challenge_posts).
+    "dy.user_info": dyUserInfoSkill,
+    "dy.user_posts": dyUserPostsSkill,
+    "dy.user_liked_posts": dyUserLikedPostsSkill,
+    "dy.user_followers": dyUserFollowersSkill,
+    "dy.user_following": dyUserFollowingSkill,
+    "dy.post_comments": dyPostCommentsSkill,
+    "dy.post_comment_replies": dyPostCommentRepliesSkill,
+    "dy.search_general": dySearchGeneralSkill,
+    "dy.search_video": dySearchVideoSkill,
+    "dy.search_account": dySearchAccountSkill,
+    "dy.search_live": dySearchLiveSkill,
+    "dy.challenge_posts": dyChallengePostsSkill,
+    "dy.music_posts": dyMusicPostsSkill,
 };
 export function listSkills() {
     return Object.keys(SKILL_REGISTRY);
