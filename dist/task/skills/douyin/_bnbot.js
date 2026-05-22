@@ -78,14 +78,6 @@ export async function bnbotDYPostComments(a) {
         args.push("--cursor", a.cursor);
     return runBnbot(args);
 }
-export async function bnbotDYPostCommentReplies(a) {
-    const args = ["douyin", "post-comment-replies", a.video, a.commentId];
-    if (a.limit)
-        args.push("--limit", String(a.limit));
-    if (a.cursor)
-        args.push("--cursor", a.cursor);
-    return runBnbot(args);
-}
 export async function bnbotDYSearchGeneral(a) {
     const args = ["douyin", "search-general", a.query];
     if (a.limit)

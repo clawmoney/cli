@@ -107,22 +107,6 @@ export async function bnbotDYPostComments(
   return runBnbot(args);
 }
 
-export interface PostCommentRepliesArgs {
-  video: string;
-  commentId: string;
-  limit?: number;
-  cursor?: string;
-}
-
-export async function bnbotDYPostCommentReplies(
-  a: PostCommentRepliesArgs,
-): Promise<unknown> {
-  const args = ["douyin", "post-comment-replies", a.video, a.commentId];
-  if (a.limit) args.push("--limit", String(a.limit));
-  if (a.cursor) args.push("--cursor", a.cursor);
-  return runBnbot(args);
-}
-
 // ── Search ───────────────────────────────────────────────────
 
 export interface SearchOffsetArgs {

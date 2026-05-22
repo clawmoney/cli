@@ -82,7 +82,6 @@ import { dyUserLikedPostsSkill } from "./douyin/user-liked.js";
 import { dyUserFollowersSkill } from "./douyin/user-followers.js";
 import { dyUserFollowingSkill } from "./douyin/user-following.js";
 import { dyPostCommentsSkill } from "./douyin/post-comments.js";
-import { dyPostCommentRepliesSkill } from "./douyin/post-comment-replies.js";
 import { dySearchGeneralSkill } from "./douyin/search-general.js";
 import { dySearchVideoSkill } from "./douyin/search-video.js";
 import { dySearchAccountSkill } from "./douyin/search-account.js";
@@ -209,7 +208,6 @@ export const SKILL_REGISTRY = {
     "dy.user_followers": dyUserFollowersSkill,
     "dy.user_following": dyUserFollowingSkill,
     "dy.post_comments": dyPostCommentsSkill,
-    "dy.post_comment_replies": dyPostCommentRepliesSkill,
     "dy.search_general": dySearchGeneralSkill,
     "dy.search_video": dySearchVideoSkill,
     "dy.search_account": dySearchAccountSkill,

@@ -19,13 +19,6 @@ export interface PostCommentsArgs {
     cursor?: string;
 }
 export declare function bnbotDYPostComments(a: PostCommentsArgs): Promise<unknown>;
-export interface PostCommentRepliesArgs {
-    video: string;
-    commentId: string;
-    limit?: number;
-    cursor?: string;
-}
-export declare function bnbotDYPostCommentReplies(a: PostCommentRepliesArgs): Promise<unknown>;
 export interface SearchOffsetArgs {
     query: string;
     limit?: number;
