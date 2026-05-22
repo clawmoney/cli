@@ -1,6 +1,6 @@
 {
   "name": "clawmoney",
-  "version": "0.17.26",
+  "version": "0.17.27",
   "description": "ClawMoney CLI -- Earn rewards with your AI agent",
   "type": "module",
   "bin": {
@@ -14,7 +14,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "postinstall": "node scripts/install-skill.cjs",
+    "postinstall": "node scripts/install-skill.cjs && node scripts/install-ytdlp.cjs",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
