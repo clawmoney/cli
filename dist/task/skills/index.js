@@ -30,6 +30,51 @@ import { tkPostDetailSkill } from "./tiktok/post-detail.js";
 import { tkPostCommentsSkill } from "./tiktok/post-comments.js";
 import { tkTrendingSkill } from "./tiktok/trending.js";
 import { tkVideoDownloadSkill } from "./tiktok/video-download.js";
+// TikTok skills (Wave 2/3/4)
+import { tkChallengeInfoSkill } from "./tiktok/challenge-info.js";
+import { tkChallengePostsSkill } from "./tiktok/challenge-posts.js";
+import { tkMusicInfoSkill } from "./tiktok/music-info.js";
+import { tkMusicPostsSkill } from "./tiktok/music-posts.js";
+import { tkMusicUnlimitedSoundsSkill } from "./tiktok/music-unlimited.js";
+import { tkUserInfoRegionSkill } from "./tiktok/user-info-region.js";
+import { tkUserInfoByIdSkill } from "./tiktok/user-info-by-id.js";
+import { tkUserFollowingsSkill } from "./tiktok/user-followings.js";
+import { tkUserLikedPostsSkill } from "./tiktok/user-liked-posts.js";
+import { tkUserPlaylistSkill } from "./tiktok/user-playlist.js";
+import { tkUserRepostSkill } from "./tiktok/user-repost.js";
+import { tkUserStorySkill } from "./tiktok/user-story.js";
+import { tkSearchGeneralSkill } from "./tiktok/search-general.js";
+import { tkSearchLiveSkill } from "./tiktok/search-live.js";
+import { tkSearchSuggestionsSkill } from "./tiktok/search-suggestions.js";
+import { tkPostRelatedSkill } from "./tiktok/post-related.js";
+import { tkPostExploreSkill } from "./tiktok/post-explore.js";
+import { tkPostDiscoverSkill } from "./tiktok/post-discover.js";
+// TikTok Wave 5 (Creative Center / Ads)
+import { tkAdsDetailSkill } from "./tiktok/ads-detail.js";
+import { tkAdsTopSkill } from "./tiktok/ads-top.js";
+import { tkTrendingCreatorSkill } from "./tiktok/trending-creator.js";
+import { tkTrendingVideoSkill } from "./tiktok/trending-video.js";
+import { tkTrendingHashtagSkill } from "./tiktok/trending-hashtag.js";
+import { tkTrendingSongSkill } from "./tiktok/trending-song.js";
+import { tkTrendingKeywordSkill } from "./tiktok/trending-keyword.js";
+import { tkTrendingKeywordPostsSkill } from "./tiktok/trending-keyword-posts.js";
+import { tkTrendingKeywordSentenceSkill } from "./tiktok/trending-keyword-sentence.js";
+import { tkCommercialMusicLibrarySkill } from "./tiktok/commercial-music.js";
+import { tkCommercialMusicPlaylistsSkill } from "./tiktok/commercial-playlists.js";
+import { tkCommercialMusicPlaylistDetailSkill } from "./tiktok/commercial-playlist-detail.js";
+import { tkTopProductsSkill } from "./tiktok/top-products.js";
+import { tkTopProductDetailSkill } from "./tiktok/top-product-detail.js";
+import { tkTopProductMetricsSkill } from "./tiktok/top-product-metrics.js";
+// TikTok Wave 6 (long-tail)
+import { tkPlaceInfoSkill } from "./tiktok/place-info.js";
+import { tkPlacePostsSkill } from "./tiktok/place-posts.js";
+import { tkEffectInfoSkill } from "./tiktok/effect-info.js";
+import { tkEffectPostsSkill } from "./tiktok/effect-posts.js";
+import { tkCollectionInfoSkill } from "./tiktok/collection-info.js";
+import { tkCollectionPostsSkill } from "./tiktok/collection-posts.js";
+import { tkPostCommentRepliesSkill } from "./tiktok/post-comment-replies.js";
+import { tkMusicDownloadSkill } from "./tiktok/music-download.js";
+import { tkUserVideoDownloadBatchSkill } from "./tiktok/user-video-download-batch.js";
 // `_unimplemented.ts` kept for future stub skills; not used in the
 // registry today.
 /**
@@ -83,6 +128,62 @@ export const SKILL_REGISTRY = {
     "tk.post_comments": tkPostCommentsSkill,
     "tk.trending": tkTrendingSkill,
     "tk.video_download": tkVideoDownloadSkill,
+    // TikTok (Wave 2/3/4) — chrome extension fan-out, tiktok-api23 schema
+    "tk.challenge_info": tkChallengeInfoSkill,
+    "tk.challenge_posts": tkChallengePostsSkill,
+    "tk.music_info": tkMusicInfoSkill,
+    "tk.music_posts": tkMusicPostsSkill,
+    "tk.music_unlimited_sounds": tkMusicUnlimitedSoundsSkill,
+    "tk.user_info_region": tkUserInfoRegionSkill,
+    "tk.user_info_by_id": tkUserInfoByIdSkill,
+    "tk.user_followings": tkUserFollowingsSkill,
+    "tk.user_liked_posts": tkUserLikedPostsSkill,
+    "tk.user_playlist": tkUserPlaylistSkill,
+    "tk.user_repost": tkUserRepostSkill,
+    "tk.user_story": tkUserStorySkill,
+    "tk.search_general": tkSearchGeneralSkill,
+    "tk.search_live": tkSearchLiveSkill,
+    "tk.search_suggestions": tkSearchSuggestionsSkill,
+    "tk.post_related": tkPostRelatedSkill,
+    "tk.post_explore": tkPostExploreSkill,
+    "tk.post_discover": tkPostDiscoverSkill,
+    // TikTok Wave 5 (Creative Center / Ads) — ads.tiktok.com separate
+    // host, TikTok For Business login required on the scraper host. The
+    // underlying /creative_radar_api/v1/* endpoint paths are best-effort
+    // guesses; on auth fail or 404 the skill surfaces a structured
+    // `{ error: 'tiktok-ads-...' }` envelope so buyers can branch.
+    "tk.ads_detail": tkAdsDetailSkill,
+    "tk.ads_top": tkAdsTopSkill,
+    "tk.trending_creator": tkTrendingCreatorSkill,
+    "tk.trending_video": tkTrendingVideoSkill,
+    "tk.trending_hashtag": tkTrendingHashtagSkill,
+    "tk.trending_song": tkTrendingSongSkill,
+    "tk.trending_keyword": tkTrendingKeywordSkill,
+    "tk.trending_keyword_posts": tkTrendingKeywordPostsSkill,
+    "tk.trending_keyword_sentence": tkTrendingKeywordSentenceSkill,
+    "tk.commercial_music_library": tkCommercialMusicLibrarySkill,
+    "tk.commercial_music_playlists": tkCommercialMusicPlaylistsSkill,
+    "tk.commercial_music_playlist_detail": tkCommercialMusicPlaylistDetailSkill,
+    "tk.top_products": tkTopProductsSkill,
+    "tk.top_product_detail": tkTopProductDetailSkill,
+    "tk.top_product_metrics": tkTopProductMetricsSkill,
+    // TikTok Wave 6 (long-tail) — place / effect / collection /
+    // comment-replies on regular www.tiktok.com (same auth as Wave 1-4),
+    // plus 2 yt-dlp pulls (music_download + user_video_download_batch).
+    // place_info / effect_info hit landing-page rehydration scripts whose
+    // namespace shape is a best-effort guess — on miss the underlying
+    // scraper surfaces a structured `{ error: 'TikTok place/effect detail
+    // endpoint unknown — please flag for follow-up reverse-engineering' }`
+    // envelope so buyers can branch on it.
+    "tk.place_info": tkPlaceInfoSkill,
+    "tk.place_posts": tkPlacePostsSkill,
+    "tk.effect_info": tkEffectInfoSkill,
+    "tk.effect_posts": tkEffectPostsSkill,
+    "tk.collection_info": tkCollectionInfoSkill,
+    "tk.collection_posts": tkCollectionPostsSkill,
+    "tk.post_comment_replies": tkPostCommentRepliesSkill,
+    "tk.music_download": tkMusicDownloadSkill,
+    "tk.user_video_download_batch": tkUserVideoDownloadBatchSkill,
 };
 export function listSkills() {
     return Object.keys(SKILL_REGISTRY);

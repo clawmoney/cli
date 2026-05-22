@@ -237,3 +237,86 @@ export async function ytdlpTikTokPostDetail(videoIdOrUrl) {
         video_url: video?.url || "",
     };
 }
+export async function ytdlpTikTokMusicDownload(videoUrl) {
+    if (!(await isYtDlpInstalled())) {
+        throw new Error("yt-dlp not found on PATH — install with `brew install yt-dlp` or `pipx install yt-dlp`");
+    }
+    let url = videoUrl.trim();
+    // Accept bare numeric id (same as ytdlpTikTokPostDetail).
+    if (/^\d{15,25}$/.test(url)) {
+        url = `https://m.tiktok.com/v/${url}.html`;
+    }
+    const { stdout, stderr, code } = await run("yt-dlp", ["--dump-json", "--skip-download", "--no-warnings", url], 45_000);
+    if (code !== 0) {
+        throw new Error(`yt-dlp exited ${code}: ${stderr.split("\n").slice(-5).join(" | ").slice(0, 400)}`);
+    }
+    const info = JSON.parse(stdout.trim());
+    // Find the audio-only format (acodec set, vcodec === 'none'). On
+    // TikTok this is typically one entry; if none exists, fall back to a
+    // muxed mp4's URL — the caller can still play it as audio.
+    const audioOnly = (info.formats || []).find((f) => f && f.acodec && f.acodec !== "none" && (!f.vcodec || f.vcodec === "none"));
+    const muxed = (info.formats || []).find((f) => f && f.acodec && f.acodec !== "none" && f.vcodec && f.vcodec !== "none");
+    const pick = audioOnly || muxed || null;
+    const fmt = pick?.audio_ext || pick?.ext || "mp4";
+    const artists = Array.isArray(info.artists) ? info.artists : [];
+    const author = (artists.join(", ") || info.artist || info.uploader || "");
+    return {
+        video_id: String(info.id || ""),
+        music_url: pick?.url || "",
+        music_format: fmt,
+        music_title: (info.track || info.title || ""),
+        music_author: author,
+    };
+}
+export async function ytdlpTikTokUserBatchDownload(handleOrUrl, opts = {}) {
+    if (!(await isYtDlpInstalled())) {
+        throw new Error("yt-dlp not found on PATH — install with `brew install yt-dlp` or `pipx install yt-dlp`");
+    }
+    // Accept @handle, bare handle, full URL, or secUid (yt-dlp accepts
+    // the @handle form most reliably — secUid paths 404 the web URL).
+    let handle = handleOrUrl.trim();
+    if (handle.startsWith("http")) {
+        const m = handle.match(/tiktok\.com\/@([^/?#]+)/i);
+        if (m)
+            handle = m[1];
+    }
+    handle = handle.replace(/^@/, "");
+    const url = `https://www.tiktok.com/@${handle}`;
+    const limit = Math.min(Math.max(opts.limit || 30, 1), 200);
+    // NB: NO --flat-playlist here — we need formats[] to land per entry.
+    const { stdout, stderr, code } = await run("yt-dlp", [
+        "--dump-json",
+        "--skip-download",
+        "--no-warnings",
+        "--playlist-end",
+        String(limit),
+        url,
+    ], 180_000);
+    if (code !== 0) {
+        throw new Error(`yt-dlp exited ${code}: ${stderr.split("\n").slice(-5).join(" | ").slice(0, 400)}`);
+    }
+    const lines = stdout.trim().split("\n").filter(Boolean);
+    const videos = lines.map((line) => {
+        const e = JSON.parse(line);
+        const formats = Array.isArray(e.formats) ? e.formats : [];
+        // Prefer a muxed mp4 (video+audio); fall back to video-only.
+        const muxed = formats.find((f) => f && f.url && f.vcodec && f.vcodec !== "none" && f.acodec && f.acodec !== "none");
+        const videoOnly = formats.find((f) => f && f.url && f.vcodec && f.vcodec !== "none");
+        const pick = muxed || videoOnly || null;
+        return {
+            id: String(e.id || ""),
+            url: e.webpage_url || e.url || "",
+            video_url: pick?.url || "",
+            cover: (e.thumbnails || []).find((t) => t.id === "cover")?.url
+                || (e.thumbnails || [])[0]?.url
+                || "",
+            title: (e.title || e.description || "").replace(/\n/g, " ").slice(0, 200),
+            duration: typeof e.duration === "number" ? e.duration : Number(e.duration) || 0,
+        };
+    });
+    return {
+        user: handle,
+        total_videos: videos.length,
+        videos,
+    };
+}

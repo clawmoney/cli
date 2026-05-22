@@ -87,3 +87,27 @@ export interface TikTokPostDetail {
     video_url: string;
 }
 export declare function ytdlpTikTokPostDetail(videoIdOrUrl: string): Promise<TikTokPostDetail>;
+export interface TikTokMusicDownloadResult {
+    video_id: string;
+    music_url: string;
+    music_format: string;
+    music_title: string;
+    music_author: string;
+}
+export declare function ytdlpTikTokMusicDownload(videoUrl: string): Promise<TikTokMusicDownloadResult>;
+export interface TikTokUserBatchVideo {
+    id: string;
+    url: string;
+    video_url: string;
+    cover: string;
+    title: string;
+    duration: number;
+}
+export interface TikTokUserBatchDownloadResult {
+    user: string;
+    total_videos: number;
+    videos: TikTokUserBatchVideo[];
+}
+export declare function ytdlpTikTokUserBatchDownload(handleOrUrl: string, opts?: {
+    limit?: number;
+}): Promise<TikTokUserBatchDownloadResult>;

@@ -369,3 +369,164 @@ export async function ytdlpTikTokPostDetail(
     video_url: video?.url || "",
   };
 }
+
+// ─── Music download (yt-dlp audio-only) ─────────────────────────────
+//
+// `--extract-audio --audio-format mp3` would re-encode locally; instead
+// we just `--dump-json` the video metadata and pluck the audio-only
+// format's URL out of `info.formats`. TikTok typically exposes a single
+// audio-only stream alongside the muxed mp4 — that's the bare music
+// track without the user's voiceover layer (when one exists).
+
+export interface TikTokMusicDownloadResult {
+  video_id: string;
+  music_url: string;     // direct stream URL (may expire — fetch promptly)
+  music_format: string;  // 'mp3' | 'm4a' | 'mp4' (audio-only)
+  music_title: string;
+  music_author: string;
+}
+
+export async function ytdlpTikTokMusicDownload(
+  videoUrl: string,
+): Promise<TikTokMusicDownloadResult> {
+  if (!(await isYtDlpInstalled())) {
+    throw new Error(
+      "yt-dlp not found on PATH — install with `brew install yt-dlp` or `pipx install yt-dlp`",
+    );
+  }
+  let url = videoUrl.trim();
+  // Accept bare numeric id (same as ytdlpTikTokPostDetail).
+  if (/^\d{15,25}$/.test(url)) {
+    url = `https://m.tiktok.com/v/${url}.html`;
+  }
+
+  const { stdout, stderr, code } = await run(
+    "yt-dlp",
+    ["--dump-json", "--skip-download", "--no-warnings", url],
+    45_000,
+  );
+  if (code !== 0) {
+    throw new Error(
+      `yt-dlp exited ${code}: ${stderr.split("\n").slice(-5).join(" | ").slice(0, 400)}`,
+    );
+  }
+  const info = JSON.parse(stdout.trim());
+
+  // Find the audio-only format (acodec set, vcodec === 'none'). On
+  // TikTok this is typically one entry; if none exists, fall back to a
+  // muxed mp4's URL — the caller can still play it as audio.
+  const audioOnly = (info.formats || []).find(
+    (f: any) => f && f.acodec && f.acodec !== "none" && (!f.vcodec || f.vcodec === "none"),
+  );
+  const muxed = (info.formats || []).find(
+    (f: any) => f && f.acodec && f.acodec !== "none" && f.vcodec && f.vcodec !== "none",
+  );
+  const pick = audioOnly || muxed || null;
+
+  const fmt: string = pick?.audio_ext || pick?.ext || "mp4";
+  const artists: string[] = Array.isArray(info.artists) ? info.artists : [];
+  const author: string = (artists.join(", ") || info.artist || info.uploader || "") as string;
+
+  return {
+    video_id: String(info.id || ""),
+    music_url: pick?.url || "",
+    music_format: fmt,
+    music_title: (info.track || info.title || "") as string,
+    music_author: author,
+  };
+}
+
+// ─── User-video batch download (yt-dlp full playlist with URLs) ─────
+//
+// Like ytdlpTikTokUserPosts, but resolves each entry's direct mp4
+// download URL too — useful for buyers who want to bulk-archive a
+// creator's catalog. We do NOT `--flat-playlist` here because the
+// flat shape only carries id+webpage_url; the per-video `formats[]`
+// (which is where `video_url` lives) is only populated when yt-dlp
+// fully traverses each entry. That makes this call ~10x slower than
+// the flat variant, but unavoidable for the use case.
+
+export interface TikTokUserBatchVideo {
+  id: string;
+  url: string;           // canonical webpage URL
+  video_url: string;     // direct mp4 URL (may expire)
+  cover: string;
+  title: string;
+  duration: number;
+}
+
+export interface TikTokUserBatchDownloadResult {
+  user: string;
+  total_videos: number;
+  videos: TikTokUserBatchVideo[];
+}
+
+export async function ytdlpTikTokUserBatchDownload(
+  handleOrUrl: string,
+  opts: { limit?: number } = {},
+): Promise<TikTokUserBatchDownloadResult> {
+  if (!(await isYtDlpInstalled())) {
+    throw new Error(
+      "yt-dlp not found on PATH — install with `brew install yt-dlp` or `pipx install yt-dlp`",
+    );
+  }
+  // Accept @handle, bare handle, full URL, or secUid (yt-dlp accepts
+  // the @handle form most reliably — secUid paths 404 the web URL).
+  let handle = handleOrUrl.trim();
+  if (handle.startsWith("http")) {
+    const m = handle.match(/tiktok\.com\/@([^/?#]+)/i);
+    if (m) handle = m[1];
+  }
+  handle = handle.replace(/^@/, "");
+  const url = `https://www.tiktok.com/@${handle}`;
+  const limit = Math.min(Math.max(opts.limit || 30, 1), 200);
+
+  // NB: NO --flat-playlist here — we need formats[] to land per entry.
+  const { stdout, stderr, code } = await run(
+    "yt-dlp",
+    [
+      "--dump-json",
+      "--skip-download",
+      "--no-warnings",
+      "--playlist-end",
+      String(limit),
+      url,
+    ],
+    180_000, // can be slow — one HTTP round-trip per video
+  );
+  if (code !== 0) {
+    throw new Error(
+      `yt-dlp exited ${code}: ${stderr.split("\n").slice(-5).join(" | ").slice(0, 400)}`,
+    );
+  }
+
+  const lines = stdout.trim().split("\n").filter(Boolean);
+  const videos: TikTokUserBatchVideo[] = lines.map((line) => {
+    const e = JSON.parse(line);
+    const formats: any[] = Array.isArray(e.formats) ? e.formats : [];
+    // Prefer a muxed mp4 (video+audio); fall back to video-only.
+    const muxed = formats.find(
+      (f: any) => f && f.url && f.vcodec && f.vcodec !== "none" && f.acodec && f.acodec !== "none",
+    );
+    const videoOnly = formats.find(
+      (f: any) => f && f.url && f.vcodec && f.vcodec !== "none",
+    );
+    const pick = muxed || videoOnly || null;
+    return {
+      id: String(e.id || ""),
+      url: e.webpage_url || e.url || "",
+      video_url: pick?.url || "",
+      cover: (e.thumbnails || []).find((t: any) => t.id === "cover")?.url
+        || (e.thumbnails || [])[0]?.url
+        || "",
+      title: (e.title || e.description || "").replace(/\n/g, " ").slice(0, 200),
+      duration: typeof e.duration === "number" ? e.duration : Number(e.duration) || 0,
+    };
+  });
+
+  return {
+    user: handle,
+    total_videos: videos.length,
+    videos,
+  };
+}
