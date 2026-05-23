@@ -99,7 +99,6 @@ import { rdTopPostsBySubredditSkill } from "./reddit/top-posts-by-subreddit.js";
 import { rdControversialPostsBySubredditSkill } from "./reddit/controversial-posts-by-subreddit.js";
 import { rdCommentsBySubredditSkill } from "./reddit/comments-by-subreddit.js";
 import { rdSubredditInfoSkill } from "./reddit/subreddit-info.js";
-import { rdSubredditModeratorsSkill } from "./reddit/subreddit-moderators.js";
 import { rdSubredditRulesSkill } from "./reddit/subreddit-rules.js";
 import { rdSimilarSubredditsSkill } from "./reddit/similar-subreddits.js";
 import { rdNewSubredditsSkill } from "./reddit/new-subreddits.js";
@@ -275,7 +274,6 @@ export const SKILL_REGISTRY = {
     "rd.controversial_posts_by_subreddit": rdControversialPostsBySubredditSkill,
     "rd.comments_by_subreddit": rdCommentsBySubredditSkill,
     "rd.subreddit_info": rdSubredditInfoSkill,
-    "rd.subreddit_moderators": rdSubredditModeratorsSkill,
     "rd.subreddit_rules": rdSubredditRulesSkill,
     "rd.similar_subreddits": rdSimilarSubredditsSkill,
     "rd.new_subreddits": rdNewSubredditsSkill,

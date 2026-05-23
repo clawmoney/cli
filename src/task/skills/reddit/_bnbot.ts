@@ -143,10 +143,6 @@ export async function bnbotRDSubredditInfo(subreddit: string): Promise<unknown> 
   return runBnbot(["reddit", "subreddit-info", subreddit]);
 }
 
-export async function bnbotRDSubredditModerators(subreddit: string): Promise<unknown> {
-  return runBnbot(["reddit", "subreddit-moderators", subreddit]);
-}
-
 export async function bnbotRDSubredditRules(subreddit: string): Promise<unknown> {
   return runBnbot(["reddit", "subreddit-rules", subreddit]);
 }

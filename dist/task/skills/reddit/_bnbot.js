@@ -90,9 +90,6 @@ export async function bnbotRDCommentsBySubreddit(a) {
 export async function bnbotRDSubredditInfo(subreddit) {
     return runBnbot(["reddit", "subreddit-info", subreddit]);
 }
-export async function bnbotRDSubredditModerators(subreddit) {
-    return runBnbot(["reddit", "subreddit-moderators", subreddit]);
-}
 export async function bnbotRDSubredditRules(subreddit) {
     return runBnbot(["reddit", "subreddit-rules", subreddit]);
 }

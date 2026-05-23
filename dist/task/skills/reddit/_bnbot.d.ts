@@ -37,7 +37,6 @@ export declare function bnbotRDTopPostsBySubreddit(a: SubredditArgs): Promise<un
 export declare function bnbotRDControversialPostsBySubreddit(a: SubredditArgs): Promise<unknown>;
 export declare function bnbotRDCommentsBySubreddit(a: SubredditArgs): Promise<unknown>;
 export declare function bnbotRDSubredditInfo(subreddit: string): Promise<unknown>;
-export declare function bnbotRDSubredditModerators(subreddit: string): Promise<unknown>;
 export declare function bnbotRDSubredditRules(subreddit: string): Promise<unknown>;
 export declare function bnbotRDSimilarSubreddits(a: SubredditArgs): Promise<unknown>;
 export declare function bnbotRDNewSubreddits(a: LimitArgs): Promise<unknown>;
