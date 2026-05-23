@@ -3,6 +3,12 @@ import { promisify } from "node:util";
 const exec = promisify(execFile);
 const MAX_BUFFER = 16 * 1024 * 1024;
 const TIMEOUT_MS = 330_000;
+const BNBOT_CANDIDATES = [
+    process.env.BNBOT_CLI,
+    "bnbot",
+    "/opt/homebrew/bin/bnbot",
+    "/usr/local/bin/bnbot",
+].filter((value, index, values) => typeof value === "string" && value.length > 0 && values.indexOf(value) === index);
 export async function bnbotCodexImageGenerate(input) {
     const args = [
         "codex",
@@ -15,13 +21,29 @@ export async function bnbotCodexImageGenerate(input) {
     ];
     if (input.size)
         args.push("--size", input.size);
+    if (input.quality)
+        args.push("--quality", input.quality);
     if (input.fresh)
         args.push("--new");
     if ((input.response_format ?? "b64_json") === "b64_json") {
         args.push("--inline-artifacts");
     }
+    let lastError;
+    for (const bin of BNBOT_CANDIDATES) {
+        try {
+            return await execBnbot(bin, args);
+        }
+        catch (err) {
+            lastError = err;
+            if (!shouldTryNextBnbot(err))
+                throw err;
+        }
+    }
+    throw lastError;
+}
+async function execBnbot(bin, args) {
     try {
-        const { stdout } = await exec("bnbot", args, {
+        const { stdout } = await exec(bin, args, {
             maxBuffer: MAX_BUFFER,
             timeout: TIMEOUT_MS,
         });
@@ -37,8 +59,15 @@ export async function bnbotCodexImageGenerate(input) {
     catch (err) {
         const e = err;
         if (e.stderr && e.stderr.trim()) {
-            throw new Error(`bnbot codex image-generate failed: ${e.stderr.trim()}`);
+            throw new Error(`${bin} codex image-generate failed: ${e.stderr.trim()}`);
         }
         throw err;
     }
+}
+function shouldTryNextBnbot(err) {
+    if (err && typeof err === "object" && err.code === "ENOENT") {
+        return true;
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    return /unknown command ['"]?codex['"]?/i.test(message);
 }
