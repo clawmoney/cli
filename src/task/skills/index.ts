@@ -122,21 +122,15 @@ import { rdPostDuplicatesSkill } from "./reddit/post-duplicates.js";
 // Xiaohongshu skills (Wave 1)
 import { xhsCreatorHotInspirationFeedSkill } from "./xiaohongshu/creator-hot-inspiration-feed.js";
 import { xhsProductRecommendationsSkill } from "./xiaohongshu/product-recommendations.js";
-import { xhsTopicInfoSkill } from "./xiaohongshu/topic-info.js";
 import { xhsNoteCommentsSkill } from "./xiaohongshu/note-comments.js";
 import { xhsSearchGroupsSkill } from "./xiaohongshu/search-groups.js";
-import { xhsProductReviewsSkill } from "./xiaohongshu/product-reviews.js";
-import { xhsTopicFeedSkill } from "./xiaohongshu/topic-feed.js";
 import { xhsMixedNoteDetailSkill } from "./xiaohongshu/mixed-note-detail.js";
 import { xhsSearchNotesSkill } from "./xiaohongshu/search-notes.js";
 import { xhsProductDetailSkill } from "./xiaohongshu/product-detail.js";
-import { xhsProductReviewOverviewSkill } from "./xiaohongshu/product-review-overview.js";
 import { xhsCreatorInspirationFeedSkill } from "./xiaohongshu/creator-inspiration-feed.js";
 import { xhsImageNoteDetailSkill } from "./xiaohongshu/image-note-detail.js";
-import { xhsSearchUsersSkill } from "./xiaohongshu/search-users.js";
-import { xhsSearchImagesSkill } from "./xiaohongshu/search-images.js";
-import { xhsSearchProductsSkill } from "./xiaohongshu/search-products.js";
-import { xhsUserFavedNotesSkill } from "./xiaohongshu/user-faved-notes.js";
+// Codex Desktop generation skills
+import { codexImageGenerateSkill } from "./codex/image-generate.js";
 // `_unimplemented.ts` kept for future stub skills; not used in the
 // registry today.
 
@@ -295,24 +289,19 @@ export const SKILL_REGISTRY: Record<string, SkillHandler> = {
   "rd.post_comments": rdPostCommentsSkill,
   "rd.post_comments_with_sort": rdPostCommentsWithSortSkill,
   "rd.post_duplicates": rdPostDuplicatesSkill,
-  // Xiaohongshu (Wave 1) — XAPI app_v2-compatible surface.
+  // Xiaohongshu (Wave 1) — accepted low-risk Web surface only.
   "xhs.creator_hot_inspiration_feed": xhsCreatorHotInspirationFeedSkill,
   "xhs.product_recommendations": xhsProductRecommendationsSkill,
-  "xhs.topic_info": xhsTopicInfoSkill,
   "xhs.note_comments": xhsNoteCommentsSkill,
   "xhs.search_groups": xhsSearchGroupsSkill,
-  "xhs.product_reviews": xhsProductReviewsSkill,
-  "xhs.topic_feed": xhsTopicFeedSkill,
   "xhs.mixed_note_detail": xhsMixedNoteDetailSkill,
   "xhs.search_notes": xhsSearchNotesSkill,
   "xhs.product_detail": xhsProductDetailSkill,
-  "xhs.product_review_overview": xhsProductReviewOverviewSkill,
   "xhs.creator_inspiration_feed": xhsCreatorInspirationFeedSkill,
   "xhs.image_note_detail": xhsImageNoteDetailSkill,
-  "xhs.search_users": xhsSearchUsersSkill,
-  "xhs.search_images": xhsSearchImagesSkill,
-  "xhs.search_products": xhsSearchProductsSkill,
-  "xhs.user_faved_notes": xhsUserFavedNotesSkill,
+  // Codex Desktop — local provider must have Codex Desktop logged in
+  // and Image Gen available. Keep provider concurrency at 1.
+  "codex.image_generate": codexImageGenerateSkill,
 };
 
 export function listSkills(): string[] {
