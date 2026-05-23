@@ -88,6 +88,37 @@ import { dySearchAccountSkill } from "./douyin/search-account.js";
 import { dySearchLiveSkill } from "./douyin/search-live.js";
 import { dyChallengePostsSkill } from "./douyin/challenge-posts.js";
 import { dyMusicPostsSkill } from "./douyin/music-posts.js";
+// Reddit skills (Wave 1)
+import { rdPopularPostsSkill } from "./reddit/popular-posts.js";
+import { rdTopPopularPostsSkill } from "./reddit/top-popular-posts.js";
+import { rdRisingPopularPostsSkill } from "./reddit/rising-popular-posts.js";
+import { rdBestPopularPostsSkill } from "./reddit/best-popular-posts.js";
+import { rdPopularPostsByCountrySkill } from "./reddit/popular-posts-by-country.js";
+import { rdPostsBySubredditSkill } from "./reddit/posts-by-subreddit.js";
+import { rdTopPostsBySubredditSkill } from "./reddit/top-posts-by-subreddit.js";
+import { rdControversialPostsBySubredditSkill } from "./reddit/controversial-posts-by-subreddit.js";
+import { rdCommentsBySubredditSkill } from "./reddit/comments-by-subreddit.js";
+import { rdSubredditInfoSkill } from "./reddit/subreddit-info.js";
+import { rdSubredditModeratorsSkill } from "./reddit/subreddit-moderators.js";
+import { rdSubredditRulesSkill } from "./reddit/subreddit-rules.js";
+import { rdSimilarSubredditsSkill } from "./reddit/similar-subreddits.js";
+import { rdNewSubredditsSkill } from "./reddit/new-subreddits.js";
+import { rdPopularSubredditsSkill } from "./reddit/popular-subreddits.js";
+import { rdPostsByUsernameSkill } from "./reddit/posts-by-username.js";
+import { rdTopPostsByUsernameSkill } from "./reddit/top-posts-by-username.js";
+import { rdCommentsByUsernameSkill } from "./reddit/comments-by-username.js";
+import { rdTopCommentsByUsernameSkill } from "./reddit/top-comments-by-username.js";
+import { rdUserOverviewSkill } from "./reddit/user-overview.js";
+import { rdUserPostRankInSubredditSkill } from "./reddit/user-post-rank-in-subreddit.js";
+import { rdProfileSkill } from "./reddit/profile.js";
+import { rdUserStatsSkill } from "./reddit/user-stats.js";
+import { rdSearchUsersSkill } from "./reddit/search-users.js";
+import { rdSearchPostsSkill } from "./reddit/search-posts.js";
+import { rdSearchSubredditsSkill } from "./reddit/search-subreddits.js";
+import { rdPostDetailsSkill } from "./reddit/post-details.js";
+import { rdPostCommentsSkill } from "./reddit/post-comments.js";
+import { rdPostCommentsWithSortSkill } from "./reddit/post-comments-with-sort.js";
+import { rdPostDuplicatesSkill } from "./reddit/post-duplicates.js";
 // `_unimplemented.ts` kept for future stub skills; not used in the
 // registry today.
 /**
@@ -214,6 +245,38 @@ export const SKILL_REGISTRY = {
     "dy.search_live": dySearchLiveSkill,
     "dy.challenge_posts": dyChallengePostsSkill,
     "dy.music_posts": dyMusicPostsSkill,
+    // Reddit (Wave 1) — reddit34-compatible GET surface backed by
+    // Reddit public JSON through the BNBot browser provider path.
+    "rd.popular_posts": rdPopularPostsSkill,
+    "rd.top_popular_posts": rdTopPopularPostsSkill,
+    "rd.rising_popular_posts": rdRisingPopularPostsSkill,
+    "rd.best_popular_posts": rdBestPopularPostsSkill,
+    "rd.popular_posts_by_country": rdPopularPostsByCountrySkill,
+    "rd.posts_by_subreddit": rdPostsBySubredditSkill,
+    "rd.top_posts_by_subreddit": rdTopPostsBySubredditSkill,
+    "rd.controversial_posts_by_subreddit": rdControversialPostsBySubredditSkill,
+    "rd.comments_by_subreddit": rdCommentsBySubredditSkill,
+    "rd.subreddit_info": rdSubredditInfoSkill,
+    "rd.subreddit_moderators": rdSubredditModeratorsSkill,
+    "rd.subreddit_rules": rdSubredditRulesSkill,
+    "rd.similar_subreddits": rdSimilarSubredditsSkill,
+    "rd.new_subreddits": rdNewSubredditsSkill,
+    "rd.popular_subreddits": rdPopularSubredditsSkill,
+    "rd.posts_by_username": rdPostsByUsernameSkill,
+    "rd.top_posts_by_username": rdTopPostsByUsernameSkill,
+    "rd.comments_by_username": rdCommentsByUsernameSkill,
+    "rd.top_comments_by_username": rdTopCommentsByUsernameSkill,
+    "rd.user_overview": rdUserOverviewSkill,
+    "rd.user_post_rank_in_subreddit": rdUserPostRankInSubredditSkill,
+    "rd.profile": rdProfileSkill,
+    "rd.user_stats": rdUserStatsSkill,
+    "rd.search_users": rdSearchUsersSkill,
+    "rd.search_posts": rdSearchPostsSkill,
+    "rd.search_subreddits": rdSearchSubredditsSkill,
+    "rd.post_details": rdPostDetailsSkill,
+    "rd.post_comments": rdPostCommentsSkill,
+    "rd.post_comments_with_sort": rdPostCommentsWithSortSkill,
+    "rd.post_duplicates": rdPostDuplicatesSkill,
 };
 export function listSkills() {
     return Object.keys(SKILL_REGISTRY);
