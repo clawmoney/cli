@@ -131,6 +131,8 @@ import { xhsCreatorInspirationFeedSkill } from "./xiaohongshu/creator-inspiratio
 import { xhsImageNoteDetailSkill } from "./xiaohongshu/image-note-detail.js";
 // Codex Desktop generation skills
 import { codexImageGenerateSkill } from "./codex/image-generate.js";
+// ChatGPT Desktop skills
+import { chatgptAskSkill } from "./chatgpt/ask.js";
 // `_unimplemented.ts` kept for future stub skills; not used in the
 // registry today.
 
@@ -302,6 +304,9 @@ export const SKILL_REGISTRY: Record<string, SkillHandler> = {
   // Codex Desktop — local provider must have Codex Desktop logged in
   // and Image Gen available. Keep provider concurrency at 1.
   "codex.image_generate": codexImageGenerateSkill,
+  // ChatGPT Desktop — macOS Accessibility-backed local ChatGPT app.
+  // Keep provider concurrency at 1 because it controls one visible UI.
+  "chatgpt.ask": chatgptAskSkill,
 };
 
 export function listSkills(): string[] {
