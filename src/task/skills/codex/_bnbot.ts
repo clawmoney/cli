@@ -17,6 +17,7 @@ export interface CodexImageGenerateArgs {
   prompt: string;
   size?: string;
   quality?: string;
+  images?: string[];
   response_format?: string;
   timeout?: number;
   fresh?: boolean;
@@ -37,6 +38,7 @@ export async function bnbotCodexImageGenerate(
   ];
   if (input.size) args.push("--size", input.size);
   if (input.quality) args.push("--quality", input.quality);
+  for (const image of input.images ?? []) args.push("--image", image);
   if (input.fresh) args.push("--new");
   if ((input.response_format ?? "b64_json") === "b64_json") {
     args.push("--inline-artifacts");

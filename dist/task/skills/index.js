@@ -132,6 +132,9 @@ import { xhsImageNoteDetailSkill } from "./xiaohongshu/image-note-detail.js";
 import { codexImageGenerateSkill } from "./codex/image-generate.js";
 // ChatGPT Desktop skills
 import { chatgptAskSkill } from "./chatgpt/ask.js";
+import { chatgptImageGenerateSkill } from "./chatgpt/image-generate.js";
+// Gemini API skills
+import { geminiImageGenerateSkill } from "./gemini/image-generate.js";
 // `_unimplemented.ts` kept for future stub skills; not used in the
 // registry today.
 /**
@@ -305,6 +308,9 @@ export const SKILL_REGISTRY = {
     // ChatGPT Desktop — macOS Accessibility-backed local ChatGPT app.
     // Keep provider concurrency at 1 because it controls one visible UI.
     "chatgpt.ask": chatgptAskSkill,
+    "chatgpt.image_generate": chatgptImageGenerateSkill,
+    // Gemini API — provider supplies GEMINI_API_KEY / GOOGLE_API_KEY.
+    "gemini.image_generate": geminiImageGenerateSkill,
 };
 export function listSkills() {
     return Object.keys(SKILL_REGISTRY);

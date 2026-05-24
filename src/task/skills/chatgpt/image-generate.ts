@@ -1,7 +1,7 @@
 import type { SkillHandler } from "../../types.js";
-import { bnbotCodexImageGenerate } from "./_bnbot.js";
-import { uploadCodexImageResult } from "./_upload.js";
+import { uploadCodexImageResult } from "../codex/_upload.js";
 import { startProgressTicker } from "../tiktok/_helpers.js";
+import { bnbotChatGPTImageGenerate } from "./_bnbot.js";
 
 type Input = Record<string, unknown>;
 
@@ -39,7 +39,7 @@ function strings(input: Input, names: string[]): string[] {
   return Array.from(new Set(out));
 }
 
-export const codexImageGenerateSkill: SkillHandler = {
+export const chatgptImageGenerateSkill: SkillHandler = {
   price_usd: 0.03,
   async run(input, ctx) {
     const i = (input ?? {}) as Input;
@@ -51,21 +51,23 @@ export const codexImageGenerateSkill: SkillHandler = {
       throw new Error("response_format must be one of: url, b64_json, path");
     }
 
-    ctx.report({ stage: "launching", percent: 5, note: "Launching Codex Desktop Image Gen..." });
-    const stop = startProgressTicker(ctx, "Codex image generation working...");
+    ctx.report({ stage: "launching", percent: 5, note: "Launching ChatGPT Desktop Image Gen..." });
+    const stop = startProgressTicker(ctx, "ChatGPT image generation working...");
     try {
-      const raw = await bnbotCodexImageGenerate({
+      const raw = await bnbotChatGPTImageGenerate({
         prompt,
+        model: str(i, ["model"]),
         size: str(i, ["size"]),
         quality: str(i, ["quality"]),
         images: strings(i, ["image", "images", "reference_image", "reference_images", "referenceImages"]),
         response_format: responseFormat === "url" ? "path" : responseFormat,
         timeout: num(i, ["timeout", "timeout_s", "timeoutSeconds"]) ?? 300,
         fresh: i.fresh === true || i.new === true,
+        restart: i.restart !== false,
       });
       const result = raw as { success?: boolean; error?: string };
       if (result.success === false) {
-        throw new Error(result.error || "Codex image generation failed");
+        throw new Error(result.error || "ChatGPT image generation failed");
       }
       if (responseFormat === "url") {
         ctx.report({ stage: "uploading", percent: 90, note: "Uploading generated image..." });

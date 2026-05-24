@@ -4,4 +4,16 @@ export interface ChatGPTAskArgs {
     timeout?: number;
     fresh?: boolean;
 }
+export interface ChatGPTImageGenerateArgs {
+    prompt: string;
+    model?: string;
+    size?: string;
+    quality?: string;
+    images?: string[];
+    response_format?: string;
+    timeout?: number;
+    fresh?: boolean;
+    restart?: boolean;
+}
 export declare function bnbotChatGPTAsk(input: ChatGPTAskArgs): Promise<unknown>;
+export declare function bnbotChatGPTImageGenerate(input: ChatGPTImageGenerateArgs): Promise<unknown>;

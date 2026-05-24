@@ -24,6 +24,8 @@ export async function bnbotCodexImageGenerate(input) {
         args.push("--size", input.size);
     if (input.quality)
         args.push("--quality", input.quality);
+    for (const image of input.images ?? [])
+        args.push("--image", image);
     if (input.fresh)
         args.push("--new");
     if ((input.response_format ?? "b64_json") === "b64_json") {
