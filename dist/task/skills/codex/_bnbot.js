@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 const exec = promisify(execFile);
 const MAX_BUFFER = 16 * 1024 * 1024;
-const TIMEOUT_MS = 330_000;
+const TIMEOUT_BUFFER_MS = 30_000;
 const BNBOT_CANDIDATES = [
     process.env.BNBOT_CLI,
     "bnbot",
@@ -10,12 +10,13 @@ const BNBOT_CANDIDATES = [
     "/usr/local/bin/bnbot",
 ].filter((value, index, values) => typeof value === "string" && value.length > 0 && values.indexOf(value) === index);
 export async function bnbotCodexImageGenerate(input) {
+    const timeoutS = Math.max(1, input.timeout ?? 300);
     const args = [
         "codex",
         "image-generate",
         input.prompt,
         "--timeout",
-        String(input.timeout ?? 300),
+        String(timeoutS),
         "--response-format",
         input.response_format ?? "b64_json",
     ];
@@ -31,7 +32,7 @@ export async function bnbotCodexImageGenerate(input) {
     let lastError;
     for (const bin of BNBOT_CANDIDATES) {
         try {
-            return await execBnbot(bin, args);
+            return await execBnbot(bin, args, timeoutS * 1000 + TIMEOUT_BUFFER_MS);
         }
         catch (err) {
             lastError = err;
@@ -41,11 +42,11 @@ export async function bnbotCodexImageGenerate(input) {
     }
     throw lastError;
 }
-async function execBnbot(bin, args) {
+async function execBnbot(bin, args, timeoutMs) {
     try {
         const { stdout } = await exec(bin, args, {
             maxBuffer: MAX_BUFFER,
-            timeout: TIMEOUT_MS,
+            timeout: timeoutMs,
         });
         if (!stdout.trim())
             throw new Error("bnbot returned empty stdout");
