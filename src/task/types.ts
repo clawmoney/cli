@@ -90,7 +90,7 @@ export interface SkillContext {
 export interface SkillHandler {
   /** Per-call price in USD (provider-declared). Phase 4 will replace
    *  with a hub-validated rate card. */
-  price_usd: number;
+  price_usd: number | ((input: unknown) => number);
   /** Skill-defined input handler. Returns the final `output`. Throw
    *  on failure — daemon converts the error to task_response.error. */
   run(input: unknown, ctx: SkillContext): Promise<unknown>;

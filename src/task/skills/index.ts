@@ -129,13 +129,58 @@ import { xhsSearchNotesSkill } from "./xiaohongshu/search-notes.js";
 import { xhsProductDetailSkill } from "./xiaohongshu/product-detail.js";
 import { xhsCreatorInspirationFeedSkill } from "./xiaohongshu/creator-inspiration-feed.js";
 import { xhsImageNoteDetailSkill } from "./xiaohongshu/image-note-detail.js";
+// LinkedIn skills (Wave 0)
+import { liJobSearchSkill } from "./linkedin/job-search.js";
+// Bilibili skills (Wave 0)
+import { biliSearchSkill } from "./bilibili/search.js";
+import { biliHotSkill } from "./bilibili/hot.js";
+import { biliRankingSkill } from "./bilibili/ranking.js";
+import { biliVideoSkill } from "./bilibili/video.js";
+import { biliSubtitleSkill } from "./bilibili/subtitle.js";
+import { biliCommentsSkill } from "./bilibili/comments.js";
+import { biliFollowingSkill } from "./bilibili/following.js";
+import { biliUserVideosSkill } from "./bilibili/user-videos.js";
+import { biliFeedSkill } from "./bilibili/feed.js";
+import { biliFeedDetailSkill } from "./bilibili/feed-detail.js";
+import { biliDownloadSkill } from "./bilibili/download.js";
+// OpenCLI public/browser read skills (Google, HN, Wikipedia, etc.)
+import {
+  ggSearchSkill, ggSuggestSkill, ggNewsSkill, ggTrendsSkill,
+  wxmpArticleSearchSkill, wxmpArticleSkill,
+  hnTopSkill, hnNewSkill, hnBestSkill, hnAskSkill, hnShowSkill, hnJobsSkill,
+  hnSearchSkill, hnUserSkill, hnReadSkill,
+  wikiSearchSkill, wikiSummarySkill, wikiRandomSkill, wikiTrendingSkill, wikiPageSkill,
+  yfQuoteSkill,
+  zhSearchSkill, zhHotSkill, zhRecommendSkill, zhQuestionSkill,
+  zhAnswerDetailSkill, zhAnswerCommentsSkill,
+  bbcNewsSkill, bbcTopicSkill,
+  bbgMainSkill, bbgMarketsSkill, bbgEconomicsSkill, bbgIndustriesSkill,
+  bbgTechSkill, bbgPoliticsSkill, bbgBusinessweekSkill, bbgOpinionsSkill, bbgFeedsSkill,
+  bbgArticleSkill,
+  medSearchSkill, medTagSkill, medFeedSkill, medUserSkill,
+  subSearchSkill, subPublicationSkill, subFeedSkill,
+  wbHotSkill, wbSearchSkill, wbFeedSkill, wbUserSkill, wbPostSkill, wbCommentsSkill,
+  kr36NewsSkill, kr36HotSkill, kr36SearchSkill, kr36ArticleSkill,
+  dbSearchSkill, dbMovieHotSkill, dbBookHotSkill, dbTop250Skill, dbPhotosSkill,
+  sfNewsSkill, sfRollingNewsSkill, sfStockSkill,
+  jkFeedSkill, jkSearchSkill,
+  xqSearchSkill, xqHotSkill, xqHotStockSkill, xqStockSkill, xqCommentsSkill, xqKlineSkill, xqEarningsDateSkill,
+  xyzPodcastSkill, xyzPodcastEpisodesSkill, xyzEpisodeSkill,
+  fbSearchSkill, fbProfileSkill, fbEventsSkill,
+  wrSearchSkill, wrRankingSkill, wrBookSkill,
+  ctSearchSkill, ctHotelSuggestSkill, ctHotelSearchSkill, ctFlightSkill,
+} from "./opencli/platforms.js";
 // Codex Desktop generation skills
 import { codexImageGenerateSkill } from "./codex/image-generate.js";
 // ChatGPT Desktop skills
 import { chatgptAskSkill } from "./chatgpt/ask.js";
 import { chatgptImageGenerateSkill } from "./chatgpt/image-generate.js";
+import { chatgptWebImageGenerateSkill } from "./chatgpt/web-image-generate.js";
 // Gemini API skills
 import { geminiImageGenerateSkill } from "./gemini/image-generate.js";
+// Google Labs Flow skills
+import { flowVideoGenerateSkill } from "./flow/video-generate.js";
+import { flowImageGenerateSkill } from "./flow/image-generate.js";
 // `_unimplemented.ts` kept for future stub skills; not used in the
 // registry today.
 
@@ -304,6 +349,114 @@ export const SKILL_REGISTRY: Record<string, SkillHandler> = {
   "xhs.product_detail": xhsProductDetailSkill,
   "xhs.creator_inspiration_feed": xhsCreatorInspirationFeedSkill,
   "xhs.image_note_detail": xhsImageNoteDetailSkill,
+  // LinkedIn (Wave 0) — read-only jobs search through bnbot's
+  // existing linkedin.com Voyager scraper. Broader RapidAPI-compatible
+  // profile/company/post endpoints wait for the user's curl list.
+  "li.job_search": liJobSearchSkill,
+  // Bilibili — public/read-only browser surface. Current-account data,
+  // `comment` write, and local file `download` are intentionally not advertised.
+  "bili.search": biliSearchSkill,
+  "bili.hot": biliHotSkill,
+  "bili.ranking": biliRankingSkill,
+  "bili.video": biliVideoSkill,
+  "bili.subtitle": biliSubtitleSkill,
+  "bili.comments": biliCommentsSkill,
+  "bili.following": biliFollowingSkill,
+  "bili.user_videos": biliUserVideosSkill,
+  "bili.feed": biliFeedSkill,
+  "bili.feed_detail": biliFeedDetailSkill,
+  "bili.download": biliDownloadSkill,
+  // Google / Weixin / HN / Wikipedia / Yahoo Finance / Zhihu /
+  // BBC / Bloomberg / Medium / Substack — OpenCLI-aligned read surface.
+  "gg.search": ggSearchSkill,
+  "gg.suggest": ggSuggestSkill,
+  "gg.news": ggNewsSkill,
+  "gg.trends": ggTrendsSkill,
+  "wxmp.article_search": wxmpArticleSearchSkill,
+  "wxmp.article": wxmpArticleSkill,
+  "hn.top": hnTopSkill,
+  "hn.new": hnNewSkill,
+  "hn.best": hnBestSkill,
+  "hn.ask": hnAskSkill,
+  "hn.show": hnShowSkill,
+  "hn.jobs": hnJobsSkill,
+  "hn.search": hnSearchSkill,
+  "hn.user": hnUserSkill,
+  "hn.read": hnReadSkill,
+  "wiki.search": wikiSearchSkill,
+  "wiki.summary": wikiSummarySkill,
+  "wiki.random": wikiRandomSkill,
+  "wiki.trending": wikiTrendingSkill,
+  "wiki.page": wikiPageSkill,
+  "yf.quote": yfQuoteSkill,
+  "zh.search": zhSearchSkill,
+  "zh.hot": zhHotSkill,
+  "zh.recommend": zhRecommendSkill,
+  "zh.question": zhQuestionSkill,
+  "zh.answer_detail": zhAnswerDetailSkill,
+  "zh.answer_comments": zhAnswerCommentsSkill,
+  "bbc.news": bbcNewsSkill,
+  "bbc.topic": bbcTopicSkill,
+  "bbg.main": bbgMainSkill,
+  "bbg.markets": bbgMarketsSkill,
+  "bbg.economics": bbgEconomicsSkill,
+  "bbg.industries": bbgIndustriesSkill,
+  "bbg.tech": bbgTechSkill,
+  "bbg.politics": bbgPoliticsSkill,
+  "bbg.businessweek": bbgBusinessweekSkill,
+  "bbg.opinions": bbgOpinionsSkill,
+  "bbg.feeds": bbgFeedsSkill,
+  "bbg.article": bbgArticleSkill,
+  "med.search": medSearchSkill,
+  "med.tag": medTagSkill,
+  "med.feed": medFeedSkill,
+  "med.user": medUserSkill,
+  "sub.search": subSearchSkill,
+  "sub.publication": subPublicationSkill,
+  "sub.feed": subFeedSkill,
+  // OpenCLI read Wave 2 — BBC/Bloomberg/Medium/Substack additions
+  // plus Weibo, 36Kr, Douban, Sina Finance, Jike, Xueqiu,
+  // Xiaoyuzhou, Facebook, WeRead, and Ctrip read-only surfaces.
+  "wb.hot": wbHotSkill,
+  "wb.search": wbSearchSkill,
+  "wb.feed": wbFeedSkill,
+  "wb.user": wbUserSkill,
+  "wb.post": wbPostSkill,
+  "wb.comments": wbCommentsSkill,
+  "36kr.news": kr36NewsSkill,
+  "36kr.hot": kr36HotSkill,
+  "36kr.search": kr36SearchSkill,
+  "36kr.article": kr36ArticleSkill,
+  "db.search": dbSearchSkill,
+  "db.movie_hot": dbMovieHotSkill,
+  "db.book_hot": dbBookHotSkill,
+  "db.top250": dbTop250Skill,
+  "db.photos": dbPhotosSkill,
+  "sf.news": sfNewsSkill,
+  "sf.rolling_news": sfRollingNewsSkill,
+  "sf.stock": sfStockSkill,
+  "jk.feed": jkFeedSkill,
+  "jk.search": jkSearchSkill,
+  "xq.search": xqSearchSkill,
+  "xq.hot": xqHotSkill,
+  "xq.hot_stock": xqHotStockSkill,
+  "xq.stock": xqStockSkill,
+  "xq.comments": xqCommentsSkill,
+  "xq.kline": xqKlineSkill,
+  "xq.earnings_date": xqEarningsDateSkill,
+  "xyz.podcast": xyzPodcastSkill,
+  "xyz.podcast_episodes": xyzPodcastEpisodesSkill,
+  "xyz.episode": xyzEpisodeSkill,
+  "fb.search": fbSearchSkill,
+  "fb.profile": fbProfileSkill,
+  "fb.events": fbEventsSkill,
+  "wr.search": wrSearchSkill,
+  "wr.ranking": wrRankingSkill,
+  "wr.book": wrBookSkill,
+  "ct.search": ctSearchSkill,
+  "ct.hotel_suggest": ctHotelSuggestSkill,
+  "ct.hotel_search": ctHotelSearchSkill,
+  "ct.flight": ctFlightSkill,
   // Codex Desktop — local provider must have Codex Desktop logged in
   // and Image Gen available. Keep provider concurrency at 1.
   "codex.image_generate": codexImageGenerateSkill,
@@ -311,8 +464,12 @@ export const SKILL_REGISTRY: Record<string, SkillHandler> = {
   // Keep provider concurrency at 1 because it controls one visible UI.
   "chatgpt.ask": chatgptAskSkill,
   "chatgpt.image_generate": chatgptImageGenerateSkill,
+  "chatgpt_web.image_generate": chatgptWebImageGenerateSkill,
   // Gemini API — provider supplies GEMINI_API_KEY / GOOGLE_API_KEY.
   "gemini.image_generate": geminiImageGenerateSkill,
+  // Google Labs Flow — provider drives labs.google/fx/tools/flow via bnbot.
+  "flow.video_generate": flowVideoGenerateSkill,
+  "flow.image_generate": flowImageGenerateSkill,
 };
 
 export function listSkills(): string[] {

@@ -1,7 +1,3 @@
-import { spawn } from "node:child_process";
-import { existsSync, statSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import type {
   ProviderConfig,
   ServiceCallEvent,
@@ -12,497 +8,13 @@ import type {
   ProgressEvent,
 } from "./types.js";
 import { isProcessed, markProcessed } from "./dedup.js";
-import { replaceLocalPaths, uploadFile } from "./media.js";
 import { logger } from "./logger.js";
+import { getSkill } from "../task/skills/index.js";
+import type { SkillContext, SkillHandler } from "../task/types.js";
 
 type SendFn = (event: DeliverEvent | TestResponseEvent | ProgressEvent) => boolean;
 
 const TIMEOUT_BUFFER_S = 15;
-
-// ── Prompt builder ──
-
-function buildPrompt(call: ServiceCallEvent, config: ProviderConfig): string {
-  const skillConfig = config.provider.skills?.[call.skill];
-  if (skillConfig?.prompt_template) {
-    return skillConfig.prompt_template
-      .replace("{{skill}}", call.skill)
-      .replace("{{input}}", JSON.stringify(call.input, null, 2));
-  }
-
-  const lines = [
-    "You received a paid service request via ClawMoney Hub.",
-    `Skill: ${call.skill}`,
-    `Category: ${call.category}`,
-    `From: ${call.from}`,
-    `Price: $${call.price}`,
-    `Input: ${JSON.stringify(call.input, null, 2)}`,
-    "",
-  ];
-
-  // Category-specific instructions. Skill names differ per CLI runtime —
-  // openclaw exposes nano-banana-pro, codex exposes built-in imagegen,
-  // claude/gemini surface image generation via their own tools. We pick
-  // the right hint so the model goes straight to the real tool instead
-  // of trying to "be helpful" by writing PIL code or hallucinating a path.
-  if (call.category?.startsWith("generation/image")) {
-    const cli = config.provider.cli_command;
-    const skillHint =
-      cli === "codex"
-        ? "Use the imagegen skill (the built-in image_gen tool — do NOT use shell/python to draw an image)"
-        : cli === "openclaw"
-          ? "Use the nano-banana-pro skill"
-          : "Use your native image generation tool";
-    lines.push(
-      `IMPORTANT: ${skillHint} to generate a real PNG/JPG image.`,
-      "Do NOT write SVG, HTML, Python (PIL), or any code to fake an image.",
-      "If no image generation tool is available in this environment, return {\"success\": false, \"error\": \"No image generation tool available\"}.",
-      "Save the generated image and include the absolute file path in your JSON output as \"image_path\".",
-    );
-  }
-
-  lines.push(
-    "Execute this task and return the result as JSON.",
-    "If you generate any files (images, videos, etc.), save them and include their file paths in the output.",
-    "Return ONLY the JSON result, no other text.",
-  );
-
-  return lines.join("\n");
-}
-
-// ── Image-output validation ──
-//
-// Codex / Gemini / generic-claude paths don't have a structured response
-// schema like OpenClaw, so providers using those CLIs can return
-// `{"image_path":"/tmp/whatever.png"}` even when the model never actually
-// generated an image — either by writing Python that fakes a bitmap, or
-// (worse) by hallucinating the path entirely without spawning any tool.
-//
-// `extractClaimedPaths` walks an output object and collects every local
-// file path the provider is claiming to have produced. Used so we can
-// physically verify each file exists before we deliver to the buyer.
-const FILE_PATH_KEYS = ["image_path", "video_path", "audio_path", "file_path", "primary_file"];
-const IMAGE_EXT_RE = /\.(png|jpg|jpeg|webp|gif)$/i;
-const CDN_URL_RE = /^https?:\/\//i;
-
-function extractClaimedPaths(output: unknown): string[] {
-  const out: string[] = [];
-  const visit = (node: unknown) => {
-    if (!node || typeof node !== "object") return;
-    const obj = node as Record<string, unknown>;
-    for (const key of FILE_PATH_KEYS) {
-      const v = obj[key];
-      if (typeof v === "string" && v.startsWith("/")) out.push(v);
-    }
-    const files = obj.files;
-    if (Array.isArray(files)) {
-      for (const f of files) {
-        if (typeof f === "string" && f.startsWith("/")) out.push(f);
-      }
-    }
-    // Recurse into nested .result so providers wrapping output in
-    // { result: { image_path: ... } } don't bypass the check.
-    if (obj.result && typeof obj.result === "object") visit(obj.result);
-  };
-  visit(output);
-  return Array.from(new Set(out));
-}
-
-/**
- * After `replaceLocalPaths` has run, every successful image upload is
- * promoted from `image_path` (local) to `image_url` (CDN). If the upload
- * silently failed (file didn't exist), `image_path` stays in the output
- * and we deliver a broken result — UNLESS we catch it here.
- *
- * Returns null when the delivery is OK for a `generation/image` call,
- * otherwise an error string explaining why it isn't.
- */
-function validateImageDelivery(output: Record<string, unknown>): string | null {
-  // CDN URL anywhere in the output? Then a real file got uploaded.
-  const top = output as Record<string, unknown>;
-  if (typeof top.image_url === "string" && CDN_URL_RE.test(top.image_url)) return null;
-  if (Array.isArray(top.files)) {
-    const hasCdnImage = (top.files as unknown[]).some(
-      (f) => typeof f === "string" && CDN_URL_RE.test(f) && IMAGE_EXT_RE.test(f),
-    );
-    if (hasCdnImage) return null;
-  }
-  // No real image URL delivered. Why?
-  const claimedPaths = extractClaimedPaths(output);
-  if (claimedPaths.length === 0) {
-    return "Provider returned no image (model likely lacks an image-generation tool).";
-  }
-  const missing = claimedPaths.filter((p) => !existsSync(p));
-  if (missing.length > 0) {
-    return `Provider claimed image at ${missing[0]} but the file does not exist (hallucinated path).`;
-  }
-  // Files exist but none are images, or upload failed for a different reason.
-  const hasImagePath = claimedPaths.some((p) => IMAGE_EXT_RE.test(p));
-  if (!hasImagePath) {
-    return "Provider produced non-image files only for a generation/image task.";
-  }
-  // File exists and is .png/.jpg/.webp/.gif but upload still failed.
-  // Most likely cause: file is empty or permission denied. Surface bytes.
-  try {
-    const stats = claimedPaths
-      .filter((p) => IMAGE_EXT_RE.test(p))
-      .map((p) => `${p} (${statSync(p).size}B)`);
-    return `Image file exists but R2 upload failed: ${stats.join(", ")}`;
-  } catch {
-    return "Image upload to R2 failed.";
-  }
-}
-
-// ── Codex generated-image directory watcher ──
-//
-// codex saves all image_gen output under $CODEX_HOME/generated_images/
-// in a per-thread subdir. Once the .png lands on disk and reaches a stable
-// size, the deliverable is ready — everything codex does after (cp,
-// verification, final reasoning) is overhead the buyer doesn't see. We
-// snapshot the directory before spawning codex, then poll for any new
-// thread dir that contains a stable image file. When we find one we
-// fabricate a synthetic agent_message into the stdout stream so the
-// downstream parser picks up the path naturally, then SIGTERM codex.
-const CODEX_HOME = process.env.CODEX_HOME || join(homedir(), ".codex");
-const CODEX_GEN_DIR = join(CODEX_HOME, "generated_images");
-const FILE_STABLE_MS = 1500;
-const POLL_INTERVAL_MS = 400;
-
-function snapshotCodexThreads(): Set<string> {
-  try {
-    return new Set(readdirSync(CODEX_GEN_DIR));
-  } catch {
-    // Directory may not exist yet on a fresh install — that's fine,
-    // codex will create it the first time it generates anything.
-    return new Set();
-  }
-}
-
-function findNewCodexImage(baseline: Set<string>): string | null {
-  let entries: string[];
-  try {
-    entries = readdirSync(CODEX_GEN_DIR);
-  } catch {
-    return null;
-  }
-  for (const entry of entries) {
-    if (baseline.has(entry)) continue;
-    // A new per-thread directory has appeared. Look inside for the
-    // first image file the model dropped there.
-    const dir = join(CODEX_GEN_DIR, entry);
-    let files: string[];
-    try {
-      files = readdirSync(dir);
-    } catch {
-      continue;
-    }
-    for (const f of files) {
-      if (IMAGE_EXT_RE.test(f)) return join(dir, f);
-    }
-  }
-  return null;
-}
-
-async function waitForStableSize(filePath: string): Promise<void> {
-  let lastSize = -1;
-  let stableSince = 0;
-  // Cap at 20s in case the file truly never settles — let the rest of
-  // the flow handle that as a delivery failure rather than hanging.
-  const deadline = Date.now() + 20_000;
-  while (Date.now() < deadline) {
-    try {
-      const size = statSync(filePath).size;
-      if (size !== lastSize) {
-        lastSize = size;
-        stableSince = Date.now();
-      } else if (size > 0 && Date.now() - stableSince >= FILE_STABLE_MS) {
-        return;
-      }
-    } catch {
-      // file may have moved between stat() calls — try again
-    }
-    await new Promise((r) => setTimeout(r, 200));
-  }
-}
-
-// ── CLI execution (openclaw agent / claude -p) ──
-
-function runCli(
-  command: string,
-  prompt: string,
-  timeoutMs: number,
-  orderId?: string,
-  watchForImage?: boolean,
-  onProgress?: (text: string) => void,
-): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
-  return new Promise((resolve) => {
-    // Build args based on command
-    let args: string[];
-    if (command === "openclaw") {
-      // openclaw agent --message "..." --session-id <order_id> --json
-      args = ["agent", "--message", prompt, "--session-id", orderId || "hub-task", "--json"];
-    } else if (command === "codex") {
-      // -s workspace-write is required so the built-in image_gen tool can
-      // write files under $CODEX_HOME/generated_images and so the model
-      // can mv/cp the result to the user-named path. With the default
-      // read-only sandbox, image_gen silently degrades — the model falls
-      // back to either drawing the image with Python in /tmp (slow, ugly)
-      // or hallucinating an image_path with no file behind it (worst
-      // case, since the buyer pays for a nonexistent file). Verified on
-      // codex 0.128.0 + gpt-5.5, 2026-05-12.
-      //
-      // -c model_reasoning_effort=medium overrides whatever the provider
-      // has in ~/.codex/config.toml (often "high" or "xhigh" for their
-      // own deep-thinking sessions). Hub buyers don't need that level of
-      // reasoning — for image gen the only reasoning step worth doing is
-      // "pick the right tool", everything after image_gen finishes is
-      // pure overhead that adds 60–90s per call. medium keeps quality
-      // similar to codex defaults but caps the tail latency.
-      args = [
-        "exec",
-        "-s", "workspace-write",
-        "-c", "model_reasoning_effort=medium",
-        prompt,
-        "--json",
-        "--skip-git-repo-check",
-      ];
-    } else if (command === "gemini") {
-      // gemini -p "..." -o json --yolo
-      args = ["-p", prompt, "-o", "json", "--yolo"];
-    } else {
-      // claude -p "..." --output-format json --dangerously-skip-permissions
-      args = ["-p", prompt, "--output-format", "json", "--dangerously-skip-permissions"];
-    }
-
-    // For codex generation/image calls, snapshot the generated-images dir
-    // BEFORE spawning so we can identify the new thread dir later.
-    const dirBaseline =
-      watchForImage && command === "codex" ? snapshotCodexThreads() : null;
-
-    const child = spawn(command, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: timeoutMs,
-      env: { ...process.env },
-    });
-
-    let stdout = "";
-    let stderr = "";
-    let earlyResolved = false;
-    let pollHandle: NodeJS.Timeout | null = null;
-
-    const finishWithEarlyImage = async (imagePath: string) => {
-      if (earlyResolved) return;
-      // Wait until the file size stops growing before we tell the rest
-      // of the flow it's ready — otherwise we might upload a partial PNG
-      // and confuse R2 / the buyer's image viewer.
-      await waitForStableSize(imagePath);
-      if (earlyResolved) return;
-      earlyResolved = true;
-      if (pollHandle) {
-        clearInterval(pollHandle);
-        pollHandle = null;
-      }
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        // pid may already be gone
-      }
-      // Inject a synthetic agent_message into the stream so the codex
-      // JSONL parser downstream picks up the image_path naturally,
-      // without us needing to plumb a separate "early path" through
-      // the rest of executeTask.
-      const synthetic = JSON.stringify({
-        type: "item.completed",
-        item: {
-          type: "agent_message",
-          text: JSON.stringify({ image_path: imagePath }),
-        },
-      });
-      stdout += "\n" + synthetic + "\n";
-      resolve({ stdout, stderr, exitCode: 0 });
-    };
-
-    if (dirBaseline) {
-      // Report once when codex actually starts working — the spawn ack
-      // is fast but the first reasoning step can take ~10s and we want
-      // the UI to know "we're actually running, not just queued".
-      onProgress?.("Generating image…");
-      pollHandle = setInterval(() => {
-        if (earlyResolved) return;
-        const newImage = findNewCodexImage(dirBaseline);
-        if (newImage) {
-          if (pollHandle) {
-            clearInterval(pollHandle);
-            pollHandle = null;
-          }
-          onProgress?.("Image generated, finalizing…");
-          void finishWithEarlyImage(newImage);
-        }
-      }, POLL_INTERVAL_MS);
-    }
-
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
-    });
-
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-
-    child.on("close", (code) => {
-      if (earlyResolved) return;
-      if (pollHandle) {
-        clearInterval(pollHandle);
-        pollHandle = null;
-      }
-      resolve({ stdout, stderr, exitCode: code });
-    });
-
-    child.on("error", (err) => {
-      if (earlyResolved) return;
-      if (pollHandle) {
-        clearInterval(pollHandle);
-        pollHandle = null;
-      }
-      stderr += err.message;
-      resolve({ stdout, stderr, exitCode: null });
-    });
-  });
-}
-
-// ── JSON parser ──
-
-function parseJsonOutput(raw: string): Record<string, unknown> | null {
-  try {
-    return JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    // Ignore
-  }
-
-  const match = raw.match(/\{[\s\S]*\}/);
-  if (match) {
-    try {
-      return JSON.parse(match[0]) as Record<string, unknown>;
-    } catch {
-      // Ignore
-    }
-  }
-
-  return null;
-}
-
-// ── Codex JSONL parser ──
-
-function parseCodexOutput(raw: string): string {
-  // Codex --json outputs JSONL. Extract text from item.completed events.
-  const texts: string[] = [];
-  for (const line of raw.split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const event = JSON.parse(line) as Record<string, unknown>;
-      if (event.type === "item.completed") {
-        const item = event.item as Record<string, unknown> | undefined;
-        if (item?.text && typeof item.text === "string") {
-          texts.push(item.text);
-        }
-      }
-    } catch {
-      // skip non-JSON lines
-    }
-  }
-  return texts.join("\n");
-}
-
-// ── Gemini JSON parser ──
-
-function parseGeminiOutput(raw: string): string {
-  // Gemini -o json wraps result in { session_id, response, stats }
-  try {
-    const obj = JSON.parse(raw) as Record<string, unknown>;
-    if (typeof obj.response === "string") {
-      return obj.response;
-    }
-  } catch {
-    // not a single JSON object — return raw
-  }
-  return raw;
-}
-
-// ── OpenClaw response parser ──
-
-interface OpenClawResponse {
-  result: Record<string, unknown>;
-  files: string[];
-  meta: Record<string, unknown> | null;
-}
-
-function parseOpenClawResponse(raw: Record<string, unknown>): OpenClawResponse {
-  const files: string[] = [];
-  let result: Record<string, unknown> = raw;
-  let meta: Record<string, unknown> | null = null;
-
-  // OpenClaw returns: { result: { payloads: [...], meta: {...} } } or { payloads: [...], meta: {...} }
-  const resultObj = (raw.result as Record<string, unknown>) ?? raw;
-  const payloads = (resultObj.payloads ?? raw.payloads) as Array<{ text?: string; mediaUrl?: string }> | undefined;
-
-  if (payloads && Array.isArray(payloads) && payloads.length > 0) {
-    // Scan ALL payloads for JSON and file paths (not just [0])
-    let parsedJson: Record<string, unknown> | null = null;
-    const allText: string[] = [];
-
-    for (const p of payloads) {
-      const text = p.text ?? "";
-      allText.push(text);
-
-      // Try to parse as JSON
-      if (!parsedJson) {
-        parsedJson = parseJsonOutput(text);
-      }
-
-      // Extract file paths from text (lines that look like absolute paths)
-      const pathMatch = text.match(/^\/\S+\.(png|jpg|jpeg|webp|gif|mp4|webm|mov|mp3|wav|pdf)$/im);
-      if (pathMatch) {
-        files.push(pathMatch[0]);
-      }
-
-      // MediaUrl
-      if (p.mediaUrl) {
-        files.push(p.mediaUrl);
-      }
-    }
-
-    if (parsedJson) {
-      result = parsedJson;
-
-      // Extract file paths from the parsed result
-      const resultFiles = parsedJson.files as string[] | undefined;
-      if (Array.isArray(resultFiles)) {
-        files.push(...resultFiles.filter((f): f is string => typeof f === "string" && f.startsWith("/")));
-      }
-      for (const key of ["image_path", "video_path", "audio_path", "file_path"]) {
-        const val = parsedJson[key];
-        if (typeof val === "string" && val.startsWith("/")) {
-          files.push(val);
-        }
-      }
-    } else {
-      result = { text: allText.join("\n").trim() };
-    }
-
-    // Extract useful meta (strip systemPromptReport which is huge)
-    const rawMeta = raw.meta as Record<string, unknown> | undefined;
-    if (rawMeta) {
-      const agentMeta = rawMeta.agentMeta as Record<string, unknown> | undefined;
-      meta = {
-        duration_ms: rawMeta.durationMs,
-        model: agentMeta?.model,
-        provider: agentMeta?.provider,
-        usage: agentMeta?.usage,
-      };
-    }
-  }
-
-  return { result, files, meta };
-}
 
 // ── Executor ──
 
@@ -574,178 +86,10 @@ export class Executor {
     const dedupKey = `escrow:${task.id}`;
     if (isProcessed(dedupKey)) return;
 
-    if (this.activeTasks.size >= this.config.provider.max_concurrent) {
-      logger.warn(`Skipping multi task ${task.id.slice(0, 8)}: at max concurrency`);
-      return;
-    }
-
     markProcessed(dedupKey);
-    this.activeTasks.add(dedupKey);
-    logger.info(`Processing multi task=${task.id.slice(0, 8)} "${task.title}" ($${task.budget})`);
-
-    this.executeEscrowTask(task).catch((err) => {
-      logger.error(`Escrow error for ${task.id}:`, err);
-      this.activeTasks.delete(dedupKey);
-    });
-  }
-
-  private async executeEscrowTask(task: EscrowTaskEvent): Promise<void> {
-    const dedupKey = `escrow:${task.id}`;
-    try {
-      // Build prompt for openclaw/claude
-      const lines = [
-        "You received a paid task via ClawMoney Hub Marketplace.",
-        `Title: ${task.title}`,
-        `Category: ${task.category}`,
-        `Budget: $${task.budget} USDC`,
-        `Description: ${task.description}`,
-        task.requirements ? `Requirements: ${task.requirements}` : "",
-        "",
-        "Execute this task thoroughly.",
-      ];
-
-      // For code review tasks, instruct to create a GitHub Issue
-      if (task.category?.startsWith("coding/")) {
-        lines.push(
-          "",
-          "If the task references a GitHub repo, create a GitHub Issue with your findings using `gh issue create`.",
-          "Include the Issue URL in your JSON output as 'issue_url'.",
-        );
-      }
-
-      // For image generation tasks, instruct to save files
-      if (task.category?.startsWith("generation/image")) {
-        lines.push(
-          "",
-          "IMPORTANT: Generate a real image file (PNG/JPG). Save it to a local path.",
-          "Include the file path in your JSON output as 'image_path'.",
-          "Do NOT generate SVG, HTML, or code to fake an image.",
-        );
-      }
-
-      lines.push(
-        "",
-        "Return the result as JSON with a 'result' field containing your work.",
-        "If you generate any files (images, videos, etc.), include their absolute file paths in the output.",
-      );
-
-      const prompt = lines.filter(Boolean).join("\n");
-
-      const command = this.config.provider.cli_command;
-      logger.info(`Executing multi task via ${command} (timeout=300s)`);
-
-      const { stdout, stderr, exitCode } = await runCli(command, prompt, 300_000, task.id);
-
-      if (exitCode !== 0) {
-        logger.error(`Escrow CLI failed (code=${exitCode}): ${stderr.slice(0, 500)}`);
-        return;
-      }
-
-      // Extract text result, optional URL, and file paths
-      const parsed = parseJsonOutput(stdout);
-      let content: string;
-      let url: string | null = null;
-      const localFiles: string[] = [];
-
-      if (command === "openclaw" && parsed) {
-        const ocResult = parseOpenClawResponse(parsed);
-        content = typeof ocResult.result.text === "string"
-          ? ocResult.result.text
-          : typeof ocResult.result.result === "string"
-            ? ocResult.result.result
-            : JSON.stringify(ocResult.result, null, 2);
-        // Extract issue_url or pr_url from result
-        url = (ocResult.result.issue_url ?? ocResult.result.pr_url ?? null) as string | null;
-        localFiles.push(...ocResult.files);
-      } else if (command === "codex") {
-        // Parse Codex JSONL output
-        const codexText = parseCodexOutput(stdout);
-        const codexParsed = parseJsonOutput(codexText);
-        content = codexParsed
-          ? JSON.stringify(codexParsed, null, 2)
-          : codexText.slice(0, 10000);
-        if (codexParsed) {
-          url = (codexParsed.issue_url ?? codexParsed.pr_url ?? null) as string | null;
-        }
-      } else if (command === "gemini") {
-        // Parse Gemini JSON wrapper
-        const geminiText = parseGeminiOutput(stdout);
-        const geminiParsed = parseJsonOutput(geminiText);
-        content = geminiParsed
-          ? JSON.stringify(geminiParsed, null, 2)
-          : geminiText.slice(0, 10000);
-        if (geminiParsed) {
-          url = (geminiParsed.issue_url ?? geminiParsed.pr_url ?? null) as string | null;
-        }
-      } else {
-        content = parsed
-          ? JSON.stringify(parsed, null, 2)
-          : stdout.trim().slice(0, 10000);
-        if (parsed) {
-          url = (parsed.issue_url ?? parsed.pr_url ?? null) as string | null;
-          // Extract file paths from parsed JSON
-          for (const key of ["image_path", "video_path", "audio_path", "file_path", "primary_file"]) {
-            const val = parsed[key];
-            if (typeof val === "string" && val.startsWith("/")) localFiles.push(val);
-          }
-          const files = parsed.files as string[] | undefined;
-          if (Array.isArray(files)) {
-            localFiles.push(...files.filter((f): f is string => typeof f === "string" && f.startsWith("/")));
-          }
-        }
-        // Also scan raw stdout for file paths (claude may output paths as plain text)
-        const pathMatches = stdout.match(/\/\S+\.(png|jpg|jpeg|webp|gif|mp4|webm|mov|mp3|wav|pdf)/gim);
-        if (pathMatches) {
-          for (const p of pathMatches) {
-            if (!localFiles.includes(p)) localFiles.push(p);
-          }
-        }
-      }
-
-      // Upload local files to R2 CDN
-      for (const filePath of localFiles) {
-        const cdnUrl = await uploadFile(filePath, this.config);
-        if (cdnUrl) {
-          logger.info(`Escrow ${task.id.slice(0, 8)}: uploaded ${filePath} -> ${cdnUrl}`);
-          // Use the first uploaded file as the submission URL
-          if (!url) {
-            url = cdnUrl;
-          }
-          // Replace local path in content with CDN URL
-          content = content.replace(filePath, cdnUrl);
-        }
-      }
-
-      // Fallback: if content is empty, use raw stdout
-      if (!content || !content.trim()) {
-        content = stdout.trim().slice(0, 10000) || "Task completed (no text output)";
-        logger.warn(`Escrow ${task.id.slice(0, 8)}: empty content, using raw stdout fallback`);
-      }
-
-      // Submit to marketplace
-      const body: Record<string, string> = { content };
-      if (url) body.url = url;
-
-      const resp = await fetch(
-        `${this.config.provider.api_base_url}/market/escrow/${task.id}/submit`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${this.config.api_key}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(body),
-        }
-      );
-
-      if (resp.ok) {
-        logger.info(`Escrow ${task.id.slice(0, 8)} submitted successfully`);
-      } else {
-        logger.error(`Escrow submit failed (${resp.status}): ${await resp.text()}`);
-      }
-    } finally {
-      this.activeTasks.delete(dedupKey);
-    }
+    logger.warn(
+      `Ignoring marketplace multi task=${task.id.slice(0, 8)} "${task.title}": external CLI spawning is disabled`,
+    );
   }
 
   handleTestCall(call: TestCallEvent): void {
@@ -767,182 +111,20 @@ export class Executor {
 
   private async executeTask(call: ServiceCallEvent): Promise<void> {
     try {
-      const prompt = buildPrompt(call, this.config);
       const timeoutS = Math.max(call.timeout - TIMEOUT_BUFFER_S, 30);
-      const command = this.config.provider.cli_command;
-
-      logger.info(
-        `Executing: ${command} for skill="${call.skill}" order=${call.order_id} (timeout=${timeoutS}s)`
-      );
-
-      this.sendProgress(call.order_id, `Spawning ${command}…`);
-
-      const { stdout, stderr, exitCode } = await runCli(
-        command,
-        prompt,
-        timeoutS * 1000,
-        call.order_id,
-        // Watch the codex image dir for generation/image so we can
-        // ship the moment the file lands, skipping codex's final
-        // reasoning tail (~60–90s of pure overhead).
-        call.category?.startsWith("generation/image"),
-        // Progress callback fired inside runCli when we cross
-        // observable milestones (image landing on disk, etc).
-        (text) => this.sendProgress(call.order_id, text),
-      );
-
-      if (exitCode !== 0) {
-        const errMsg = stderr.trim() || `CLI exited with code ${exitCode}`;
-        logger.error(`CLI failed (code=${exitCode}):`, errMsg);
-        this.send({
-          event: "deliver",
-          order_id: call.order_id,
-          error: errMsg.slice(0, 2000),
-        });
+      const registeredSkill = getSkill(call.skill);
+      if (registeredSkill) {
+        await this.executeRegisteredSkill(call, registeredSkill, timeoutS);
         return;
       }
 
-      const parsed = parseJsonOutput(stdout);
-      let output: Record<string, unknown>;
-
-      if (command === "openclaw" && parsed) {
-        // Parse OpenClaw's response format: { payloads, meta }
-        const ocResult = parseOpenClawResponse(parsed);
-        output = ocResult.result;
-
-        // Check if the agent explicitly reported failure
-        if (output.success === false && typeof output.error === "string") {
-          logger.error(`Agent reported failure for order=${call.order_id}: ${output.error}`);
-          this.send({
-            event: "deliver",
-            order_id: call.order_id,
-            error: (output.error as string).slice(0, 2000),
-          });
-          return;
-        }
-
-        // Also extract file paths from nested result.files / result.primary_file
-        const allFiles = [...ocResult.files];
-        const nested = output.result as Record<string, unknown> | undefined;
-        if (nested && typeof nested === "object") {
-          const nestedFiles = (nested as Record<string, unknown>).files as string[] | undefined;
-          if (Array.isArray(nestedFiles)) {
-            for (const f of nestedFiles) {
-              if (typeof f === "string" && f.startsWith("/") && !allFiles.includes(f)) {
-                allFiles.push(f);
-              }
-            }
-          }
-          for (const key of ["primary_file", "image_path", "file_path"]) {
-            const val = (nested as Record<string, unknown>)[key];
-            if (typeof val === "string" && val.startsWith("/") && !allFiles.includes(val)) {
-              allFiles.push(val);
-            }
-          }
-        }
-
-        // Upload local files to R2
-        if (allFiles.length > 0) {
-          this.sendProgress(call.order_id, "Uploading to CDN…");
-        }
-        for (const filePath of allFiles) {
-          const cdnUrl = await uploadFile(filePath, this.config);
-          if (cdnUrl) {
-            // Replace local path with CDN URL in output (top-level and nested)
-            const replaceInArray = (arr: string[]) => {
-              const idx = arr.indexOf(filePath);
-              if (idx >= 0) arr[idx] = cdnUrl;
-            };
-            if (Array.isArray(output.files)) replaceInArray(output.files as string[]);
-            if (nested && Array.isArray((nested as Record<string, unknown>).files)) {
-              replaceInArray((nested as Record<string, unknown>).files as string[]);
-            }
-            if (nested && (nested as Record<string, unknown>).primary_file === filePath) {
-              (nested as Record<string, unknown>).primary_file = cdnUrl;
-            }
-            // Set convenience url key
-            if (!output.image_url && filePath.match(/\.(png|jpg|jpeg|webp|gif)$/i)) {
-              output.image_url = cdnUrl;
-            } else if (!output.video_url && filePath.match(/\.(mp4|webm|mov)$/i)) {
-              output.video_url = cdnUrl;
-            }
-          }
-        }
-
-        // Validate: generation/image must produce real image files, not SVG/code
-        if (call.category?.startsWith("generation/image")) {
-          const hasRealImage = allFiles.some((f) => /\.(png|jpg|jpeg|webp|gif)$/i.test(f));
-          if (!hasRealImage) {
-            const errMsg = "No real image generated. Image generation tool may not be available.";
-            logger.error(`Validation failed for order=${call.order_id}: ${errMsg}`);
-            this.send({
-              event: "deliver",
-              order_id: call.order_id,
-              error: errMsg,
-            });
-            return;
-          }
-        }
-
-        // Attach compact meta
-        if (ocResult.meta) {
-          output._meta = ocResult.meta;
-        }
-      } else if (command === "codex") {
-        // Parse Codex JSONL output
-        const codexText = parseCodexOutput(stdout);
-        const codexParsed = parseJsonOutput(codexText);
-        output = codexParsed ?? { result: codexText.slice(0, 5000) };
-        output = await replaceLocalPaths(output, this.config);
-      } else if (command === "gemini") {
-        // Parse Gemini JSON wrapper: { session_id, response, stats }
-        const geminiText = parseGeminiOutput(stdout);
-        const geminiParsed = parseJsonOutput(geminiText);
-        output = geminiParsed ?? { result: geminiText.slice(0, 5000) };
-        output = await replaceLocalPaths(output, this.config);
-      } else {
-        output = parsed ?? { result: stdout.trim().slice(0, 5000) };
-        // Upload local files via generic path replacement
-        output = await replaceLocalPaths(output, this.config);
-      }
-
-      // Image-output validation. The OpenClaw branch above does this inline
-      // (using its richer parseOpenClawResponse files list); for everything
-      // else we re-run the check on the post-upload output so the buyer
-      // never gets `{image_path: "/tmp/elon.png"}` when the file doesn't
-      // exist and uploadFile silently returned null. Skip the check for the
-      // OpenClaw branch — it already validated and may have set _meta etc.
-      if (
-        command !== "openclaw" &&
-        call.category?.startsWith("generation/image")
-      ) {
-        const reason = validateImageDelivery(output);
-        if (reason) {
-          logger.error(
-            `Image validation failed for order=${call.order_id} (${command}): ${reason}`,
-          );
-          this.send({
-            event: "deliver",
-            order_id: call.order_id,
-            error: reason,
-          });
-          return;
-        }
-      }
-
-      const sent = this.send({
+      const errMsg = `skill "${call.skill}" is not implemented by the built-in provider registry; external CLI fallback is disabled`;
+      logger.error(`Rejecting order=${call.order_id}: ${errMsg}`);
+      this.send({
         event: "deliver",
         order_id: call.order_id,
-        output,
+        error: errMsg,
       });
-
-      if (sent) {
-        logger.info(`Delivered order=${call.order_id} (success)`);
-      } else {
-        logger.warn(
-          `Failed to send delivery for order=${call.order_id} (WS disconnected)`
-        );
-      }
     } catch (err) {
       logger.error(`Execution error for order=${call.order_id}:`, err);
 
@@ -955,4 +137,61 @@ export class Executor {
       this.activeTasks.delete(call.order_id);
     }
   }
+
+  private async executeRegisteredSkill(
+    call: ServiceCallEvent,
+    handler: SkillHandler,
+    timeoutS: number,
+  ): Promise<void> {
+    logger.info(
+      `Executing built-in skill="${call.skill}" order=${call.order_id} (timeout=${timeoutS}s)`
+    );
+    this.sendProgress(call.order_id, `Running ${call.skill}…`);
+
+    let timer: NodeJS.Timeout | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`skill timeout after ${timeoutS}s`)),
+        timeoutS * 1000,
+      );
+      timer.unref();
+    });
+
+    const ctx: SkillContext = {
+      request_id: call.order_id,
+      buyer_id: call.from,
+      report: (progress) => {
+        const parts = [
+          progress.stage,
+          progress.percent == null ? undefined : `${progress.percent}%`,
+          progress.note,
+        ].filter(Boolean);
+        this.sendProgress(call.order_id, parts.join(" — ") || `Running ${call.skill}…`);
+      },
+    };
+
+    try {
+      const rawOutput = await Promise.race([handler.run(call.input, ctx), timeoutPromise]);
+      const output = normalizeSkillOutput(rawOutput);
+      const sent = this.send({
+        event: "deliver",
+        order_id: call.order_id,
+        output,
+      });
+      if (sent) {
+        logger.info(`Delivered order=${call.order_id} via built-in skill="${call.skill}"`);
+      } else {
+        logger.warn(`Failed to send delivery for order=${call.order_id} (WS disconnected)`);
+      }
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+}
+
+function normalizeSkillOutput(output: unknown): Record<string, unknown> {
+  if (output && typeof output === "object" && !Array.isArray(output)) {
+    return output as Record<string, unknown>;
+  }
+  return { result: output };
 }

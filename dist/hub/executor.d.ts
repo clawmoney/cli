@@ -16,8 +16,8 @@ export declare class Executor {
     private sendProgress;
     handleServiceCall(call: ServiceCallEvent): void;
     handleEscrowTask(task: EscrowTaskEvent): void;
-    private executeEscrowTask;
     handleTestCall(call: TestCallEvent): void;
     private executeTask;
+    private executeRegisteredSkill;
 }
 export {};

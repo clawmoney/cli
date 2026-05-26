@@ -1,4 +1,4 @@
-interface CodexImage {
+interface MediaItem {
     path?: string;
     mime?: string;
     width?: number;
@@ -6,9 +6,11 @@ interface CodexImage {
     bytes?: number;
     [key: string]: unknown;
 }
-interface CodexImageResult {
-    images?: CodexImage[];
+interface MediaResult {
+    images?: MediaItem[];
+    videos?: MediaItem[];
     [key: string]: unknown;
 }
-export declare function uploadCodexImageResult(raw: unknown): Promise<CodexImageResult>;
+export declare function uploadCodexImageResult(raw: unknown): Promise<MediaResult>;
+export declare function uploadMediaResult(raw: unknown, collectionKey: "images" | "videos"): Promise<MediaResult>;
 export {};

@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
-const MAX_BUFFER = 4 * 1024 * 1024;
+const MAX_BUFFER = 32 * 1024 * 1024;
 const TIMEOUT_BUFFER_MS = 15_000;
 const BNBOT_CANDIDATES = [
   process.env.BNBOT_CLI,
@@ -30,6 +30,19 @@ export interface ChatGPTImageGenerateArgs {
   timeout?: number;
   fresh?: boolean;
   restart?: boolean;
+}
+
+export interface ChatGPTWebImageGenerateArgs {
+  prompt: string;
+  n?: number;
+  size?: string;
+  quality?: string;
+  images?: string[];
+  response_format?: string;
+  timeout?: number;
+  tab_id?: string;
+  url?: string;
+  keep_chat?: boolean;
 }
 
 export async function bnbotChatGPTAsk(input: ChatGPTAskArgs): Promise<unknown> {
@@ -93,6 +106,42 @@ export async function bnbotChatGPTImageGenerate(
   throw lastError;
 }
 
+export async function bnbotChatGPTWebImageGenerate(
+  input: ChatGPTWebImageGenerateArgs,
+): Promise<unknown> {
+  const timeoutS = Math.max(1, input.timeout ?? 300);
+  const args = [
+    "chatgpt-web",
+    "image-generate",
+    input.prompt,
+    "--timeout",
+    String(timeoutS),
+    "--response-format",
+    input.response_format ?? "b64_json",
+  ];
+  if (input.size) args.push("--size", input.size);
+  if (input.quality) args.push("--quality", input.quality);
+  if (input.n) args.push("--n", String(input.n));
+  if (input.tab_id) args.push("--tab-id", input.tab_id);
+  if (input.url) args.push("--url", input.url);
+  if (input.keep_chat) args.push("--keep-chat");
+  for (const image of input.images ?? []) args.push("--image", image);
+  if ((input.response_format ?? "b64_json") === "b64_json") {
+    args.push("--inline-artifacts");
+  }
+
+  let lastError: unknown;
+  for (const bin of BNBOT_CANDIDATES) {
+    try {
+      return await execBnbot(bin, args, timeoutS * 1000 + TIMEOUT_BUFFER_MS);
+    } catch (err) {
+      lastError = err;
+      if (!shouldTryNextBnbot(err)) throw err;
+    }
+  }
+  throw lastError;
+}
+
 async function execBnbot(bin: string, args: string[], timeoutMs: number): Promise<unknown> {
   try {
     const { stdout } = await exec(bin, args, {
@@ -121,5 +170,5 @@ function shouldTryNextBnbot(err: unknown): boolean {
     return true;
   }
   const message = err instanceof Error ? err.message : String(err);
-  return /unknown command ['"]?chatgpt['"]?/i.test(message);
+  return /unknown command ['"]?chatgpt(?:-web)?['"]?/i.test(message);
 }

@@ -2,43 +2,40 @@ import { uploadFile } from "../../../hub/media.js";
 import { loadConfig } from "../../../utils/config.js";
 const DEFAULT_API_BASE_URL = "https://api.bnbot.ai/api/v1";
 export async function uploadCodexImageResult(raw) {
+    return uploadMediaResult(raw, "images");
+}
+export async function uploadMediaResult(raw, collectionKey) {
     const result = normalizeResult(raw);
     const config = loadUploadConfig();
-    const uploadedImages = [];
-    for (const image of result.images ?? []) {
-        if (!image.path)
+    const uploadedItems = [];
+    for (const item of result[collectionKey] ?? []) {
+        if (!item.path)
             continue;
-        const url = await uploadFile(image.path, config);
+        const url = await uploadFile(item.path, config);
         if (!url) {
-            throw new Error(`failed to upload generated image: ${image.path}`);
+            throw new Error(`failed to upload generated media: ${item.path}`);
         }
-        uploadedImages.push({
+        const { path: _path, base64: _base64, b64_json: _b64Json, ...rest } = item;
+        uploadedItems.push({
+            ...rest,
             url,
-            mime: image.mime,
-            width: image.width,
-            height: image.height,
-            bytes: image.bytes,
         });
     }
-    if (uploadedImages.length === 0) {
-        throw new Error("no generated image path available for CDN upload");
+    if (uploadedItems.length === 0) {
+        throw new Error(`no generated ${collectionKey.slice(0, -1)} path available for CDN upload`);
     }
     return {
         ...result,
         response_format: "url",
-        images: uploadedImages,
+        [collectionKey]: uploadedItems,
         artifacts: undefined,
     };
 }
 function normalizeResult(raw) {
     if (!raw || typeof raw !== "object") {
-        throw new Error("bnbot returned invalid image generation result");
+        throw new Error("bnbot returned invalid media generation result");
     }
-    const result = raw;
-    if (!Array.isArray(result.images)) {
-        throw new Error("bnbot returned no images array");
-    }
-    return result;
+    return raw;
 }
 function loadUploadConfig() {
     const config = loadConfig();

@@ -85,11 +85,14 @@ async function handleTaskRequest(ws, req) {
     });
     try {
         const output = await Promise.race([handler.run(req.input, ctx), timeoutPromise]);
+        const costUsd = typeof handler.price_usd === "function"
+            ? handler.price_usd(req.input)
+            : handler.price_usd;
         ws.send({
             event: "task_response",
             request_id: req.request_id,
             output,
-            cost_usd: handler.price_usd,
+            cost_usd: costUsd,
             duration_ms: Date.now() - startedAtMs,
         });
     }
