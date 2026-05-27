@@ -7,6 +7,7 @@ import { Poller } from "./poller.js";
 import { Executor } from "./executor.js";
 import { startDedup, stopDedup } from "./dedup.js";
 import { logger } from "./logger.js";
+import { syncSkillRegistry } from "./sync-skills.js";
 const CONFIG_DIR = join(homedir(), ".clawmoney");
 const CONFIG_FILE = join(CONFIG_DIR, "config.yaml");
 const PID_FILE = join(CONFIG_DIR, "provider.pid");
@@ -92,6 +93,7 @@ function loadProviderConfig(cliCommand, autoAccept) {
                 DEFAULT_PROVIDER.reconnect.multiplier,
         },
         skills: userProvider.skills,
+        disabled_skills: userProvider.disabled_skills,
     };
     return {
         api_key: raw.api_key,
@@ -117,6 +119,13 @@ export function runProvider(cliCommand, autoAccept) {
     });
     // Create executor
     const executor = new Executor(config, (event) => wsClient.send(event));
+    // Fire-and-forget skill auto-sync. Catches everything so a registry
+    // hiccup never crashes the daemon.
+    setImmediate(() => {
+        syncSkillRegistry(config).catch((err) => {
+            logger.warn(`Skill sync errored: ${err instanceof Error ? err.message : String(err)}`);
+        });
+    });
     // Event router
     function handleEvent(event) {
         switch (event.event) {

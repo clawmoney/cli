@@ -7,6 +7,7 @@ import { Poller } from "./poller.js";
 import { Executor } from "./executor.js";
 import { startDedup, stopDedup } from "./dedup.js";
 import { logger } from "./logger.js";
+import { syncSkillRegistry } from "./sync-skills.js";
 import type {
   ProviderConfig,
   ProviderSettings,
@@ -116,6 +117,7 @@ function loadProviderConfig(cliCommand?: string, autoAccept?: boolean): Provider
         DEFAULT_PROVIDER.reconnect.multiplier,
     },
     skills: userProvider.skills,
+    disabled_skills: userProvider.disabled_skills,
   };
 
   return {
@@ -150,6 +152,14 @@ export function runProvider(cliCommand?: string, autoAccept?: boolean): void {
 
   // Create executor
   const executor = new Executor(config, (event) => wsClient.send(event));
+
+  // Fire-and-forget skill auto-sync. Catches everything so a registry
+  // hiccup never crashes the daemon.
+  setImmediate(() => {
+    syncSkillRegistry(config).catch((err) => {
+      logger.warn(`Skill sync errored: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  });
 
   // Event router
   function handleEvent(event: IncomingEvent): void {

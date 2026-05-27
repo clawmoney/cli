@@ -91,6 +91,8 @@ export interface ProviderSettings {
     skills?: Record<string, {
         prompt_template?: string;
     }>;
+    /** Skill names the user has opted out of auto-registering / kept off the marketplace. */
+    disabled_skills?: string[];
 }
 export interface ProviderConfig {
     api_key: string;
