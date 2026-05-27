@@ -82,7 +82,10 @@ export class Poller {
       if (serviceCalls.length > 0) {
         logger.info(`Poll: ${serviceCalls.length} pending service call(s)`);
         for (const call of serviceCalls) {
-          this.onServiceCall(call);
+          const normalized = normalizeServiceCall(call);
+          if (normalized) {
+            this.onServiceCall(normalized);
+          }
         }
       }
 
@@ -102,4 +105,43 @@ export class Poller {
       logger.error("Poll error:", err);
     }
   }
+}
+
+function normalizeServiceCall(raw: ServiceCallEvent): ServiceCallEvent | null {
+  const obj = raw as unknown as Record<string, unknown>;
+  if (obj.event === "service_call" && stringValue(obj.order_id) && stringValue(obj.skill)) {
+    return raw;
+  }
+
+  const id = stringValue(obj.order_id) ?? stringValue(obj.id);
+  const skill = stringValue(obj.skill) ?? stringValue(obj.skill_name);
+  if (!id || !skill) {
+    return null;
+  }
+
+  return {
+    event: "service_call",
+    order_id: id,
+    from: stringValue(obj.from) ?? stringValue(obj.caller_agent_id) ?? "poller",
+    skill,
+    category: stringValue(obj.category) ?? "",
+    input: objectValue(obj.input) ?? objectValue(obj.input_data) ?? {},
+    price: numberValue(obj.price) ?? 0,
+    timeout: numberValue(obj.timeout) ?? 300,
+    payment_method: stringValue(obj.payment_method) ?? "ledger",
+  };
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function objectValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }

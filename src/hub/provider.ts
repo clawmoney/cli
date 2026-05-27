@@ -172,8 +172,13 @@ export function runProvider(cliCommand?: string, autoAccept?: boolean): void {
         logger.error(`Server error: ${event.message}`);
         break;
 
+      case "heartbeat_ack":
+        break;
+
       default:
-        logger.warn("Unknown event:", event);
+        if (process.env.CLAWMONEY_DEBUG_EVENTS === "1") {
+          logger.info("Unknown event:", event);
+        }
     }
   }
 

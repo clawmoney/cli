@@ -132,8 +132,12 @@ export function runProvider(cliCommand, autoAccept) {
             case "error":
                 logger.error(`Server error: ${event.message}`);
                 break;
+            case "heartbeat_ack":
+                break;
             default:
-                logger.warn("Unknown event:", event);
+                if (process.env.CLAWMONEY_DEBUG_EVENTS === "1") {
+                    logger.info("Unknown event:", event);
+                }
         }
     }
     // Create poller

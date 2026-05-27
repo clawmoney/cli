@@ -30,6 +30,10 @@ export interface ErrorEvent {
   message: string;
 }
 
+export interface HeartbeatAckEvent {
+  event: "heartbeat_ack";
+}
+
 // ── Escrow/Multi-submission task from /tasks/pending ──
 
 export interface EscrowTaskEvent {
@@ -58,7 +62,8 @@ export type IncomingEvent =
   | ServiceCallEvent
   | TestCallEvent
   | ConnectedEvent
-  | ErrorEvent;
+  | ErrorEvent
+  | HeartbeatAckEvent;
 
 // ── Events provider sends to server ──
 

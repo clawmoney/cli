@@ -24,6 +24,9 @@ export interface ErrorEvent {
     event: "error";
     message: string;
 }
+export interface HeartbeatAckEvent {
+    event: "heartbeat_ack";
+}
 export interface EscrowTaskEvent {
     id: string;
     title: string;
@@ -44,7 +47,7 @@ export interface PendingTasksResponse {
     social_tasks: unknown[];
     total: number;
 }
-export type IncomingEvent = ServiceCallEvent | TestCallEvent | ConnectedEvent | ErrorEvent;
+export type IncomingEvent = ServiceCallEvent | TestCallEvent | ConnectedEvent | ErrorEvent | HeartbeatAckEvent;
 export interface DeliverEvent {
     event: "deliver";
     order_id: string;
