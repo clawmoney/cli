@@ -367,6 +367,49 @@ market
         process.exit(1);
     }
 });
+// task (spareai-hub OpenCLI sync gateway)
+const task = program
+    .command('task')
+    .description('Task daemon: serve sync OpenCLI requests via spareai-hub');
+task
+    .command('start')
+    .description('Start Task daemon (background process)')
+    .action(async () => {
+    try {
+        const { taskStartCommand } = await import('./commands/task.js');
+        await taskStartCommand();
+    }
+    catch (err) {
+        console.error(err.message);
+        process.exit(1);
+    }
+});
+task
+    .command('stop')
+    .description('Stop Task daemon')
+    .action(async () => {
+    try {
+        const { taskStopCommand } = await import('./commands/task.js');
+        await taskStopCommand();
+    }
+    catch (err) {
+        console.error(err.message);
+        process.exit(1);
+    }
+});
+task
+    .command('status')
+    .description('Check Task daemon status')
+    .action(async () => {
+    try {
+        const { taskStatusCommand } = await import('./commands/task.js');
+        await taskStatusCommand();
+    }
+    catch (err) {
+        console.error(err.message);
+        process.exit(1);
+    }
+});
 // gig (escrow tasks)
 const gig = program.command('gig').description('Gig marketplace: post and accept freelance tasks');
 gig

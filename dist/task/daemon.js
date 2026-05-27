@@ -20,9 +20,34 @@
  * No CLI integration yet — that lands in Phase 3 alongside the proper
  * `clawmoney task start` command.
  */
+import { readFileSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
+import YAML from "yaml";
 import { TaskWsClient } from "./ws-client.js";
 import { getSkill, listSkills } from "./skills/index.js";
-function loadConfigFromEnv() {
+const CONFIG_DIR = join(homedir(), ".clawmoney");
+const CONFIG_FILE = join(CONFIG_DIR, "config.yaml");
+const PID_FILE = join(CONFIG_DIR, "task.pid");
+function loadYamlConfig() {
+    if (!existsSync(CONFIG_FILE))
+        return {};
+    try {
+        return (YAML.parse(readFileSync(CONFIG_FILE, "utf-8")) ?? {});
+    }
+    catch {
+        return {};
+    }
+}
+function pickString(...candidates) {
+    for (const c of candidates) {
+        if (typeof c === "string" && c)
+            return c;
+    }
+    return undefined;
+}
+function loadConfig() {
+    const yaml = loadYamlConfig();
     const skillsEnv = process.env.SKILLS ?? "";
     const requested = skillsEnv
         .split(",")
@@ -41,9 +66,9 @@ function loadConfigFromEnv() {
     });
     return {
         hub_url: process.env.HUB_URL ?? "wss://api.spareapi.ai/ws/relay",
-        api_key: process.env.API_KEY ?? "",
-        agent_id: process.env.AGENT_ID,
-        agent_name: process.env.AGENT_NAME ?? "clawmoney-task",
+        api_key: pickString(process.env.API_KEY, yaml.api_key) ?? "",
+        agent_id: pickString(process.env.AGENT_ID, yaml.agent_id),
+        agent_name: pickString(process.env.AGENT_NAME, yaml.agent_slug) ?? "clawmoney-task",
         skills: filtered,
         max_concurrency: process.env.MAX_CONCURRENCY
             ? Number.parseInt(process.env.MAX_CONCURRENCY, 10)
@@ -51,6 +76,35 @@ function loadConfigFromEnv() {
         heartbeat_ms: 5000,
         reconnect: { initial_ms: 1000, max_ms: 60_000, multiplier: 2 },
     };
+}
+export function readTaskPid() {
+    try {
+        const pid = parseInt(readFileSync(PID_FILE, "utf-8").trim(), 10);
+        return Number.isFinite(pid) ? pid : null;
+    }
+    catch {
+        return null;
+    }
+}
+export function isPidAlive(pid) {
+    try {
+        process.kill(pid, 0);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+function writePid() {
+    writeFileSync(PID_FILE, String(process.pid), "utf-8");
+}
+function removePid() {
+    try {
+        unlinkSync(PID_FILE);
+    }
+    catch {
+        // ignore
+    }
 }
 async function handleTaskRequest(ws, req) {
     const startedAtMs = Date.now();
@@ -111,12 +165,22 @@ async function handleTaskRequest(ws, req) {
     }
 }
 function main() {
-    const config = loadConfigFromEnv();
+    const existing = readTaskPid();
+    if (existing !== null && isPidAlive(existing)) {
+        console.error(`[task] already running (PID ${existing})`);
+        process.exit(1);
+    }
+    const config = loadConfig();
+    if (!config.api_key) {
+        console.error("[task] api_key missing — set API_KEY env or run `clawmoney setup`");
+        process.exit(1);
+    }
     console.log(`[task] starting daemon hub=${config.hub_url} skills=[${config.skills.join(",")}]`);
     if (config.skills.length === 0) {
         console.error("[task] no skills to advertise — refusing to start");
         process.exit(1);
     }
+    writePid();
     // Belt-and-suspenders: even if every other handle (WS, heartbeat,
     // reconnect timer) somehow goes away simultaneously, this interval
     // is unref-less and ref-counted into the event loop, so the daemon
@@ -151,6 +215,7 @@ function main() {
     const shutdown = (signal) => {
         console.log(`[task] ${signal} — shutting down`);
         ws.stop();
+        removePid();
         setTimeout(() => process.exit(0), 200);
     };
     process.on("SIGINT", () => shutdown("SIGINT"));
