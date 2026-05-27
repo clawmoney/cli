@@ -37,7 +37,6 @@ async function registerOne(apiKey, name, meta) {
         category: meta.category,
         description: meta.description,
         price: meta.price,
-        skill_type: meta.skill_type ?? "instant",
     };
     const resp = await apiPost("/api/v1/market/skills", payload, apiKey);
     if (!resp.ok) {

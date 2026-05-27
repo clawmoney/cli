@@ -31,7 +31,6 @@ interface RegisterPayload {
   category: string;
   description: string;
   price: number;
-  skill_type: "instant" | "escrow";
 }
 
 async function fetchMineSkillNames(apiKey: string): Promise<Set<string> | null> {
@@ -66,7 +65,6 @@ async function registerOne(
     category: meta.category,
     description: meta.description,
     price: meta.price,
-    skill_type: meta.skill_type ?? "instant",
   };
   const resp = await apiPost<unknown>(
     "/api/v1/market/skills",
