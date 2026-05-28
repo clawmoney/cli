@@ -23,6 +23,7 @@
 import { readFileSync, writeFileSync, unlinkSync, existsSync, appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 const TASK_LOG_FILE = join(homedir(), ".clawmoney", "task.log");
 function tsLine(level, msg) {
@@ -40,11 +41,11 @@ function logToFile(level, ...args) {
         /* best effort */
     }
 }
-// Redirect console.* to the file so daemon log lines persist even when
-// the daemon is spawned with stdio:"ignore" by `clawmoney task start`.
-console.log = (...args) => logToFile("INFO", ...args);
-console.warn = (...args) => logToFile("WARN", ...args);
-console.error = (...args) => logToFile("ERROR", ...args);
+function installFileLogger() {
+    console.log = (...args) => logToFile("INFO", ...args);
+    console.warn = (...args) => logToFile("WARN", ...args);
+    console.error = (...args) => logToFile("ERROR", ...args);
+}
 import { TaskWsClient } from "./ws-client.js";
 import { getSkill, listSkills } from "./skills/index.js";
 const CONFIG_DIR = join(homedir(), ".clawmoney");
@@ -186,6 +187,9 @@ async function handleTaskRequest(ws, req) {
     }
 }
 function main() {
+    // Daemon was started as a script (stdio:"ignore"); from here on, all
+    // log lines should land in ~/.clawmoney/task.log.
+    installFileLogger();
     const existing = readTaskPid();
     if (existing !== null && isPidAlive(existing)) {
         console.error(`[task] already running (PID ${existing})`);
@@ -243,4 +247,9 @@ function main() {
     process.on("SIGTERM", () => shutdown("SIGTERM"));
     ws.start();
 }
-main();
+// Only run main() when invoked as a script (`node daemon.js`), not when
+// the module is imported (e.g. by src/commands/task.ts which only wants
+// to use readTaskPid / isPidAlive helpers).
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+    main();
+}
