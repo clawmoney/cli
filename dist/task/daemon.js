@@ -20,10 +20,31 @@
  * No CLI integration yet — that lands in Phase 3 alongside the proper
  * `clawmoney task start` command.
  */
-import { readFileSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, unlinkSync, existsSync, appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import YAML from "yaml";
+const TASK_LOG_FILE = join(homedir(), ".clawmoney", "task.log");
+function tsLine(level, msg) {
+    const ts = new Date().toISOString().replace("T", " ").replace("Z", "");
+    return `${ts} [${level}] ${msg}\n`;
+}
+function logToFile(level, ...args) {
+    const msg = args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
+    const line = tsLine(level, msg);
+    try {
+        mkdirSync(join(homedir(), ".clawmoney"), { recursive: true });
+        appendFileSync(TASK_LOG_FILE, line, "utf-8");
+    }
+    catch {
+        /* best effort */
+    }
+}
+// Redirect console.* to the file so daemon log lines persist even when
+// the daemon is spawned with stdio:"ignore" by `clawmoney task start`.
+console.log = (...args) => logToFile("INFO", ...args);
+console.warn = (...args) => logToFile("WARN", ...args);
+console.error = (...args) => logToFile("ERROR", ...args);
 import { TaskWsClient } from "./ws-client.js";
 import { getSkill, listSkills } from "./skills/index.js";
 const CONFIG_DIR = join(homedir(), ".clawmoney");

@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { openSync, closeSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import chalk from "chalk";
@@ -26,12 +25,12 @@ export async function taskStartCommand(): Promise<void> {
     const parentDir = thisDir.replace(/\/[^/]+$/, "");
     const daemonScript = join(parentDir, "task", "daemon.js");
 
-    // Open log file for stdout/stderr capture (daemon detaches from parent).
-    const out = openSync(LOG_FILE, "a");
-    const err = openSync(LOG_FILE, "a");
-
+    // Daemon writes its own log file via console.log redirect. Parent
+    // uses stdio:"ignore" so it doesn't keep any fd open — that lets the
+    // parent process exit cleanly after spawn, which is the only way
+    // desktop's ensure_task_daemon_running can poll for a live PID.
     const child = spawn(process.execPath, [daemonScript], {
-      stdio: ["ignore", out, err],
+      stdio: "ignore",
       detached: true,
       env: {
         ...process.env,
@@ -44,11 +43,6 @@ export async function taskStartCommand(): Promise<void> {
     });
 
     child.unref();
-    // Release fds in the parent — keeping them open keeps node's event
-    // loop alive (the parent never exits), and stale parent processes
-    // mean each desktop dashboard refresh would re-spawn another daemon.
-    closeSync(out);
-    closeSync(err);
 
     await new Promise((r) => setTimeout(r, 1000));
     const pid = readTaskPid();
