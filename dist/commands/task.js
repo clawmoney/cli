@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { openSync } from "node:fs";
+import { openSync, closeSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import chalk from "chalk";
@@ -35,6 +35,11 @@ export async function taskStartCommand() {
             },
         });
         child.unref();
+        // Release fds in the parent — keeping them open keeps node's event
+        // loop alive (the parent never exits), and stale parent processes
+        // mean each desktop dashboard refresh would re-spawn another daemon.
+        closeSync(out);
+        closeSync(err);
         await new Promise((r) => setTimeout(r, 1000));
         const pid = readTaskPid();
         if (pid && isPidAlive(pid)) {
