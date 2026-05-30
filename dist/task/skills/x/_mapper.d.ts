@@ -67,6 +67,8 @@ export declare function userTweetsToTwitter283(tweets: BnbotTweet[], cursor?: {
 export declare function tweetConversationToTwitter283(head: BnbotTweet, replies?: BnbotTweet[]): unknown;
 export interface BnbotTrend {
     name?: string;
+    topic?: string;
+    tweets?: string | number;
     tweet_volume?: number | null;
     url?: string;
     category?: string;

@@ -183,6 +183,10 @@ export function tweetConversationToTwitter283(
 
 export interface BnbotTrend {
   name?: string;
+  // bnbot's DOM trends scraper emits `topic` (+ a free-text `tweets` blurb)
+  // rather than name/tweet_volume — accept both shapes.
+  topic?: string;
+  tweets?: string | number;
   tweet_volume?: number | null;
   url?: string;
   category?: string;
@@ -225,9 +229,13 @@ export function trendsToTwitter283(trends: BnbotTrend[]): unknown {
   return {
     data: {
       trends: trends.map((t) => ({
-        name: t.name ?? "",
+        name: t.name ?? t.topic ?? "",
         tweet_volume:
-          typeof t.tweet_volume === "number" ? t.tweet_volume : null,
+          typeof t.tweet_volume === "number"
+            ? t.tweet_volume
+            : typeof t.tweets === "number"
+            ? t.tweets
+            : null,
         url: t.url ?? "",
         ...(t.category ? { category: t.category } : {}),
       })),

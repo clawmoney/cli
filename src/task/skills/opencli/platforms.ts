@@ -274,12 +274,12 @@ export const wrBookSkill = openSkill("weread book", ["weread", "book"], (i) => [
   reqStr(i, ["book_id", "bookId", "id"], "book_id"),
 ]);
 
-export const ctSearchSkill = openSkill("ctrip search", ["ctrip", "search"], (i) => [query(i)], (i) => ({
-  limit: limit(i),
-}));
-export const ctHotelSuggestSkill = openSkill("ctrip hotel suggest", ["ctrip", "hotel-suggest"], (i) => [query(i)], (i) => ({
-  limit: limit(i),
-}));
+export const ctSearchSkill = makeOpenCliSkill("ctrip search", (i) =>
+  bnbotCommand(["ctrip", "search"], [query(i)], { limit: limit(i) }),
+);
+export const ctHotelSuggestSkill = makeOpenCliSkill("ctrip hotel suggest", (i) =>
+  bnbotCommand(["ctrip", "hotel-suggest"], [query(i)], { limit: limit(i) }),
+);
 export const ctHotelSearchSkill = openSkill("ctrip hotel search", ["ctrip", "hotel-search"], (i) => [
   reqStr(i, ["city", "city_id", "cityId"], "city"),
 ], (i) => ({

@@ -136,8 +136,12 @@ export function trendsToTwitter283(trends) {
     return {
         data: {
             trends: trends.map((t) => ({
-                name: t.name ?? "",
-                tweet_volume: typeof t.tweet_volume === "number" ? t.tweet_volume : null,
+                name: t.name ?? t.topic ?? "",
+                tweet_volume: typeof t.tweet_volume === "number"
+                    ? t.tweet_volume
+                    : typeof t.tweets === "number"
+                        ? t.tweets
+                        : null,
                 url: t.url ?? "",
                 ...(t.category ? { category: t.category } : {}),
             })),
