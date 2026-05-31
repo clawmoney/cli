@@ -280,17 +280,19 @@ export const ctSearchSkill = makeOpenCliSkill("ctrip search", (i) =>
 export const ctHotelSuggestSkill = makeOpenCliSkill("ctrip hotel suggest", (i) =>
   bnbotCommand(["ctrip", "hotel-suggest"], [query(i)], { limit: limit(i) }),
 );
-export const ctHotelSearchSkill = openSkill("ctrip hotel search", ["ctrip", "hotel-search"], (i) => [
-  reqStr(i, ["city", "city_id", "cityId"], "city"),
-], (i) => ({
-  checkin: reqStr(i, ["checkin", "check_in", "checkIn"], "checkin"),
-  checkout: reqStr(i, ["checkout", "check_out", "checkOut"], "checkout"),
-  limit: limit(i),
-}));
-export const ctFlightSkill = openSkill("ctrip flight", ["ctrip", "flight"], (i) => [
-  reqStr(i, ["from", "from_iata", "fromIata"], "from"),
-  reqStr(i, ["to", "to_iata", "toIata"], "to"),
-], (i) => ({
-  date: reqStr(i, ["date", "departure_date", "departureDate"], "date"),
-  limit: limit(i),
-}));
+export const ctHotelSearchSkill = makeOpenCliSkill("ctrip hotel search", (i) =>
+  bnbotCommand(["ctrip", "hotel-search"], [reqStr(i, ["city", "city_id", "cityId"], "city")], {
+    checkin: reqStr(i, ["checkin", "check_in", "checkIn"], "checkin"),
+    checkout: reqStr(i, ["checkout", "check_out", "checkOut"], "checkout"),
+    limit: limit(i),
+  }),
+);
+export const ctFlightSkill = makeOpenCliSkill("ctrip flight", (i) =>
+  bnbotCommand(["ctrip", "flight"], [
+    reqStr(i, ["from", "from_iata", "fromIata"], "from"),
+    reqStr(i, ["to", "to_iata", "toIata"], "to"),
+  ], {
+    date: reqStr(i, ["date", "departure_date", "departureDate"], "date"),
+    limit: limit(i),
+  }),
+);
