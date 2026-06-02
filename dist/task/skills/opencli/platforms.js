@@ -7,6 +7,13 @@ const symbol = (i) => reqStr(i, ["symbol", "ticker"], "symbol");
 function openSkill(label, base, positional = () => [], flags = () => ({})) {
     return makeOpenCliSkill(label, (i) => opencliCommand(base, positional(i), flags(i)));
 }
+/** Same shape as openSkill but routes to the bnbot CLI instead of opencli.
+ *  Use for any site whose scraper is implemented natively in bnbot (zero
+ *  opencli dependency) — e.g. douban, whose opencli path wedges on anti-bot
+ *  pages while `bnbot douban …` works against the logged-in browser. */
+function bnbotSkill(label, base, positional = () => [], flags = () => ({})) {
+    return makeOpenCliSkill(label, (i) => bnbotCommand(base, positional(i), flags(i)));
+}
 export const ggSearchSkill = makeOpenCliSkill("google search", (i) => bnbotCommand(["google", "search"], [query(i)], { limit: limit(i), lang: str(i, ["lang", "language"]) }));
 export const ggSuggestSkill = makeOpenCliSkill("google suggest", (i) => bnbotCommand(["google", "suggest"], [query(i)], { limit: limit(i), lang: str(i, ["lang", "language"]) }));
 export const ggNewsSkill = makeOpenCliSkill("google news", (i) => bnbotCommand(["google", "news"], str(i, ["query", "keyword", "q"]) ? [str(i, ["query", "keyword", "q"])] : [], {
@@ -113,22 +120,24 @@ export const kr36SearchSkill = openSkill("36kr search", ["36kr", "search"], (i) 
 export const kr36ArticleSkill = openSkill("36kr article", ["36kr", "article"], (i) => [
     reqStr(i, ["id", "url"], "id"),
 ]);
-export const dbSearchSkill = openSkill("douban search", ["douban", "search"], (i) => [query(i)], (i) => ({
+export const dbSearchSkill = bnbotSkill("douban search", ["douban", "search"], (i) => [query(i)], (i) => ({
     limit: limit(i),
     type: str(i, ["type"]),
 }));
-export const dbMovieHotSkill = openSkill("douban movie hot", ["douban", "movie-hot"], () => [], (i) => ({
+export const dbMovieHotSkill = bnbotSkill("douban movie hot", ["douban", "movie-hot"], () => [], (i) => ({
     limit: limit(i),
 }));
-export const dbBookHotSkill = openSkill("douban book hot", ["douban", "book-hot"], () => [], (i) => ({
+export const dbBookHotSkill = bnbotSkill("douban book hot", ["douban", "book-hot"], () => [], (i) => ({
     limit: limit(i),
 }));
-export const dbTop250Skill = makeOpenCliSkill("douban top250", (i) => bnbotCommand(["douban", "top250"], [], { limit: limit(i) }));
-export const dbPhotosSkill = openSkill("douban photos", ["douban", "photos"], (i) => [id(i)], (i) => ({
+export const dbTop250Skill = bnbotSkill("douban top250", ["douban", "top250"], () => [], (i) => ({
+    limit: limit(i),
+}));
+export const dbPhotosSkill = bnbotSkill("douban photos", ["douban", "photos"], (i) => [id(i)], (i) => ({
     limit: limit(i),
     type: str(i, ["type"]),
 }));
-export const sfNewsSkill = openSkill("sinafinance news", ["sinafinance", "news"], () => [], (i) => ({
+export const sfNewsSkill = bnbotSkill("sinafinance news", ["sinafinance", "news"], () => [], (i) => ({
     limit: limit(i),
     type: str(i, ["type"]),
 }));
@@ -137,13 +146,13 @@ export const sfStockSkill = openSkill("sinafinance stock", ["sinafinance", "stoc
     reqStr(i, ["key", "query", "symbol", "ticker"], "key"),
 ], (i) => ({ market: str(i, ["market"]) }));
 export const jkFeedSkill = openSkill("jike feed", ["jike", "feed"], () => [], (i) => ({ limit: limit(i) }));
-export const jkSearchSkill = openSkill("jike search", ["jike", "search"], (i) => [query(i)], (i) => ({
+export const jkSearchSkill = bnbotSkill("jike search", ["jike", "search"], (i) => [query(i)], (i) => ({
     limit: limit(i),
 }));
-export const xqSearchSkill = openSkill("xueqiu search", ["xueqiu", "search"], (i) => [query(i)], (i) => ({
+export const xqSearchSkill = bnbotSkill("xueqiu search", ["xueqiu", "search"], (i) => [query(i)], (i) => ({
     limit: limit(i),
 }));
-export const xqHotSkill = openSkill("xueqiu hot", ["xueqiu", "hot"], () => [], (i) => ({ limit: limit(i) }));
+export const xqHotSkill = bnbotSkill("xueqiu hot", ["xueqiu", "hot"], () => [], (i) => ({ limit: limit(i) }));
 export const xqHotStockSkill = openSkill("xueqiu hot stock", ["xueqiu", "hot-stock"], () => [], (i) => ({
     limit: limit(i),
     type: str(i, ["type"]),
