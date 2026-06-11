@@ -181,6 +181,16 @@ import { geminiImageGenerateSkill } from "./gemini/image-generate.js";
 // Google Labs Flow skills
 import { flowVideoGenerateSkill } from "./flow/video-generate.js";
 import { flowImageGenerateSkill } from "./flow/image-generate.js";
+// Apify-equivalent scrapers — Amazon / Google Maps / Web Scraper / web read.
+import {
+  amazonProductSkill, amazonOfferSkill, amazonSearchSkill,
+  ggMapsSkill, webScrapeSkill, webReadSkill,
+} from "./opencli/scrapers.js";
+// LinkedIn lead-gen / Sales Navigator (read-only, queries others' public data).
+import {
+  liPeopleSearchSkill, liSalesnavSearchSkill, liProfileSkill,
+  liProfileExperienceSkill, liProfileProjectsSkill, liPostsSkill, liJobDetailSkill,
+} from "./opencli/linkedin-salesnav.js";
 // `_unimplemented.ts` kept for future stub skills; not used in the
 // registry today.
 
@@ -470,6 +480,26 @@ export const SKILL_REGISTRY: Record<string, SkillHandler> = {
   // Google Labs Flow — provider drives labs.google/fx/tools/flow via bnbot.
   "flow.video_generate": flowVideoGenerateSkill,
   "flow.image_generate": flowImageGenerateSkill,
+  // Apify-equivalent scrapers — run in the operator's real logged-in Chrome
+  // (residential IP + login state). Skill ids match hub routing:
+  // /amazon/product → amazon.product, /web/scrape → web.scrape,
+  // /web/read → web.read, /google/maps → gg.maps.
+  "amazon.product": amazonProductSkill,
+  "amazon.offer": amazonOfferSkill,
+  "amazon.search": amazonSearchSkill,
+  "gg.maps": ggMapsSkill,
+  "web.scrape": webScrapeSkill,
+  "web.read": webReadSkill,
+  // LinkedIn lead-gen / Sales Navigator — read-only, queries others' public
+  // data. /linkedin/{action} → li.{action} via the hub catalog router.
+  // salesnav_search needs a Sales Navigator subscription on the provider.
+  "li.people_search": liPeopleSearchSkill,
+  "li.salesnav_search": liSalesnavSearchSkill,
+  "li.profile": liProfileSkill,
+  "li.profile_experience": liProfileExperienceSkill,
+  "li.profile_projects": liProfileProjectsSkill,
+  "li.posts": liPostsSkill,
+  "li.job_detail": liJobDetailSkill,
 };
 
 export function listSkills(): string[] {

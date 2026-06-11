@@ -11,7 +11,7 @@ const LOG_FILE = join(homedir(), ".clawmoney", "relay.log");
 export async function relayRegisterCommand(options) {
     const config = requireConfig();
     // Validate CLI type
-    const validClis = ["claude", "codex", "gemini", "antigravity"];
+    const validClis = ["claude", "codex", "gemini", "antigravity", "chatgpt-web"];
     if (!validClis.includes(options.cli)) {
         console.error(chalk.red(`Invalid CLI type "${options.cli}". Must be one of: ${validClis.join(", ")}`));
         process.exit(1);
@@ -36,14 +36,16 @@ export async function relayRegisterCommand(options) {
         }
     }
     else {
-        const spinner = ora(`Checking if ${options.cli} is installed...`).start();
+        // chatgpt-web drives the browser via opencli — there's no "chatgpt-web" binary.
+        const probeBin = options.cli === "chatgpt-web" ? "opencli" : options.cli;
+        const spinner = ora(`Checking if ${probeBin} is installed...`).start();
         try {
-            execSync(`which ${options.cli}`, { stdio: "pipe" });
-            spinner.succeed(`${options.cli} is available`);
+            execSync(`which ${probeBin}`, { stdio: "pipe" });
+            spinner.succeed(`${probeBin} is available`);
         }
         catch {
-            spinner.fail(chalk.red(`${options.cli} is not installed or not in PATH`));
-            console.log(chalk.dim(`  Make sure ${options.cli} CLI is installed and accessible.`));
+            spinner.fail(chalk.red(`${probeBin} is not installed or not in PATH`));
+            console.log(chalk.dim(`  Make sure ${probeBin} CLI is installed and accessible.`));
             process.exit(1);
         }
     }

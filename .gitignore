@@ -1,3 +1,4 @@
 .npmrc
 clawmoney-*.tgz
 node_modules
+.gstack/

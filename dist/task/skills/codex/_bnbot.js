@@ -19,6 +19,9 @@ export async function bnbotCodexImageGenerate(input) {
         String(timeoutS),
         "--response-format",
         input.response_format ?? "b64_json",
+        // Self-heal: only acts when Codex is running WITHOUT CDP (quit+relaunch
+        // with the debug port); a healthy instance is untouched.
+        "--restart",
     ];
     if (input.size)
         args.push("--size", input.size);

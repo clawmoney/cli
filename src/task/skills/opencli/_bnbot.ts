@@ -41,6 +41,25 @@ export async function bnbotCommand(
   }
 }
 
+/**
+ * Run an opencli command that emits raw text (e.g. `web read --stdout true`
+ * prints Markdown, not JSON). Returns stdout verbatim — no JSON.parse.
+ */
+export async function opencliText(args: string[]): Promise<string> {
+  const rawBin = process.env.OPENCLI_CLI || "opencli";
+  const bin = rawBin.endsWith(".js") ? process.execPath : rawBin;
+  const finalArgs = rawBin.endsWith(".js") ? [rawBin, ...args] : args;
+  try {
+    const { stdout } = await exec(bin, finalArgs, { maxBuffer: MAX_BUFFER, timeout: TIMEOUT_MS });
+    if (!stdout.trim()) throw new Error("opencli returned empty stdout");
+    return stdout;
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException & { stderr?: string };
+    if (e.stderr && e.stderr.trim()) throw new Error(`opencli failed: ${e.stderr.trim()}`);
+    throw err;
+  }
+}
+
 export async function opencliCommand(
   base: string[],
   positional: string[] = [],

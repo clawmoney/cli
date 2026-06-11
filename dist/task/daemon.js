@@ -49,9 +49,11 @@ function installFileLogger() {
 }
 import { TaskWsClient } from "./ws-client.js";
 import { getSkill, listSkills } from "./skills/index.js";
+import { runPreflight, writePreflightReport } from "./preflight.js";
 const CONFIG_DIR = join(homedir(), ".clawmoney");
 const CONFIG_FILE = join(CONFIG_DIR, "config.yaml");
 const PID_FILE = join(CONFIG_DIR, "task.pid");
+const TASK_STATE_FILE = join(CONFIG_DIR, "task-state.json");
 function loadYamlConfig() {
     if (!existsSync(CONFIG_FILE))
         return {};
@@ -124,6 +126,26 @@ function writePid() {
 function removePid() {
     try {
         unlinkSync(PID_FILE);
+    }
+    catch {
+        // ignore
+    }
+}
+// Lifecycle phase the desktop app reads to show "service running, checking
+// logins…" during the (possibly slow first-run) preflight, vs "online" once
+// the hub connection is up. Distinct from the pid file, which only says the
+// process exists.
+function writeTaskState(phase) {
+    try {
+        writeFileSync(TASK_STATE_FILE, JSON.stringify({ phase, pid: process.pid, ts: new Date().toISOString() }), "utf-8");
+    }
+    catch {
+        /* best effort */
+    }
+}
+function clearTaskState() {
+    try {
+        unlinkSync(TASK_STATE_FILE);
     }
     catch {
         // ignore
@@ -223,7 +245,7 @@ function applySystemProxy() {
         console.error(`[task] system proxy detection skipped: ${err instanceof Error ? err.message : String(err)}`);
     }
 }
-function main() {
+async function main() {
     // Daemon was started as a script (stdio:"ignore"); from here on, all
     // log lines should land in ~/.clawmoney/task.log.
     installFileLogger();
@@ -238,12 +260,32 @@ function main() {
         console.error("[task] api_key missing — set API_KEY env or run `clawmoney setup`");
         process.exit(1);
     }
+    // Mark the service up the moment config checks out — BEFORE the (possibly
+    // slow first-run) preflight. Two reasons: the app can show "service running,
+    // checking logins…" instead of "not started", and the app's self-heal keys
+    // off the pid file, so writing it now stops it from re-spawning us mid-probe.
+    writePid();
+    writeTaskState("probing");
+    // Preflight: probe each platform's external dependency and drop the ones
+    // that would fail every task (Codex not installed, X not logged in, the
+    // Chrome extension down, …). Writes ~/.clawmoney/preflight.json so the
+    // desktop app can surface a home-screen notice. Re-runs every start, so
+    // fixing the dependency recovers the platform on the next boot.
+    console.log(`[task] preflight on ${config.skills.length} skills…`);
+    const { skills: keptSkills, report } = await runPreflight(config.skills);
+    writePreflightReport(report);
+    config.skills = keptSkills;
+    if (report.summary.droppedSkills > 0) {
+        console.warn(`[task] preflight dropped ${report.summary.droppedSkills} skill(s) across ` +
+            `${report.summary.failed} platform(s): ${report.dropped.join(", ")}`);
+    }
     console.log(`[task] starting daemon hub=${config.hub_url} skills=[${config.skills.join(",")}]`);
     if (config.skills.length === 0) {
         console.error("[task] no skills to advertise — refusing to start");
+        removePid();
+        clearTaskState();
         process.exit(1);
     }
-    writePid();
     // Belt-and-suspenders: even if every other handle (WS, heartbeat,
     // reconnect timer) somehow goes away simultaneously, this interval
     // is unref-less and ref-counted into the event loop, so the daemon
@@ -263,6 +305,7 @@ function main() {
         switch (frame.event) {
             case "connected":
                 console.log(`[task] connected agent_id=${frame.agent_id} name="${frame.agent_name}"`);
+                writeTaskState("online");
                 break;
             case "task_request":
                 void handleTaskRequest(ws, frame);
@@ -279,6 +322,7 @@ function main() {
         console.log(`[task] ${signal} — shutting down`);
         ws.stop();
         removePid();
+        clearTaskState();
         setTimeout(() => process.exit(0), 200);
     };
     process.on("SIGINT", () => shutdown("SIGINT"));
@@ -289,5 +333,8 @@ function main() {
 // the module is imported (e.g. by src/commands/task.ts which only wants
 // to use readTaskPid / isPidAlive helpers).
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-    main();
+    main().catch((err) => {
+        console.error(`[task] fatal: ${err instanceof Error ? err.stack : String(err)}`);
+        process.exit(1);
+    });
 }

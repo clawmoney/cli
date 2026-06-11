@@ -20,6 +20,7 @@ import {
   preflightGeminiApi,
   getGeminiRateGuardSnapshot,
 } from "./upstream/gemini-api.js";
+import { callChatGPTWeb } from "./upstream/chatgpt-web.js";
 import {
   callAntigravityApi,
   preflightAntigravityApi,
@@ -285,6 +286,12 @@ const AUTH_ERROR_THRESHOLD = 3;
 const consecutiveAuthErrorsByCli: Map<string, number> = new Map();
 const cliAuthDisabled: Set<string> = new Set();
 
+// chatgpt-web: buyer sessions we've already opened a ChatGPT tab for. First
+// turn opens a temporary chat; later turns continue in the same tab so context
+// accumulates. Keyed by cli_session_id (falls back to request_id for stateless
+// single-shots, which just get a fresh temporary chat each time).
+const chatgptWebSessions: Set<string> = new Set();
+
 const AUTH_BROKEN_PATTERNS: readonly string[] = [
   // Anthropic 403: OAuth authentication is currently not allowed for
   // this organization. The new prod signal from 2026-04-15 incident.
@@ -409,13 +416,17 @@ async function executeRelayRequest(
     // antigravity → daily-cloudcode-pa). Each handler has its own
     // fingerprint file and rate-guard instance.
     if (cliType === "codex") {
-      // Same two-mode pattern as claude: passthrough when the Hub forwards
-      // a real Responses API body (used by /v1/responses endpoint for
-      // Codex CLI drop-in replacement), template mode otherwise (used by
-      // the OpenAI-compat /v1/chat/completions classic endpoint).
-      if (request.passthrough_body) {
+      // Passthrough ONLY when the Hub forwarded a real Responses API body —
+      // i.e. it carries an `input` array (the /v1/responses drop-in path).
+      // The OpenAI-compat /v1/chat/completions path forwards a body with
+      // `messages` (no `input`), so fall through to template mode, which
+      // builds a Responses request from the flattened `prompt`. Without this
+      // guard, chat/completions hit passthrough and 400'd with
+      // "Passthrough body missing `input` array".
+      const pb = request.passthrough_body as { input?: unknown } | undefined;
+      if (pb && Array.isArray(pb.input) && pb.input.length > 0) {
         parsed = await callCodexApiPassthrough({
-          clientBody: request.passthrough_body,
+          clientBody: request.passthrough_body!,
           model,
           onRawEvent: sendChunk,
         });
@@ -432,6 +443,25 @@ async function executeRelayRequest(
         prompt,
         model,
         maxTokens: max_budget_usd ? undefined : 8192,
+      });
+    } else if (cliType === "chatgpt-web") {
+      // Web send/read path — drive chatgpt.com via opencli (temporary chat)
+      // instead of the reverse-proxy API. Real-browser route, un-bannable.
+      // Per-buyer tab keyed by cli_session_id: first turn opens a temporary
+      // chat, later turns continue in the same tab so context accumulates.
+      const webKey = cliSessionId || request_id;
+      const seenBefore = chatgptWebSessions.has(webKey);
+      chatgptWebSessions.add(webKey);
+      // Image turn when the buyer asks for an image model (gpt-image-*) — that
+      // forces a regular chat + image grab. Text models stay on temporary chat.
+      const wantsImage = /image/i.test(model);
+      parsed = await callChatGPTWeb({
+        prompt,
+        model,
+        timeout: wantsImage ? 200 : 120,
+        sessionKey: webKey,
+        continueChat: seenBefore,
+        imageOut: wantsImage,
       });
     } else if (cliType === "antigravity") {
       parsed = await callAntigravityApi({

@@ -39,6 +39,13 @@ export const API_PRICES: Record<string, ModelPricing> = {
   // 5 / 5.1 / 5.2-codex families were fully removed that day. Anything
   // below this comment that's deprecated was removed from the CLI-side
   // pricing table so `modelsForCli("codex")` no longer offers them.
+  //
+  // gpt-5.5 — current Codex CLI default (config.toml `model = "gpt-5.5"`)
+  // after the mid-2026 bump. Upgraded ChatGPT accounts now 404 the older
+  // 5.4/5.3-codex/5.2 ids with "not supported when using Codex with a
+  // ChatGPT account", so gpt-5.5 must be offered. Priced at the 5.4 tier
+  // pending an official LiteLLM entry.
+  "gpt-5.5":              { input: 2.50, output: 15 },
   "gpt-5.4":              { input: 2.50, output: 15 },
   "gpt-5.4-mini":         { input: 0.75, output: 4.50 },
   "gpt-5.3-codex":        { input: 1.75, output: 14 },
