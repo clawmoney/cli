@@ -169,6 +169,7 @@ import {
   fbSearchSkill, fbProfileSkill, fbEventsSkill,
   wrSearchSkill, wrRankingSkill, wrBookSkill,
   ctSearchSkill, ctHotelSuggestSkill, ctHotelSearchSkill, ctFlightSkill,
+  ycCompaniesSkill, ihProductsSkill, ksDiscoverSkill, igExploreSkill,
 } from "./opencli/platforms.js";
 // Codex Desktop generation skills
 import { codexImageGenerateSkill } from "./codex/image-generate.js";
@@ -393,6 +394,10 @@ export const SKILL_REGISTRY: Record<string, SkillHandler> = {
   "hn.search": hnSearchSkill,
   "hn.user": hnUserSkill,
   "hn.read": hnReadSkill,
+  "yc.companies": ycCompaniesSkill,
+  "ih.products": ihProductsSkill,
+  "ks.discover": ksDiscoverSkill,
+  "ig.explore": igExploreSkill,
   "wiki.search": wikiSearchSkill,
   "wiki.summary": wikiSummarySkill,
   "wiki.random": wikiRandomSkill,

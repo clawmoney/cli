@@ -79,6 +79,20 @@ export const hnReadSkill = makeOpenCliSkill("hackernews read", (i) =>
   }),
 );
 
+// ── Lead-gen sources (SpareAPI customer acquisition: YC / IH / KS / IGG) ──
+export const ycCompaniesSkill = makeOpenCliSkill("ycombinator companies", (i) =>
+  bnbotCommand(["yc", "companies"], [], { limit: num(i, ["limit", "count"]), batches: str(i, ["batches"]) }),
+);
+export const ihProductsSkill = makeOpenCliSkill("indiehackers products", (i) =>
+  bnbotCommand(["indiehackers", "products"], [], { limit: num(i, ["limit", "count"]) }),
+);
+export const ksDiscoverSkill = makeOpenCliSkill("kickstarter discover", (i) =>
+  bnbotCommand(["kickstarter", "discover"], [], { limit: num(i, ["limit", "count"]) }),
+);
+export const igExploreSkill = makeOpenCliSkill("indiegogo explore", (i) =>
+  bnbotCommand(["indiegogo", "explore"], [], { limit: num(i, ["limit", "count"]) }),
+);
+
 export const wikiSearchSkill = makeOpenCliSkill("wikipedia search", (i) =>
   bnbotCommand(["wikipedia", "search"], [query(i)], { limit: limit(i), lang: str(i, ["lang", "language"]) }),
 );
