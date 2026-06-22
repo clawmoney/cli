@@ -397,7 +397,7 @@ export const SKILL_REGISTRY: Record<string, SkillHandler> = {
   "yc.companies": ycCompaniesSkill,
   "ih.products": ihProductsSkill,
   "ks.discover": ksDiscoverSkill,
-  "ig.explore": igExploreSkill,
+  "igg.explore": igExploreSkill,
   "wiki.search": wikiSearchSkill,
   "wiki.summary": wikiSummarySkill,
   "wiki.random": wikiRandomSkill,
