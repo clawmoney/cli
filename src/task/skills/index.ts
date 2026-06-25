@@ -511,6 +511,38 @@ export function listSkills(): string[] {
   return Object.keys(SKILL_REGISTRY);
 }
 
+/**
+ * Skills now served directly by the SpareAPI backend — plain-HTTP public APIs
+ * (Y Combinator / IndieHackers / Hacker News) that the gateway fetches itself
+ * instead of dispatching to operators. The handlers stay registered, so an
+ * explicit `SKILLS=yc.companies,...` can still opt in, but operators DON'T
+ * advertise them by default: the hub no longer routes these to operators, and
+ * advertising them would just invite redundant single-fetch jobs.
+ *
+ * Browser-walled platforms (Kickstarter `ks.*` / Indiegogo `igg.*`, behind
+ * Cloudflare) are NOT here — they still need a real operator Chrome, so they
+ * keep being advertised. Other public read surfaces (wiki / bbc / bloomberg /
+ * stackoverflow / v2ex …) also stay, since the backend doesn't fetch them yet.
+ */
+export const DIRECT_SERVED_SKILLS = new Set<string>([
+  "yc.companies",
+  "ih.products",
+  "hn.top",
+  "hn.new",
+  "hn.best",
+  "hn.ask",
+  "hn.show",
+  "hn.jobs",
+  "hn.search",
+  "hn.user",
+  "hn.read",
+]);
+
+/** Skills an operator advertises when the `SKILLS` env var is unset. */
+export function defaultAdvertiseSkills(): string[] {
+  return Object.keys(SKILL_REGISTRY).filter((s) => !DIRECT_SERVED_SKILLS.has(s));
+}
+
 export function getSkill(skillId: string): SkillHandler | undefined {
   return SKILL_REGISTRY[skillId];
 }
