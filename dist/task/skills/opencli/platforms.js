@@ -41,6 +41,11 @@ export const hnReadSkill = makeOpenCliSkill("hackernews read", (i) => bnbotComma
     replies: num(i, ["replies"]),
     "max-length": num(i, ["maxLength", "max_length"]),
 }));
+// ── Lead-gen sources (SpareAPI customer acquisition: YC / IH / KS / IGG) ──
+export const ycCompaniesSkill = makeOpenCliSkill("ycombinator companies", (i) => bnbotCommand(["yc", "companies"], [], { limit: num(i, ["limit", "count"]), batches: str(i, ["batches"]) }));
+export const ihProductsSkill = makeOpenCliSkill("indiehackers products", (i) => bnbotCommand(["indiehackers", "products"], [], { limit: num(i, ["limit", "count"]) }));
+export const ksDiscoverSkill = makeOpenCliSkill("kickstarter discover", (i) => bnbotCommand(["kickstarter", "discover"], [], { limit: num(i, ["limit", "count"]) }));
+export const igExploreSkill = makeOpenCliSkill("indiegogo explore", (i) => bnbotCommand(["indiegogo", "explore"], [], { limit: num(i, ["limit", "count"]) }));
 export const wikiSearchSkill = makeOpenCliSkill("wikipedia search", (i) => bnbotCommand(["wikipedia", "search"], [query(i)], { limit: limit(i), lang: str(i, ["lang", "language"]) }));
 export const wikiSummarySkill = makeOpenCliSkill("wikipedia summary", (i) => bnbotCommand(["wikipedia", "summary"], [reqStr(i, ["title", "page"], "title")], { lang: str(i, ["lang", "language"]) }));
 export const wikiRandomSkill = makeOpenCliSkill("wikipedia random", (i) => bnbotCommand(["wikipedia", "random"], [], { lang: str(i, ["lang", "language"]) }));

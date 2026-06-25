@@ -48,7 +48,7 @@ function installFileLogger() {
     console.error = (...args) => logToFile("ERROR", ...args);
 }
 import { TaskWsClient } from "./ws-client.js";
-import { getSkill, listSkills } from "./skills/index.js";
+import { getSkill, listSkills, defaultAdvertiseSkills } from "./skills/index.js";
 import { runPreflight, writePreflightReport } from "./preflight.js";
 const CONFIG_DIR = join(homedir(), ".clawmoney");
 const CONFIG_FILE = join(CONFIG_DIR, "config.yaml");
@@ -78,7 +78,10 @@ function loadConfig() {
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
-    const skills = requested.length > 0 ? requested : listSkills();
+    // Default advertise set excludes skills the SpareAPI backend now fetches
+    // directly (YC / IndieHackers / Hacker News); an explicit SKILLS= can still
+    // opt into them since `supported` below is the full registry.
+    const skills = requested.length > 0 ? requested : defaultAdvertiseSkills();
     // Sanity-check: drop anything we can't actually serve so we don't
     // advertise dead skills to the hub.
     const supported = new Set(listSkills());

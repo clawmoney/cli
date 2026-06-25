@@ -143,7 +143,7 @@ import { biliFeedSkill } from "./bilibili/feed.js";
 import { biliFeedDetailSkill } from "./bilibili/feed-detail.js";
 import { biliDownloadSkill } from "./bilibili/download.js";
 // OpenCLI public/browser read skills (Google, HN, Wikipedia, etc.)
-import { ggSearchSkill, ggSuggestSkill, ggNewsSkill, ggTrendsSkill, wxmpArticleSearchSkill, wxmpArticleSkill, hnTopSkill, hnNewSkill, hnBestSkill, hnAskSkill, hnShowSkill, hnJobsSkill, hnSearchSkill, hnUserSkill, hnReadSkill, wikiSearchSkill, wikiSummarySkill, wikiRandomSkill, wikiTrendingSkill, wikiPageSkill, yfQuoteSkill, zhSearchSkill, zhHotSkill, zhRecommendSkill, zhQuestionSkill, zhAnswerDetailSkill, zhAnswerCommentsSkill, bbcNewsSkill, bbcTopicSkill, bbgMainSkill, bbgMarketsSkill, bbgEconomicsSkill, bbgIndustriesSkill, bbgTechSkill, bbgPoliticsSkill, bbgBusinessweekSkill, bbgOpinionsSkill, bbgFeedsSkill, bbgArticleSkill, medSearchSkill, medTagSkill, medFeedSkill, medUserSkill, subSearchSkill, subPublicationSkill, subFeedSkill, wbHotSkill, wbSearchSkill, wbFeedSkill, wbUserSkill, wbPostSkill, wbCommentsSkill, kr36NewsSkill, kr36HotSkill, kr36SearchSkill, kr36ArticleSkill, dbSearchSkill, dbMovieHotSkill, dbBookHotSkill, dbTop250Skill, dbPhotosSkill, sfNewsSkill, sfRollingNewsSkill, sfStockSkill, jkFeedSkill, jkSearchSkill, xqSearchSkill, xqHotSkill, xqHotStockSkill, xqStockSkill, xqCommentsSkill, xqKlineSkill, xqEarningsDateSkill, xyzPodcastSkill, xyzPodcastEpisodesSkill, xyzEpisodeSkill, fbSearchSkill, fbProfileSkill, fbEventsSkill, wrSearchSkill, wrRankingSkill, wrBookSkill, ctSearchSkill, ctHotelSuggestSkill, ctHotelSearchSkill, ctFlightSkill, } from "./opencli/platforms.js";
+import { ggSearchSkill, ggSuggestSkill, ggNewsSkill, ggTrendsSkill, wxmpArticleSearchSkill, wxmpArticleSkill, hnTopSkill, hnNewSkill, hnBestSkill, hnAskSkill, hnShowSkill, hnJobsSkill, hnSearchSkill, hnUserSkill, hnReadSkill, wikiSearchSkill, wikiSummarySkill, wikiRandomSkill, wikiTrendingSkill, wikiPageSkill, yfQuoteSkill, zhSearchSkill, zhHotSkill, zhRecommendSkill, zhQuestionSkill, zhAnswerDetailSkill, zhAnswerCommentsSkill, bbcNewsSkill, bbcTopicSkill, bbgMainSkill, bbgMarketsSkill, bbgEconomicsSkill, bbgIndustriesSkill, bbgTechSkill, bbgPoliticsSkill, bbgBusinessweekSkill, bbgOpinionsSkill, bbgFeedsSkill, bbgArticleSkill, medSearchSkill, medTagSkill, medFeedSkill, medUserSkill, subSearchSkill, subPublicationSkill, subFeedSkill, wbHotSkill, wbSearchSkill, wbFeedSkill, wbUserSkill, wbPostSkill, wbCommentsSkill, kr36NewsSkill, kr36HotSkill, kr36SearchSkill, kr36ArticleSkill, dbSearchSkill, dbMovieHotSkill, dbBookHotSkill, dbTop250Skill, dbPhotosSkill, sfNewsSkill, sfRollingNewsSkill, sfStockSkill, jkFeedSkill, jkSearchSkill, xqSearchSkill, xqHotSkill, xqHotStockSkill, xqStockSkill, xqCommentsSkill, xqKlineSkill, xqEarningsDateSkill, xyzPodcastSkill, xyzPodcastEpisodesSkill, xyzEpisodeSkill, fbSearchSkill, fbProfileSkill, fbEventsSkill, wrSearchSkill, wrRankingSkill, wrBookSkill, ctSearchSkill, ctHotelSuggestSkill, ctHotelSearchSkill, ctFlightSkill, ycCompaniesSkill, ihProductsSkill, ksDiscoverSkill, igExploreSkill, } from "./opencli/platforms.js";
 // Codex Desktop generation skills
 import { codexImageGenerateSkill } from "./codex/image-generate.js";
 // ChatGPT Desktop skills
@@ -360,6 +360,10 @@ export const SKILL_REGISTRY = {
     "hn.search": hnSearchSkill,
     "hn.user": hnUserSkill,
     "hn.read": hnReadSkill,
+    "yc.companies": ycCompaniesSkill,
+    "ih.products": ihProductsSkill,
+    "ks.discover": ksDiscoverSkill,
+    "igg.explore": igExploreSkill,
     "wiki.search": wikiSearchSkill,
     "wiki.summary": wikiSummarySkill,
     "wiki.random": wikiRandomSkill,
@@ -470,6 +474,36 @@ export const SKILL_REGISTRY = {
 };
 export function listSkills() {
     return Object.keys(SKILL_REGISTRY);
+}
+/**
+ * Skills now served directly by the SpareAPI backend — plain-HTTP public APIs
+ * (Y Combinator / IndieHackers / Hacker News) that the gateway fetches itself
+ * instead of dispatching to operators. The handlers stay registered, so an
+ * explicit `SKILLS=yc.companies,...` can still opt in, but operators DON'T
+ * advertise them by default: the hub no longer routes these to operators, and
+ * advertising them would just invite redundant single-fetch jobs.
+ *
+ * Browser-walled platforms (Kickstarter `ks.*` / Indiegogo `igg.*`, behind
+ * Cloudflare) are NOT here — they still need a real operator Chrome, so they
+ * keep being advertised. Other public read surfaces (wiki / bbc / bloomberg /
+ * stackoverflow / v2ex …) also stay, since the backend doesn't fetch them yet.
+ */
+export const DIRECT_SERVED_SKILLS = new Set([
+    "yc.companies",
+    "ih.products",
+    "hn.top",
+    "hn.new",
+    "hn.best",
+    "hn.ask",
+    "hn.show",
+    "hn.jobs",
+    "hn.search",
+    "hn.user",
+    "hn.read",
+]);
+/** Skills an operator advertises when the `SKILLS` env var is unset. */
+export function defaultAdvertiseSkills() {
+    return Object.keys(SKILL_REGISTRY).filter((s) => !DIRECT_SERVED_SKILLS.has(s));
 }
 export function getSkill(skillId) {
     return SKILL_REGISTRY[skillId];
