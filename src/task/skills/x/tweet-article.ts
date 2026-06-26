@@ -8,7 +8,7 @@ import { tweetArticleToTwitter283, type BnbotArticle } from "./_mapper.js";
  * Throws upstream if the tweet has no Article attached.
  */
 export const xTweetArticleSkill: SkillHandler = {
-  price_usd: 0.003,
+  price_usd: 0.0001,
   async run(input, ctx) {
     const { tweet_id } = (input ?? {}) as { tweet_id?: string };
     if (!tweet_id) throw new Error("missing 'tweet_id'");

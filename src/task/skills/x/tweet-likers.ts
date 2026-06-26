@@ -8,7 +8,7 @@ import { userListToTwitter283, type BnbotUserListEntry } from "./_mapper.js";
  * which X resolves to canonical.
  */
 export const xTweetLikersSkill: SkillHandler = {
-  price_usd: 0.005,
+  price_usd: 0.0001,
   async run(input, ctx) {
     const { tweet_id, count, cursor } = (input ?? {}) as {
       tweet_id?: string;

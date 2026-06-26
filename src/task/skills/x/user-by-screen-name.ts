@@ -14,7 +14,7 @@ import { userProfileToTwitter283, type BnbotUserProfile } from "./_mapper.js";
  * "field not available".
  */
 export const xUserByScreenNameSkill: SkillHandler = {
-  price_usd: 0.003,
+  price_usd: 0.0001,
   async run(input, ctx) {
     const { username } = (input ?? {}) as { username?: string };
     if (!username) throw new Error("missing 'username'");

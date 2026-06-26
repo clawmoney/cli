@@ -33,7 +33,7 @@ interface XSearchInput {
  * NDJSON stream alive past Cloudflare's idle threshold.
  */
 export const xSearchSkill: SkillHandler = {
-  price_usd: 0.005,
+  price_usd: 0.0001,
 
   async run(input, ctx) {
     const raw = (input ?? {}) as XSearchInput;

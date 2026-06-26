@@ -9,7 +9,7 @@ import { searchToTwitter283, type BnbotTweet } from "./_mapper.js";
  * envelope.
  */
 export const xSearchSkill: SkillHandler = {
-  price_usd: 0.005,
+  price_usd: 0.0001,
   async run(input, ctx) {
     const args = (input ?? {}) as SearchArgs;
     if (!args.q) throw new Error("missing 'q'");

@@ -8,7 +8,7 @@ import { trendsToTwitter283, type BnbotTrend } from "./_mapper.js";
  * accounts but accepts it as a best-effort hint.
  */
 export const xTrendsSkill: SkillHandler = {
-  price_usd: 0.001,
+  price_usd: 0.0001,
   async run(input, ctx) {
     const { woeid, count } = (input ?? {}) as {
       woeid?: number;

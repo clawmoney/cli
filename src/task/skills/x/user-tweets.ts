@@ -8,7 +8,7 @@ import { userTweetsToTwitter283, type BnbotTweet } from "./_mapper.js";
  * input controls post-filtering ("tweets" / "replies" / "media").
  */
 export const xUserTweetsSkill: SkillHandler = {
-  price_usd: 0.005,
+  price_usd: 0.0001,
   async run(input, ctx) {
     const args = (input ?? {}) as UserTweetsArgs;
     if (!args.username) throw new Error("missing 'username'");

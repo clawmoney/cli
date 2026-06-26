@@ -12,7 +12,7 @@ import {
  * twitter-v1-style numeric id list.
  */
 export const xUserFollowingSkill: SkillHandler = {
-  price_usd: 0.005,
+  price_usd: 0.0001,
   async run(input, ctx) {
     const {
       username,

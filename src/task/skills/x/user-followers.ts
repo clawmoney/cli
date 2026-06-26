@@ -14,7 +14,7 @@ import {
  * optional `stringify_ids`).
  */
 export const xUserFollowersSkill: SkillHandler = {
-  price_usd: 0.005,
+  price_usd: 0.0001,
   async run(input, ctx) {
     const {
       username,
