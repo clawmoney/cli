@@ -269,6 +269,21 @@ program
     }
   });
 
+// ui — menu-bar companion (zero-install Electron tray + dashboard window)
+program
+  .command('ui')
+  .description('Open the menu-bar companion UI. Zero-install: pulls Electron on first run.')
+  .action(async () => {
+    try {
+      const { openCompanion } = await import('./ui/companion.js');
+      await openCompanion();
+      console.log('ClawMoney companion is running in your menu bar.');
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
 // market
 const market = program
   .command('market')
@@ -292,8 +307,17 @@ market
   .description('Start Market Provider (background process)')
   .option('--cli <command>', 'CLI command for task execution (default: from config or openclaw)')
   .option('--auto-accept', 'Auto-accept escrow tasks from the marketplace')
+  .option('--ui', 'Also open the menu-bar companion UI (tray icon + dashboard window)')
   .action(async (options) => {
     try {
+      if (options.ui) {
+        try {
+          const { openCompanion } = await import('./ui/companion.js');
+          await openCompanion();
+        } catch (e) {
+          console.error('Companion UI failed to start:', (e as Error).message);
+        }
+      }
       await hubStartCommand(options);
     } catch (err) {
       console.error((err as Error).message);

@@ -1,0 +1,10 @@
+{
+  "name": "clawmoney-companion",
+  "private": true,
+  "version": "0.1.0",
+  "description": "ClawMoney CLI companion — menu-bar tray icon + dashboard window (Electron). Auto-installed on first `clawmoney ui` / `market start --ui`.",
+  "main": "main.js",
+  "dependencies": {
+    "electron": "^37.2.1"
+  }
+}
