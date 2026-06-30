@@ -111,6 +111,8 @@ export async function ensureCompanionRunning(dashboardUrl) {
     const env = { ...process.env };
     if (dashboardUrl)
         env.CLAWMONEY_DASHBOARD_URL = dashboardUrl;
+    // Pass the CLI entry so the companion can auto-start `market start` on load.
+    env.CLAWMONEY_CLI_ENTRY = process.argv[1] || '';
     // Route Electron stdout/stderr to a log file so render issues are debuggable.
     const outLog = fs.openSync(path.join(RUN_DIR, 'companion.out.log'), 'a');
     const child = spawn(electronBin, [path.join(RUN_DIR, 'main.js')], {

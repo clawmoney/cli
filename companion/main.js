@@ -122,7 +122,7 @@ function getExtensionStatus() {
     const finish = (installed, connected, status) => {
       if (done) return;
       done = true;
-      resolve({ installed, connected, status, installUrl: EXTENSION_URL });
+      resolve({ installed, connected, status, installUrl: EXTENSION_URL, detail: out.trim() });
     };
     try {
       const p = spawn('bnbot', ['status'], { env: { ...process.env, PATH: CLI_PATH } });
@@ -174,7 +174,32 @@ async function apiGet(p, apiKey) {
   }
 }
 
+// Mirror desktop's ensure_provider_running: when the dashboard loads and the
+// user is logged in but the Market provider isn't running, start it — so the
+// companion auto-takes orders on open, just like the desktop app does.
+// Uses ELECTRON_RUN_AS_NODE so the companion's own node runs the CLI entry
+// (no dependency on a global `clawmoney` or system node on PATH).
+function ensureMarketRunning() {
+  const entry = process.env.CLAWMONEY_CLI_ENTRY;
+  if (!entry || !fs.existsSync(entry)) return;
+  const cfg = readClawConfig();
+  if (!cfg || !cfg.api_key) return; // not logged in → don't take orders
+  if (readPidStatus('market', 'provider.pid').running) return; // already up
+  try {
+    const child = spawn(process.execPath, [entry, 'market', 'start'], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', PATH: CLI_PATH },
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+    log('ensureMarketRunning: started `clawmoney market start`');
+  } catch (e) {
+    log(`ensureMarketRunning failed: ${e.message}`);
+  }
+}
+
 async function loadDashboard() {
+  ensureMarketRunning();
   const cfg = readClawConfig();
   const configured = !!(cfg && cfg.api_key);
   const dash = {
