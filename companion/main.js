@@ -7,11 +7,12 @@
 //
 // Plain CommonJS on purpose (Electron main is happiest that way).
 
-const { app, BrowserWindow, Tray, Menu, nativeImage, shell } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, shell, ipcMain } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const http = require('node:http');
+const { spawn } = require('node:child_process');
 
 // Rebrand from "Electron" — sets the macOS menu-bar app name (and userData path).
 app.setName('Claw Money');
@@ -82,6 +83,181 @@ function startUIServer() {
     });
   });
 }
+
+// ── Tauri invoke bridge ─────────────────────────────────────────────────────
+// preload.js injects window.__TAURI_INTERNALS__.invoke -> ipcRenderer -> here.
+// We implement the desktop UI's commands against clawmoney config + backend so
+// the UI runs in real (isTauri) mode. Mirrors the Rust commands in
+// clawmoney-desktop/src-tauri/src/main.rs (which mostly call the same backend
+// or `clawmoney` CLI).
+const API_BASE = process.env.CLAWMONEY_API_BASE || 'https://api.bnbot.ai';
+const CONFIG_PATH = path.join(os.homedir(), '.clawmoney', 'config.yaml');
+const EXTENSION_URL = 'https://clawmoney.ai/extension';
+
+// Electron GUI apps inherit a minimal PATH; extend it so `bnbot` resolves.
+const CLI_PATH = [
+  '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin',
+  path.join(os.homedir(), '.npm-global', 'bin'),
+  process.env.PATH || '',
+].join(':');
+
+// Mirror Rust service_status: read the daemon pid file, check the process is alive.
+function readPidStatus(name, pidFile) {
+  const pidPath = path.join(os.homedir(), '.clawmoney', pidFile);
+  try {
+    const pid = parseInt(fs.readFileSync(pidPath, 'utf8').trim(), 10) || null;
+    if (pid) process.kill(pid, 0); // throws if the process isn't alive
+    return { name, running: !!pid, pid, pidFile: pidPath };
+  } catch {
+    return { name, running: false, pid: null, pidFile: pidPath };
+  }
+}
+
+// Mirror Rust get_extension_status: `bnbot status`; output with "extension" +
+// "connected" => connected; command missing/failed => not installed.
+function getExtensionStatus() {
+  return new Promise((resolve) => {
+    let done = false;
+    let out = '';
+    const finish = (installed, connected, status) => {
+      if (done) return;
+      done = true;
+      resolve({ installed, connected, status, installUrl: EXTENSION_URL });
+    };
+    try {
+      const p = spawn('bnbot', ['status'], { env: { ...process.env, PATH: CLI_PATH } });
+      const timer = setTimeout(() => { try { p.kill(); } catch { /* ignore */ } finish(false, false, 'missing'); }, 12000);
+      p.stdout.on('data', (d) => { out += d; });
+      p.stderr.on('data', (d) => { out += d; });
+      p.on('error', () => { clearTimeout(timer); finish(false, false, 'missing'); });
+      p.on('close', (code) => {
+        clearTimeout(timer);
+        if (code !== 0) return finish(false, false, 'missing');
+        const o = out.toLowerCase();
+        const connected = o.includes('extension') && o.includes('connected');
+        finish(true, connected, connected ? 'connected' : 'not_connected');
+      });
+    } catch {
+      finish(false, false, 'missing');
+    }
+  });
+}
+
+function readClawConfig() {
+  try {
+    const txt = fs.readFileSync(CONFIG_PATH, 'utf8');
+    const get = (k) => {
+      const m = txt.match(new RegExp('^' + k + ':\\s*(.+)$', 'm'));
+      return m ? m[1].trim().replace(/^["']|["']$/g, '') : undefined;
+    };
+    return {
+      api_key: get('api_key'),
+      agent_id: get('agent_id'),
+      agent_slug: get('agent_slug'),
+      email: get('email'),
+      wallet_address: get('wallet_address'),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function apiGet(p, apiKey) {
+  try {
+    const r = await fetch(API_BASE + p, {
+      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+    });
+    const data = await r.json().catch(() => null);
+    return { ok: r.ok, status: r.status, data };
+  } catch (e) {
+    return { ok: false, status: 0, data: null, error: String(e) };
+  }
+}
+
+async function loadDashboard() {
+  const cfg = readClawConfig();
+  const configured = !!(cfg && cfg.api_key);
+  const dash = {
+    ok: true,
+    apiBase: API_BASE,
+    configPath: CONFIG_PATH,
+    configured,
+    config: configured
+      ? { agent_slug: cfg.agent_slug, email: cfg.email, wallet_address: cfg.wallet_address }
+      : null,
+    account: { ok: false },
+    wallet: { ok: false },
+    extension: { installed: false, connected: false },
+    services: { market: readPidStatus('market', 'provider.pid'), surf: readPidStatus('surf', 'relay.pid') },
+    history: { ok: true, orders: [], escrow: [], orderCount: 0, escrowCount: 0 },
+    orderEarnings: { ok: false },
+    skills: [],
+    providerLog: [],
+    connections: { platforms: [] },
+    cliAvailable: true,
+  };
+  dash.extension = await getExtensionStatus(); // local check, independent of config
+  if (!configured) return dash;
+  const key = cfg.api_key;
+  const [account, wBase, wBsc, skills, orders, escrow, earnings] = await Promise.all([
+    apiGet('/api/v1/claw-agents/me', key),
+    apiGet('/api/v1/claw-agents/me/wallet/balance?asset=usdc&network=base', key),
+    apiGet('/api/v1/claw-agents/me/wallet/balance?asset=usdc&network=bsc', key),
+    apiGet('/api/v1/market/skills/mine?active_only=false', key),
+    apiGet('/api/v1/market/orders/mine?role=provider&limit=50', key),
+    apiGet('/api/v1/market/escrow/assigned?limit=12', key),
+    apiGet('/api/v1/market/orders/mine/earnings', key),
+  ]);
+
+  if (account.ok) dash.account = { ok: true, data: account.data };
+
+  const baseAmt = parseFloat((wBase.data && wBase.data.amount) || '0') || 0;
+  const bscAmt = parseFloat((wBsc.data && wBsc.data.amount) || '0') || 0;
+  dash.wallet = {
+    ok: true,
+    address: cfg.wallet_address || (wBase.data && wBase.data.address) || null,
+    balance: baseAmt + bscAmt,
+    base: baseAmt,
+    bsc: bscAmt,
+  };
+
+  if (skills.ok) dash.skills = (skills.data && skills.data.data) || [];
+
+  const orderList = (orders.data && orders.data.data) || [];
+  const escrowList = (escrow.data && escrow.data.data) || [];
+  dash.history = {
+    ok: true,
+    orders: orderList,
+    escrow: escrowList,
+    orderCount: orderList.length,
+    escrowCount: escrowList.length,
+  };
+
+  if (earnings.ok) dash.orderEarnings = { ok: true, ...(earnings.data || {}) };
+
+  return dash;
+}
+
+async function handleTauriCommand(cmd, args) {
+  log(`invoke: ${cmd}`);
+  try {
+    switch (cmd) {
+      case 'load_dashboard':
+        return await loadDashboard();
+      case 'load_provider_log':
+        return { ok: true, providerLog: [] };
+      default:
+        // window/event plugin calls (e.g. plugin:window|start_dragging) — no-op for now.
+        if (typeof cmd === 'string' && cmd.startsWith('plugin:')) return {};
+        return { ok: true };
+    }
+  } catch (e) {
+    log(`invoke ${cmd} failed: ${e.message}`);
+    return { ok: false, error: String(e) };
+  }
+}
+
+ipcMain.handle('tauri:invoke', (_e, cmd, args) => handleTauriCommand(cmd, args));
 
 let win = null;
 let tray = null;

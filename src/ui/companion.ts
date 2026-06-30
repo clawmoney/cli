@@ -163,7 +163,9 @@ function installedDesktopApp(): string | null {
 
 /** Open the menu-bar UI: the installed Desktop app if present, else the companion. */
 export async function openCompanion(dashboardUrl?: string): Promise<'desktop' | 'companion'> {
-  const desktop = installedDesktopApp();
+  // CLAWMONEY_UI=companion forces the Electron companion even if Desktop is installed (testing).
+  const forceCompanion = process.env.CLAWMONEY_UI === 'companion';
+  const desktop = forceCompanion ? null : installedDesktopApp();
   if (desktop) {
     // Desktop app is installed → launch it, do NOT start the Electron companion.
     spawnSync('open', ['-a', desktop]);

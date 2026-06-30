@@ -1,13 +1,35 @@
-// Companion preload — runs before the desktop UI's own scripts. With
-// contextIsolation:false it shares the page world, so it can patch globals.
+// Companion preload — injects a Tauri __TAURI_INTERNALS__ bridge so the desktop
+// UI runs in REAL mode (isTauri() === true) instead of mock. @tauri-apps/api's
+// invoke() calls window.__TAURI_INTERNALS__.invoke(); we forward that to the
+// Electron main process (see main.js ipcMain 'tauri:invoke'), which implements
+// the commands against clawmoney config + the backend.
 //
-// The desktop UI's mock mode starts a 5.2s "balance ticker"
-// (window.setInterval(fn, 5200)) that does a full innerHTML rebuild every tick
-// -> flickers the transparent window. We skip ONLY that timer. Everything else
-// — including the mock async setTimeout(80) the boot sequence awaits — runs
-// untouched (clearing all timers is what previously hung the boot screen).
-const _setInterval = window.setInterval.bind(window);
-window.setInterval = function (handler, timeout, ...args) {
-  if (timeout === 5200) return 0;
-  return _setInterval(handler, timeout, ...args);
+// contextIsolation:false so we can define window globals directly. The desktop
+// UI doesn't use Tauri events, so callbacks are a minimal local stub.
+const { ipcRenderer } = require('electron');
+
+const callbacks = new Map();
+let nextCallbackId = 0;
+
+window.__TAURI_INTERNALS__ = {
+  invoke: (cmd, args) => ipcRenderer.invoke('tauri:invoke', cmd, args ?? {}),
+  transformCallback: (callback, once) => {
+    const id = ++nextCallbackId;
+    callbacks.set(id, { callback, once: !!once });
+    return id;
+  },
+  unregisterCallback: (id) => callbacks.delete(id),
+  runCallback: (id, payload) => {
+    const entry = callbacks.get(id);
+    if (!entry) return;
+    if (entry.once) callbacks.delete(id);
+    try { entry.callback(payload); } catch { /* ignore */ }
+  },
+  callbacks,
+  convertFileSrc: (filePath) => filePath,
+  metadata: {
+    currentWindow: { label: 'main' },
+    currentWebview: { windowLabel: 'main', label: 'main' },
+  },
+  plugins: {},
 };

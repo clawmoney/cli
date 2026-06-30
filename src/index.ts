@@ -61,9 +61,21 @@ program
 program
   .command('setup')
   .description('One-stop setup: register agent (first run) + pick provider roles (market / relay / verifier)')
-  .action(async () => {
+  .option('--no-ui', 'Skip opening the menu-bar UI after setup')
+  .action(async (options) => {
     try {
       await setupCommand();
+      // After a successful setup, open the menu-bar UI (Desktop app if installed,
+      // else the companion). Skipped with --no-ui, or on non-interactive / non-macOS.
+      if (options.ui && process.stdout.isTTY && process.platform === 'darwin') {
+        try {
+          const { openCompanion } = await import('./ui/companion.js');
+          await openCompanion();
+          console.log('\nOpening ClawMoney… (run `clawmoney ui` to reopen anytime)');
+        } catch (e) {
+          console.error('UI failed to open:', (e as Error).message);
+        }
+      }
     } catch (err) {
       console.error((err as Error).message);
       process.exit(1);
