@@ -272,12 +272,16 @@ program
 // ui — menu-bar companion (zero-install Electron tray + dashboard window)
 program
   .command('ui')
-  .description('Open the menu-bar companion UI. Zero-install: pulls Electron on first run.')
+  .description('Open the ClawMoney menu-bar UI (Desktop app if installed, else a zero-install companion).')
   .action(async () => {
     try {
       const { openCompanion } = await import('./ui/companion.js');
-      await openCompanion();
-      console.log('ClawMoney companion is running in your menu bar.');
+      const kind = await openCompanion();
+      console.log(
+        kind === 'desktop'
+          ? 'Opened ClawMoney Desktop.'
+          : 'ClawMoney companion is running in your menu bar.'
+      );
     } catch (err) {
       console.error((err as Error).message);
       process.exit(1);

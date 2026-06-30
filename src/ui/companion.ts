@@ -22,7 +22,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PKG_COMPANION = path.resolve(__dirname, '../../companion');
 // Writable run dir in the user's home.
 const RUN_DIR = path.join(os.homedir(), '.clawmoney', 'companion');
-const COMPANION_FILES = ['main.js', 'package.json', 'tray-icon.png'];
+const COMPANION_FILES = ['main.js', 'package.json', 'tray-icon.png', 'icon.png', 'icon.icns', 'preload.js'];
 
 function copyCompanionFiles(): void {
   fs.mkdirSync(RUN_DIR, { recursive: true });
@@ -30,6 +30,61 @@ function copyCompanionFiles(): void {
     const src = path.join(PKG_COMPANION, f);
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(RUN_DIR, f));
   }
+  // Bundled desktop UI (Vite build output) — copy recursively.
+  const uiSrc = path.join(PKG_COMPANION, 'ui');
+  if (fs.existsSync(uiSrc)) {
+    fs.rmSync(path.join(RUN_DIR, 'ui'), { recursive: true, force: true });
+    fs.cpSync(uiSrc, path.join(RUN_DIR, 'ui'), { recursive: true });
+  }
+}
+
+// Rebrand the dev Electron.app so the Dock / Cmd-Tab name + icon read "Claw Money"
+// instead of "Electron". The Dock name follows the running executable's name
+// (CFBundleExecutable), so we rename the binary itself — CFBundleName /
+// app.setName() alone don't change it.
+const MACOS_BIN_NAME = 'Claw Money';
+
+function electronBinaryPath(): string {
+  if (process.platform === 'darwin') {
+    const base = path.join(RUN_DIR, 'node_modules', 'electron', 'dist', 'Electron.app', 'Contents', 'MacOS');
+    const renamed = path.join(base, MACOS_BIN_NAME);
+    return fs.existsSync(renamed) ? renamed : path.join(base, 'Electron');
+  }
+  return path.join(RUN_DIR, 'node_modules', '.bin', process.platform === 'win32' ? 'electron.cmd' : 'electron');
+}
+
+function patchElectronApp(): void {
+  if (process.platform !== 'darwin') return;
+  const appPath = path.join(RUN_DIR, 'node_modules', 'electron', 'dist', 'Electron.app');
+  const contents = path.join(appPath, 'Contents');
+  if (!fs.existsSync(contents)) return;
+
+  // Rename the executable — the Dock/Cmd-Tab name follows CFBundleExecutable.
+  const oldBin = path.join(contents, 'MacOS', 'Electron');
+  const newBin = path.join(contents, 'MacOS', MACOS_BIN_NAME);
+  if (fs.existsSync(oldBin) && !fs.existsSync(newBin)) {
+    try { fs.renameSync(oldBin, newBin); } catch { /* ignore */ }
+  }
+
+  const plist = path.join(contents, 'Info.plist');
+  const buddy = '/usr/libexec/PlistBuddy';
+  if (fs.existsSync(buddy) && fs.existsSync(plist)) {
+    spawnSync(buddy, ['-c', 'Set :CFBundleName Claw Money', plist]);
+    const dn = spawnSync(buddy, ['-c', 'Set :CFBundleDisplayName Claw Money', plist]);
+    if (dn.status !== 0) spawnSync(buddy, ['-c', 'Add :CFBundleDisplayName string Claw Money', plist]);
+    if (fs.existsSync(newBin)) spawnSync(buddy, ['-c', `Set :CFBundleExecutable ${MACOS_BIN_NAME}`, plist]);
+  }
+
+  const icnsSrc = path.join(PKG_COMPANION, 'icon.icns');
+  const icnsDst = path.join(contents, 'Resources', 'electron.icns');
+  if (fs.existsSync(icnsSrc) && fs.existsSync(path.dirname(icnsDst))) {
+    try { fs.copyFileSync(icnsSrc, icnsDst); } catch { /* ignore */ }
+  }
+
+  // Refresh LaunchServices so the new name/icon take effect.
+  const lsregister =
+    '/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister';
+  if (fs.existsSync(lsregister)) spawnSync(lsregister, ['-f', appPath]);
 }
 
 function ensureElectron(): string {
@@ -49,8 +104,9 @@ function ensureElectron(): string {
     if (r.status !== 0) {
       throw new Error('Failed to install the ClawMoney companion UI (Electron).');
     }
+    patchElectronApp();
   }
-  return bin;
+  return electronBinaryPath();
 }
 
 /** Start the companion if it isn't already running. Idempotent. */
@@ -63,11 +119,13 @@ export async function ensureCompanionRunning(dashboardUrl?: string): Promise<voi
   const env = { ...process.env };
   if (dashboardUrl) env.CLAWMONEY_DASHBOARD_URL = dashboardUrl;
 
+  // Route Electron stdout/stderr to a log file so render issues are debuggable.
+  const outLog = fs.openSync(path.join(RUN_DIR, 'companion.out.log'), 'a');
   const child = spawn(electronBin, [path.join(RUN_DIR, 'main.js')], {
     cwd: RUN_DIR,
     env,
     detached: true,
-    stdio: 'ignore',
+    stdio: ['ignore', outLog, outLog],
   });
   child.unref();
 
@@ -91,9 +149,28 @@ function resolveDashboardUrl(): string {
   return base;
 }
 
-/** Open (or focus) the companion window. */
-export async function openCompanion(dashboardUrl?: string): Promise<void> {
+// If the full ClawMoney Desktop (Tauri) app is installed, launch THAT and skip
+// the Electron companion entirely — same tray icon, no duplicate UI.
+const DESKTOP_APP_PATHS = [
+  '/Applications/Claw Money.app',
+  path.join(os.homedir(), 'Applications', 'Claw Money.app'),
+];
+
+function installedDesktopApp(): string | null {
+  if (process.platform !== 'darwin') return null;
+  return DESKTOP_APP_PATHS.find((p) => fs.existsSync(p)) ?? null;
+}
+
+/** Open the menu-bar UI: the installed Desktop app if present, else the companion. */
+export async function openCompanion(dashboardUrl?: string): Promise<'desktop' | 'companion'> {
+  const desktop = installedDesktopApp();
+  if (desktop) {
+    // Desktop app is installed → launch it, do NOT start the Electron companion.
+    spawnSync('open', ['-a', desktop]);
+    return 'desktop';
+  }
   const url = dashboardUrl ?? resolveDashboardUrl();
   await ensureCompanionRunning(url);
   await sendIpc('show');
+  return 'companion';
 }
