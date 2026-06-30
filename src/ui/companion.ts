@@ -42,23 +42,31 @@ function copyCompanionFiles(): void {
 // instead of "Electron". The Dock name follows the running executable's name
 // (CFBundleExecutable), so we rename the binary itself — CFBundleName /
 // app.setName() alone don't change it.
-const MACOS_BIN_NAME = 'Claw Money';
+const MACOS_BIN_NAME = 'ClawMoney';
 
 function electronBinaryPath(): string {
   if (process.platform === 'darwin') {
-    const base = path.join(RUN_DIR, 'node_modules', 'electron', 'dist', 'Electron.app', 'Contents', 'MacOS');
-    const renamed = path.join(base, MACOS_BIN_NAME);
-    return fs.existsSync(renamed) ? renamed : path.join(base, 'Electron');
+    const dist = path.join(RUN_DIR, 'node_modules', 'electron', 'dist');
+    // Prefer the rebranded, path-renamed app — sidesteps LaunchServices' cached
+    // com.github.Electron association entirely.
+    for (const app of ['ClawMoney.app', 'Electron.app']) {
+      const bin = path.join(dist, app, 'Contents', 'MacOS', MACOS_BIN_NAME);
+      if (fs.existsSync(bin)) return bin;
+    }
+    return path.join(dist, 'Electron.app', 'Contents', 'MacOS', 'Electron');
   }
   return path.join(RUN_DIR, 'node_modules', '.bin', process.platform === 'win32' ? 'electron.cmd' : 'electron');
 }
 
 function patchElectronApp(): void {
   if (process.platform !== 'darwin') return;
-  const appPath = path.join(RUN_DIR, 'node_modules', 'electron', 'dist', 'Electron.app');
-  const contents = path.join(appPath, 'Contents');
-  if (!fs.existsSync(contents)) return;
+  const dist = path.join(RUN_DIR, 'node_modules', 'electron', 'dist');
+  const appOld = path.join(dist, 'Electron.app');
+  const appNew = path.join(dist, 'ClawMoney.app');
+  if (fs.existsSync(appNew)) return; // already rebranded + renamed
+  if (!fs.existsSync(appOld)) return;
 
+  const contents = path.join(appOld, 'Contents');
   // Rename the executable — the Dock/Cmd-Tab name follows CFBundleExecutable.
   const oldBin = path.join(contents, 'MacOS', 'Electron');
   const newBin = path.join(contents, 'MacOS', MACOS_BIN_NAME);
@@ -69,10 +77,11 @@ function patchElectronApp(): void {
   const plist = path.join(contents, 'Info.plist');
   const buddy = '/usr/libexec/PlistBuddy';
   if (fs.existsSync(buddy) && fs.existsSync(plist)) {
-    spawnSync(buddy, ['-c', 'Set :CFBundleName Claw Money', plist]);
-    const dn = spawnSync(buddy, ['-c', 'Set :CFBundleDisplayName Claw Money', plist]);
-    if (dn.status !== 0) spawnSync(buddy, ['-c', 'Add :CFBundleDisplayName string Claw Money', plist]);
+    spawnSync(buddy, ['-c', 'Set :CFBundleName ClawMoney', plist]);
+    const dn = spawnSync(buddy, ['-c', 'Set :CFBundleDisplayName ClawMoney', plist]);
+    if (dn.status !== 0) spawnSync(buddy, ['-c', 'Add :CFBundleDisplayName string ClawMoney', plist]);
     if (fs.existsSync(newBin)) spawnSync(buddy, ['-c', `Set :CFBundleExecutable ${MACOS_BIN_NAME}`, plist]);
+    spawnSync(buddy, ['-c', 'Set :CFBundleIdentifier ai.clawmoney.companion', plist]);
   }
 
   const icnsSrc = path.join(PKG_COMPANION, 'icon.icns');
@@ -81,10 +90,16 @@ function patchElectronApp(): void {
     try { fs.copyFileSync(icnsSrc, icnsDst); } catch { /* ignore */ }
   }
 
-  // Refresh LaunchServices so the new name/icon take effect.
+  // Move the whole .app to a fresh path. LaunchServices keys its cached app name
+  // by bundle path + id; a brand-new path (ClawMoney.app) registers clean and
+  // sidesteps any stale com.github.Electron / "Electron" association — this is
+  // what finally makes the Dock/Cmd-Tab name stick.
+  try { fs.renameSync(appOld, appNew); } catch { /* ignore */ }
+
   const lsregister =
     '/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister';
-  if (fs.existsSync(lsregister)) spawnSync(lsregister, ['-f', appPath]);
+  const target = fs.existsSync(appNew) ? appNew : appOld;
+  if (fs.existsSync(lsregister)) spawnSync(lsregister, ['-f', target]);
 }
 
 function ensureElectron(): string {
@@ -105,6 +120,8 @@ function ensureElectron(): string {
       throw new Error('Failed to install the ClawMoney companion UI (Electron).');
     }
     patchElectronApp();
+  } else if (process.platform === 'darwin') {
+    patchElectronApp(); // idempotent: rebrand/rename an older install on upgrade
   }
   return electronBinaryPath();
 }
@@ -154,7 +171,9 @@ function resolveDashboardUrl(): string {
 // If the full ClawMoney Desktop (Tauri) app is installed, launch THAT and skip
 // the Electron companion entirely — same tray icon, no duplicate UI.
 const DESKTOP_APP_PATHS = [
-  '/Applications/Claw Money.app',
+  '/Applications/ClawMoney.app',
+  '/Applications/Claw Money.app', // legacy name (pre-rename), still detect it
+  path.join(os.homedir(), 'Applications', 'ClawMoney.app'),
   path.join(os.homedir(), 'Applications', 'Claw Money.app'),
 ];
 

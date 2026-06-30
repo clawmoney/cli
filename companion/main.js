@@ -15,7 +15,7 @@ const http = require('node:http');
 const { spawn } = require('node:child_process');
 
 // Rebrand from "Electron" — sets the macOS menu-bar app name (and userData path).
-app.setName('Claw Money');
+app.setName('ClawMoney');
 
 // Single shared bridge dir, must match src/ui/ipc-client.ts.
 const BRIDGE = path.join(os.tmpdir(), 'clawmoney-ui-bridge');
