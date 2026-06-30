@@ -12,7 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const http = require('node:http');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 
 // Rebrand from "Electron" — sets the macOS menu-bar app name (and userData path).
 app.setName('ClawMoney');
@@ -186,13 +186,17 @@ function ensureMarketRunning() {
   if (!cfg || !cfg.api_key) return; // not logged in → don't take orders
   if (readPidStatus('market', 'provider.pid').running) return; // already up
   try {
-    const child = spawn(process.execPath, [entry, 'market', 'start'], {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', PATH: CLI_PATH },
+    // Use system `node` (not process.execPath). process.execPath is the ClawMoney
+    // electron binary; even with ELECTRON_RUN_AS_NODE, the CLI's daemon inherits
+    // that execPath and re-launches as a GUI electron window → single-instance
+    // clash → the companion flickers/relaunches. `node` keeps the daemon headless.
+    const child = spawn('node', [entry, 'market', 'start'], {
+      env: { ...process.env, PATH: CLI_PATH },
       detached: true,
       stdio: 'ignore',
     });
     child.unref();
-    log('ensureMarketRunning: started `clawmoney market start`');
+    log('ensureMarketRunning: started `node clawmoney market start`');
   } catch (e) {
     log(`ensureMarketRunning failed: ${e.message}`);
   }
@@ -263,6 +267,71 @@ async function loadDashboard() {
   return dash;
 }
 
+// LLM subscriptions that can be resold via the relay (mirrors desktop LLM_SPECS).
+const LLM_SPECS = [
+  { cli: 'codex', package: '@openai/codex', token: '.codex/auth.json', model: 'gpt-5.5' },
+  { cli: 'chatgpt-web', package: '@jackwener/opencli', token: '', model: 'gpt-5.2' },
+  { cli: 'gemini', package: '@google/gemini-cli', token: '.gemini/oauth_creds.json', model: 'gemini-2.5-flash' },
+];
+const RELAY_RESALE_PATH = path.join(os.homedir(), '.clawmoney', 'relay-resale.json');
+
+function commandExists(bin) {
+  try {
+    return spawnSync('which', [bin], { env: { ...process.env, PATH: CLI_PATH }, encoding: 'utf8' }).status === 0;
+  } catch { return false; }
+}
+function llmProbeBinary(cli) { return cli === 'chatgpt-web' ? 'opencli' : cli; }
+function llmReady(cli, token) {
+  // chatgpt-web has no token file; treat opencli's presence as the ready signal.
+  if (cli === 'chatgpt-web') return commandExists('opencli');
+  return token ? fs.existsSync(path.join(os.homedir(), ...token.split('/'))) : false;
+}
+function readRelaySettings() {
+  try {
+    if (fs.existsSync(RELAY_RESALE_PATH)) return JSON.parse(fs.readFileSync(RELAY_RESALE_PATH, 'utf8'));
+  } catch { /* ignore */ }
+  return {};
+}
+
+// Run a process async (Promise) so the Electron main thread never blocks —
+// mirrors desktop's run_cli on a spawn_blocking thread. The UI stays responsive
+// while market/relay daemons start/stop or npm installs run.
+function runProc(cmd, procArgs, timeoutMs = 25000) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(cmd, procArgs, { env: { ...process.env, PATH: CLI_PATH } });
+    } catch (e) {
+      resolve({ ok: false, error: String(e) });
+      return;
+    }
+    let out = '';
+    let err = '';
+    const timer = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch { /* ignore */ }
+      resolve({ ok: false, error: 'timeout' });
+    }, timeoutMs);
+    child.stdout?.on('data', (d) => { out += d; });
+    child.stderr?.on('data', (d) => { err += d; });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ ok: code === 0, stdout: out.trim(), stderr: err.trim() });
+    });
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      resolve({ ok: false, error: String(e) });
+    });
+  });
+}
+
+// Run a clawmoney CLI subcommand via system `node` (not process.execPath, which
+// is the electron binary — see ensureMarketRunning). Returns a Promise.
+function runCli(cliArgs, timeoutMs = 25000) {
+  const entry = process.env.CLAWMONEY_CLI_ENTRY;
+  if (!entry || !fs.existsSync(entry)) return Promise.resolve({ ok: false, error: 'CLI entry not found' });
+  return runProc('node', [entry, ...cliArgs], timeoutMs);
+}
+
 async function handleTauriCommand(cmd, args) {
   log(`invoke: ${cmd}`);
   try {
@@ -271,8 +340,105 @@ async function handleTauriCommand(cmd, args) {
         return await loadDashboard();
       case 'load_provider_log':
         return { ok: true, providerLog: [] };
+      // Local-service controls → drive the clawmoney CLI daemons.
+      case 'start_market': return await runCli(['market', 'start']);
+      case 'stop_market': return await runCli(['market', 'stop']);
+      case 'start_surf': return await runCli(['relay', 'start']);
+      case 'stop_surf': return await runCli(['relay', 'stop']);
+      case 'launch_chrome':
+        try { spawn('open', ['-a', 'Google Chrome'], { detached: true, stdio: 'ignore' }).unref(); } catch { /* ignore */ }
+        return { ok: true };
+      case 'open_external':
+        if (args && args.url) shell.openExternal(String(args.url));
+        return { ok: true };
+      case 'install_extension':
+        shell.openExternal(EXTENSION_URL);
+        return { ok: true };
+      case 'logout': {
+        // Clear api_key so the UI returns to the signed-out state.
+        try {
+          const txt = fs.readFileSync(CONFIG_PATH, 'utf8');
+          fs.writeFileSync(CONFIG_PATH, txt.replace(/^api_key:.*$/m, '').replace(/\n{3,}/g, '\n\n'));
+        } catch { /* ignore */ }
+        return { ok: true };
+      }
+      // ── Agent 上架 (relay resale of LLM subscriptions) ──
+      case 'llm_detect': {
+        const providers = LLM_SPECS.map((s) => ({
+          cli: s.cli,
+          package: s.package,
+          installed: commandExists(llmProbeBinary(s.cli)),
+          loggedIn: llmReady(s.cli, s.token),
+          defaultModel: s.model,
+        }));
+        return { ok: true, providers };
+      }
+      case 'llm_install': {
+        const spec = LLM_SPECS.find((s) => s.cli === (args && args.cli));
+        if (!spec) return { ok: false, error: `unknown cli ${args && args.cli}` };
+        return await runProc('npm', ['install', '-g', spec.package], 180000);
+      }
+      case 'llm_login': {
+        const cli = args && args.cli;
+        if (cli === 'gemini') {
+          try {
+            spawn('osascript', ['-e', 'tell application "Terminal"\nactivate\ndo script "gemini"\nend tell'],
+              { detached: true, stdio: 'ignore' }).unref();
+          } catch { /* ignore */ }
+          return { ok: true, message: '已打开终端 — 在终端里选 "Login with Google" 登录,完成后回来' };
+        }
+        const bin = llmProbeBinary(cli);
+        if (!commandExists(bin)) return { ok: false, error: `${cli} 未安装` };
+        try {
+          spawn(bin, ['login'], { env: { ...process.env, PATH: CLI_PATH }, detached: true, stdio: 'ignore' }).unref();
+        } catch (e) { return { ok: false, error: String(e) }; }
+        return { ok: true };
+      }
+      case 'llm_set_enabled': {
+        const cli = args && args.cli;
+        const enabled = !!(args && args.enabled);
+        try {
+          const s = readRelaySettings();
+          const disabled = new Set(Array.isArray(s.disabledClis) ? s.disabledClis : []);
+          if (enabled) disabled.delete(cli); else disabled.add(cli);
+          s.disabledClis = [...disabled];
+          fs.mkdirSync(path.dirname(RELAY_RESALE_PATH), { recursive: true });
+          fs.writeFileSync(RELAY_RESALE_PATH, JSON.stringify(s, null, 2));
+          if (enabled && s.online) {
+            const spec = LLM_SPECS.find((x) => x.cli === cli);
+            if (spec && llmReady(spec.cli, spec.token)) {
+              await runCli(['relay', 'register', '--cli', spec.cli, '--model', spec.model, '--concurrency', String(s.concurrency || 2)], 30000);
+            }
+          }
+        } catch (e) { return { ok: false, error: String(e) }; }
+        return { ok: true };
+      }
+      case 'relay_settings_get':
+        return readRelaySettings();
+      case 'relay_settings_set': {
+        const settings = (args && args.settings) ? args.settings : (args || {});
+        try {
+          fs.mkdirSync(path.dirname(RELAY_RESALE_PATH), { recursive: true });
+          fs.writeFileSync(RELAY_RESALE_PATH, JSON.stringify(settings, null, 2));
+        } catch (e) { log(`relay_settings_set write: ${e.message}`); }
+        if (settings.online === true) {
+          const conc = String(settings.concurrency || 2);
+          const disabled = Array.isArray(settings.disabledClis) ? settings.disabledClis : [];
+          let registered = 0;
+          for (const spec of LLM_SPECS) {
+            if (disabled.includes(spec.cli)) continue;
+            if (llmReady(spec.cli, spec.token)) {
+              await runCli(['relay', 'register', '--cli', spec.cli, '--model', spec.model, '--concurrency', conc], 30000);
+              registered++;
+            }
+          }
+          return { ok: true, registered, applied: await runCli(['relay', 'start']) };
+        }
+        return { ok: true, applied: await runCli(['relay', 'stop']) };
+      }
       default:
-        // window/event plugin calls (e.g. plugin:window|start_dragging) — no-op for now.
+        // window/event plugin calls (plugin:window|*) + not-yet-wired commands
+        // (llm_upload etc) — no-op so the UI doesn't error.
         if (typeof cmd === 'string' && cmd.startsWith('plugin:')) return {};
         return { ok: true };
     }
@@ -345,7 +511,12 @@ function createWindow() {
       'html,body{background:transparent !important;}' +
       '#desktop{display:none !important;}' +
       '.stage{padding:0 !important;}' +
-      '#app{transform:none !important;border-radius:22px !important;}'
+      '#app{transform:none !important;border-radius:22px !important;}' +
+      // Frameless-window dragging: desktop UI uses Tauri JS dragging (no-op in
+      // Electron), so make the top bars draggable via CSS app-region; keep all
+      // interactive elements clickable.
+      '.page-header,.sidebar-header{-webkit-app-region:drag;}' +
+      '.page-actions,.page-actions *,button,a,input,select,[role=button]{-webkit-app-region:no-drag;}'
     ).catch((e) => log(`insertCSS failed: ${e.message}`));
     win.show();
   });
