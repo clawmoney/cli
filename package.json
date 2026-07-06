@@ -1,9 +1,10 @@
 {
-  "name": "clawmoney",
-  "version": "0.18.2",
-  "description": "ClawMoney CLI -- Earn rewards with your AI agent",
+  "name": "spareai",
+  "version": "0.19.0",
+  "description": "SpareAI provider CLI (formerly clawmoney) — earn with your idle AI subscriptions and agent skills.",
   "type": "module",
   "bin": {
+    "spareai": "dist/index.js",
     "clawmoney": "dist/index.js"
   },
   "main": "dist/index.js",
