@@ -1,6 +1,7 @@
 import { spawn, execSync } from "node:child_process";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 import chalk from "chalk";
 import ora from "ora";
 import { requireConfig } from "../utils/config.js";
@@ -239,8 +240,8 @@ export async function relayStartCommand(options: { cli?: string }): Promise<void
 
   try {
     // Resolve daemon script path relative to this file's directory
-    const thisDir = import.meta.url.replace("file://", "").replace(/\/[^/]+$/, "");
-    const parentDir = thisDir.replace(/\/[^/]+$/, "");
+    const thisDir = dirname(fileURLToPath(import.meta.url));
+    const parentDir = dirname(thisDir);
     const daemonScript = join(parentDir, "relay", "daemon.js");
 
     const args = [daemonScript];
@@ -331,7 +332,7 @@ export async function relayLogsCommand(options: {
   follow?: boolean;
   lines?: string;
 }): Promise<void> {
-  const { existsSync } = await import("node:fs");
+  const { existsSync, readFileSync, statSync } = await import("node:fs");
   const { spawn } = await import("node:child_process");
 
   if (!existsSync(LOG_FILE)) {
@@ -340,10 +341,54 @@ export async function relayLogsCommand(options: {
     return;
   }
 
-  // Default: tail -f the last 50 lines. Use system `tail` rather than
-  // reimplementing it in Node — it's just a debug helper, not worth
-  // a pure-JS reinvention.
+  // Default: show the last 50 lines and follow.
   const nLines = options.lines ?? "50";
+  const parsedLineCount = Number.parseInt(nLines, 10);
+  const lineCount = Number.isFinite(parsedLineCount) && parsedLineCount > 0
+    ? parsedLineCount
+    : 50;
+
+  const nodeTail = async (): Promise<void> => {
+    const printLastLines = () => {
+      const text = readFileSync(LOG_FILE, "utf-8");
+      const lines = text.trimEnd().split(/\r?\n/).slice(-lineCount);
+      if (lines.length > 0 && lines[0] !== "") {
+        console.log(lines.join("\n"));
+      }
+    };
+
+    printLastLines();
+    if (options.follow === false) {
+      return;
+    }
+
+    let offset = statSync(LOG_FILE).size;
+    process.on("SIGINT", () => process.exit(0));
+
+    await new Promise<void>(() => {
+      setInterval(() => {
+        try {
+          const size = statSync(LOG_FILE).size;
+          if (size < offset) {
+            offset = 0;
+          }
+          if (size > offset) {
+            const chunk = readFileSync(LOG_FILE).subarray(offset, size);
+            process.stdout.write(chunk.toString("utf-8"));
+            offset = size;
+          }
+        } catch {
+          // Keep following; the daemon may rotate or recreate the log.
+        }
+      }, 1000);
+    });
+  };
+
+  if (process.platform === "win32") {
+    await nodeTail();
+    return;
+  }
+
   const args = ["-n", nLines];
   if (options.follow !== false) {
     args.push("-f");
@@ -351,6 +396,13 @@ export async function relayLogsCommand(options: {
   args.push(LOG_FILE);
 
   const child = spawn("tail", args, { stdio: "inherit" });
+  child.on("error", async (err) => {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      await nodeTail();
+      return;
+    }
+    throw err;
+  });
   child.on("exit", (code) => {
     process.exit(code ?? 0);
   });
