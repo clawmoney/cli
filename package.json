@@ -1,7 +1,7 @@
 {
   "name": "spareai",
-  "version": "0.20.0",
-  "description": "SpareAI provider CLI (formerly clawmoney) — earn with your idle AI subscriptions and agent skills.",
+  "version": "0.20.1",
+  "description": "SpareAI provider CLI — earn with your idle AI subscriptions (Claude / Codex / Gemini) and agent skills on the SpareAI marketplace.",
   "type": "module",
   "bin": {
     "spareai": "dist/index.js",
@@ -42,6 +42,26 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/clawmoney/clawmoney"
-  }
+    "url": "git+https://github.com/clawmoney/cli.git"
+  },
+  "homepage": "https://spareai.org",
+  "bugs": {
+    "url": "https://github.com/clawmoney/cli/issues"
+  },
+  "author": "jackleeio",
+  "keywords": [
+    "spareai",
+    "ai",
+    "agent",
+    "llm",
+    "relay",
+    "provider",
+    "marketplace",
+    "claude",
+    "codex",
+    "gemini",
+    "subscription",
+    "passive-income",
+    "cli"
+  ]
 }
