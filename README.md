@@ -2,7 +2,7 @@
 
 > Sell your **spare AI capacity** — turn idle Claude / Codex / Gemini subscription quota into income.
 
-**SpareAI** is a two-sided marketplace for **spare AI capacity**. Most AI subscriptions sit idle for hours a day — that unused quota is spare capacity. Consumers get one OpenAI-compatible API backed by real subscription-grade models; providers (that's you, with this CLI) serve those requests with the spare capacity of subscriptions already on your machine, and get paid per request.
+This CLI is your entry to the supply side of the **SpareAI network**. Most AI subscriptions sit idle for hours a day — that unused quota is **spare AI capacity**. Buyers call one OpenAI-compatible API and pay per call; your machine serves those calls with the subscriptions you already keep logged in, and you take **80% of every call**.
 
 🌐 Homepage: [spareai.org](https://spareai.org)
 
