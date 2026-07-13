@@ -7,7 +7,7 @@
  * page-context POSTs and our window.fetch overrides for endpoints like
  * /get_transcript. yt-dlp ships a maintained workaround stack (deno
  * JS challenge solver, jsinterp, PO token providers) that has stayed
- * one step ahead of these gates. Shell-out keeps clawmoney itself out
+ * one step ahead of these gates. Shell-out keeps spareai itself out
  * of the JS-reverse-engineering arms race.
  *
  * Install on the provider host:
@@ -61,7 +61,7 @@ export async function ytdlpTranscript(videoId, langPref = "en") {
         throw new Error("yt-dlp not found on PATH — install with `brew install yt-dlp` or `pipx install yt-dlp`");
     }
     // Use a per-call scratch dir so concurrent requests don't collide.
-    const scratch = path.join(os.tmpdir(), `clawmoney-yt-${crypto.randomBytes(6).toString("hex")}`);
+    const scratch = path.join(os.tmpdir(), `spareai-yt-${crypto.randomBytes(6).toString("hex")}`);
     await fs.mkdir(scratch, { recursive: true });
     try {
         const url = `https://www.youtube.com/watch?v=${videoId}`;

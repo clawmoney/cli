@@ -42,6 +42,7 @@ import { relayLogger as logger } from "../logger.js";
 import { RateGuard, RateGuardBudgetExceededError, RateGuardCooldownError, } from "./rate-guard.js";
 import { calculateCost } from "../pricing.js";
 import { readOpenclawOAuthProfile, persistOpenclawOAuthProfile, } from "./openclaw-creds.js";
+import { spareaiDir } from "../../utils/home.js";
 export { RateGuardBudgetExceededError, RateGuardCooldownError };
 // ── Constants ──
 const OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -51,8 +52,8 @@ const OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token";
 // + `Connection: Upgrade` hits the same backend route.
 const CODEX_RESPONSES_WS_URL = "wss://chatgpt.com/backend-api/codex/responses";
 const CODEX_AUTH_FILE = join(homedir(), ".codex", "auth.json");
-const CLAWMONEY_DIR = join(homedir(), ".clawmoney");
-const FINGERPRINT_FILE = join(CLAWMONEY_DIR, "codex-fingerprint.json");
+const SPAREAI_DIR = spareaiDir();
+const FINGERPRINT_FILE = join(SPAREAI_DIR, "codex-fingerprint.json");
 // Default fingerprint values. Overridden per-machine by the capture script.
 const DEFAULT_CLI_VERSION = "0.118.0";
 // Verified against codex-rs/login/src/auth/default_client.rs:34 —

@@ -17,6 +17,7 @@ export interface RelayRequest {
     stateful?: boolean;
     model?: string;
     max_budget_usd?: number;
+    api_style?: string;
     passthrough_body?: Record<string, unknown>;
     anthropic_beta?: string;
 }
@@ -25,6 +26,9 @@ export interface RelayConnectedEvent {
     agent_id: string;
     agent_name: string;
     provider_id: string;
+}
+export interface RelayHeartbeatAckEvent {
+    event: "heartbeat_ack";
 }
 export interface RelayErrorEvent {
     event: "error";
@@ -38,7 +42,7 @@ export interface RelayNoticeEvent {
     got_model?: string;
     message: string;
 }
-export type RelayIncomingEvent = RelayRequest | RelayConnectedEvent | RelayErrorEvent | RelayNoticeEvent;
+export type RelayIncomingEvent = RelayRequest | RelayConnectedEvent | RelayHeartbeatAckEvent | RelayErrorEvent | RelayNoticeEvent;
 export interface RelayResponseSessionWindow {
     reset_at_ms: number;
     utilization?: number;

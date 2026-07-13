@@ -13,8 +13,8 @@
  * OAuth. Ultra subscribers who have no Anthropic subscription can still
  * provide Claude capacity through this daemon.
  *
- * Token source:  ~/.clawmoney/antigravity-accounts.json (written by
- *                `clawmoney antigravity login`)
+ * Token source:  ~/.spareai/antigravity-accounts.json (written by
+ *                `spareai antigravity login`)
  * Upstream:      https://daily-cloudcode-pa.sandbox.googleapis.com
  *                → https://autopush-cloudcode-pa.sandbox.googleapis.com
  *                → https://cloudcode-pa.googleapis.com
@@ -27,12 +27,12 @@
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { ProxyAgent } from "undici";
 import { relayLogger as logger } from "../logger.js";
 import { RateGuard, RateGuardBudgetExceededError, RateGuardCooldownError, } from "./rate-guard.js";
 import { calculateCost } from "../pricing.js";
+import { spareaiDir } from "../../utils/home.js";
 export { RateGuardBudgetExceededError, RateGuardCooldownError };
 // ── OAuth constants (verified against opencode-antigravity-auth and sub2api) ──
 // The Antigravity client ID is a public value embedded in the open-source
@@ -133,8 +133,8 @@ const ANTIGRAVITY_DEFAULT_PROJECT_ID = "rising-fact-p41fc";
 // doesn't strictly enforce it, but sending a plausible value reduces the
 // chance the request gets flagged as a bot.
 const ANTIGRAVITY_VERSION = "1.21.9";
-const CLAWMONEY_DIR = join(homedir(), ".clawmoney");
-const ACCOUNTS_FILE = join(CLAWMONEY_DIR, "antigravity-accounts.json");
+const SPAREAI_DIR = spareaiDir();
+const ACCOUNTS_FILE = join(SPAREAI_DIR, "antigravity-accounts.json");
 // ── Proxy ──
 //
 // We build our own ProxyAgent instead of relying on setGlobalDispatcher,
@@ -205,7 +205,7 @@ export function configureAntigravityDispatcher() {
 const configureDispatcher = configureAntigravityDispatcher;
 // ── Account storage ──
 export function ensureClawmoneyDir() {
-    mkdirSync(CLAWMONEY_DIR, { recursive: true });
+    mkdirSync(SPAREAI_DIR, { recursive: true });
 }
 export function loadAccounts() {
     if (!existsSync(ACCOUNTS_FILE)) {
@@ -237,12 +237,12 @@ function loadPrimaryAccount() {
     const file = loadAccounts();
     if (file.accounts.length === 0) {
         throw new Error(`No Antigravity accounts found at ${ACCOUNTS_FILE}. ` +
-            `Run \`clawmoney antigravity login\` to authenticate first.`);
+            `Run \`spareai antigravity login\` to authenticate first.`);
     }
     const primary = file.accounts[0];
     if (!primary.refresh_token) {
         throw new Error(`Antigravity account at ${ACCOUNTS_FILE} is missing a refresh_token. ` +
-            `Re-run \`clawmoney antigravity login\`.`);
+            `Re-run \`spareai antigravity login\`.`);
     }
     return primary;
 }

@@ -13,8 +13,8 @@
  * OAuth. Ultra subscribers who have no Anthropic subscription can still
  * provide Claude capacity through this daemon.
  *
- * Token source:  ~/.clawmoney/antigravity-accounts.json (written by
- *                `clawmoney antigravity login`)
+ * Token source:  ~/.spareai/antigravity-accounts.json (written by
+ *                `spareai antigravity login`)
  * Upstream:      https://daily-cloudcode-pa.sandbox.googleapis.com
  *                → https://autopush-cloudcode-pa.sandbox.googleapis.com
  *                → https://cloudcode-pa.googleapis.com

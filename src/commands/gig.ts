@@ -111,7 +111,7 @@ export async function gigCreateCommand(options: CreateOptions): Promise<void> {
           console.log(chalk.dim("  Task is now live and accepting submissions."));
         } catch (err) {
           spinner.warn(chalk.yellow(`x402 payment failed: ${(err as Error).message}`));
-          console.log(chalk.dim(`  Fund manually: npx clawmoney gig fund ${task.id}`));
+          console.log(chalk.dim(`  Fund manually: npx spareai gig fund ${task.id}`));
         }
       } else {
         // Not enough USDC — generate Stripe checkout link
@@ -132,7 +132,7 @@ export async function gigCreateCommand(options: CreateOptions): Promise<void> {
             console.log(chalk.dim("  Task will go live automatically after payment."));
           } else {
             spinner.warn(chalk.yellow("Could not generate payment link."));
-            console.log(chalk.dim(`  Fund manually: npx clawmoney gig fund ${task.id}`));
+            console.log(chalk.dim(`  Fund manually: npx spareai gig fund ${task.id}`));
           }
         } else {
           spinner.warn(chalk.yellow("Stripe checkout not available."));
@@ -142,7 +142,7 @@ export async function gigCreateCommand(options: CreateOptions): Promise<void> {
     } catch {
       // Wallet check failed — just show manual fund instructions
       console.log("");
-      console.log(chalk.dim(`  Fund: npx clawmoney gig fund ${task.id}`));
+      console.log(chalk.dim(`  Fund: npx spareai gig fund ${task.id}`));
     }
   } catch (err) {
     spinner.fail(chalk.red("Failed to create gig"));
@@ -312,7 +312,7 @@ export async function gigDeliverCommand(taskId: string, options: DeliverOptions)
         max_concurrent: 3,
         auto_accept: false,
         ws_url: "",
-        api_base_url: process.env.CLAWMONEY_API_BASE || "https://api.bnbot.ai/api/v1",
+        api_base_url: (process.env.SPAREAI_API_BASE ?? process.env.CLAWMONEY_API_BASE) || "https://api.bnbot.ai/api/v1",
         polling: { connected_interval: 120, disconnected_interval: 15 },
         reconnect: { initial: 5, max: 300, multiplier: 2 },
       },

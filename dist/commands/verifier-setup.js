@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { intro, outro, confirm, spinner, isCancel, log, note, } from "@clack/prompts";
 import chalk from "chalk";
 import { loadConfig } from "../utils/config.js";
-const LOG_FILE = join(homedir(), ".clawmoney", "verifier.log");
+import { spareaiDir } from "../utils/home.js";
+const LOG_FILE = join(spareaiDir(), "verifier.log");
 // Auto-verifier polls every 15 minutes and verifies up to 3 tweets per cycle.
 // Each verification pays $0.01 via x402 witness. Upper bound at 24/7 saturation
 // is 3 × 4/hr × 24 × 30 = 8,640/mo, but real demand caps it much lower —
@@ -25,11 +25,11 @@ function formatEarnings() {
 }
 export async function verifierSetupCommand(opts = {}) {
     if (!loadConfig()) {
-        console.log(chalk.red("\n  No config found. Run `clawmoney setup` first to register your agent.\n"));
+        console.log(chalk.red("\n  No config found. Run `spareai setup` first to register your agent.\n"));
         process.exit(1);
     }
     if (!opts.nested) {
-        intro(chalk.cyan(" ClawMoney Verifier Setup "));
+        intro(chalk.cyan(" SpareAI Verifier Setup "));
     }
     log.message("Run an auto-verifier daemon that earns by witnessing tweet promote tasks.");
     note(formatEarnings(), "Earnings model");
@@ -38,22 +38,22 @@ export async function verifierSetupCommand(opts = {}) {
         initialValue: true,
     });
     if (isCancel(startNow)) {
-        log.message(chalk.dim("Skipped. Run `clawmoney promote auto-verify` later to start manually."));
+        log.message(chalk.dim("Skipped. Run `spareai promote auto-verify` later to start manually."));
         if (!opts.nested)
             outro("");
         return;
     }
     if (!startNow) {
-        log.message(chalk.dim(`Skipped daemon launch. Manual start: ${chalk.cyan("clawmoney promote auto-verify")}`));
+        log.message(chalk.dim(`Skipped daemon launch. Manual start: ${chalk.cyan("spareai promote auto-verify")}`));
         if (!opts.nested)
             outro("");
         return;
     }
     // Daemon launch: spawn detached so it survives this process exiting.
-    // stdout/stderr go to ~/.clawmoney/verifier.log — same pattern as relay
+    // stdout/stderr go to ~/.spareai/verifier.log — same pattern as relay
     // daemon. We deliberately don't `setsid` here; users on macOS run from a
     // GUI shell and the parent's session id is fine.
-    const claw = process.execPath; // node binary path; clawmoney bin script runs through it
+    const claw = process.execPath; // node binary path; spareai bin script runs through it
     const cliMain = process.argv[1]; // path to dist/index.js
     const s = spinner();
     s.start("Spawning verifier daemon...");

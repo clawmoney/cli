@@ -1,5 +1,5 @@
 /**
- * `clawmoney antigravity login` — OAuth browser flow for Google Antigravity IDE.
+ * `spareai antigravity login` — OAuth browser flow for Google Antigravity IDE.
  *
  * Antigravity is Google's agentic IDE. Its quota pool is separate from Gemini
  * CLI's, so a provider who pairs an Antigravity daemon with a Gemini CLI
@@ -14,7 +14,7 @@
  *   4. Wait for Google to redirect back with ?code=....
  *   5. Exchange the code for refresh + access tokens.
  *   6. Resolve the cloudaicompanionProject via loadCodeAssist.
- *   7. Persist to ~/.clawmoney/antigravity-accounts.json.
+ *   7. Persist to ~/.spareai/antigravity-accounts.json.
  *
  * The implementation borrows heavily from the opencode-antigravity-auth
  * reference project — same client id, same scopes, same PKCE + state payload
@@ -87,7 +87,7 @@ function waitForCallback() {
             const error = parsed.searchParams.get("error");
             if (error) {
                 res.writeHead(400, { "content-type": "text/html; charset=utf-8" });
-                res.end(`<html><body><h1>Login failed</h1><p>${error}</p><p>You can close this tab and re-run <code>clawmoney antigravity login</code>.</p></body></html>`);
+                res.end(`<html><body><h1>Login failed</h1><p>${error}</p><p>You can close this tab and re-run <code>spareai antigravity login</code>.</p></body></html>`);
                 reject(new Error(`OAuth error: ${error}`));
                 return;
             }
@@ -101,7 +101,7 @@ function waitForCallback() {
             }
             res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
             res.end(`<html><body style="font-family:system-ui;padding:40px;text-align:center;">
-          <h1>✓ ClawMoney is linked to Antigravity</h1>
+          <h1>✓ SpareAI is linked to Antigravity</h1>
           <p>You can close this tab and return to your terminal.</p>
         </body></html>`);
             resolve({ result: { code, state }, server });
@@ -115,7 +115,7 @@ function waitForCallback() {
 }
 export async function antigravityLoginCommand() {
     console.log(chalk.bold("\n  Antigravity OAuth login\n"));
-    console.log(chalk.dim("  This links a Google account's Antigravity IDE quota to your ClawMoney daemon."));
+    console.log(chalk.dim("  This links a Google account's Antigravity IDE quota to your SpareAI daemon."));
     console.log(chalk.dim("  Antigravity has a SEPARATE quota pool from Gemini CLI — use both to double your capacity."));
     console.log("");
     const { verifier, challenge } = generatePkce();
@@ -128,7 +128,7 @@ export async function antigravityLoginCommand() {
         spinner.succeed("Callback server ready");
     }
     catch (err) {
-        spinner.fail(`Failed to bind localhost:${CALLBACK_PORT} — is another clawmoney login already running?`);
+        spinner.fail(`Failed to bind localhost:${CALLBACK_PORT} — is another spareai login already running?`);
         throw err;
     }
     console.log("");
@@ -194,14 +194,14 @@ export async function antigravityLoginCommand() {
     console.log(chalk.green("  Antigravity login complete."));
     console.log("");
     console.log(chalk.dim("  Next: register a model and start the daemon. Example:\n" +
-        "    clawmoney relay register --cli antigravity --model antigravity-gemini-3-pro\n" +
-        "    clawmoney relay start --cli antigravity"));
+        "    spareai relay register --cli antigravity --model antigravity-gemini-3-pro\n" +
+        "    spareai relay start --cli antigravity"));
 }
 export async function antigravityStatusCommand() {
     const file = loadAccounts();
     if (file.accounts.length === 0) {
         console.log(chalk.dim("No Antigravity accounts stored."));
-        console.log(chalk.dim(`  Run "clawmoney antigravity login" to add one.`));
+        console.log(chalk.dim(`  Run "spareai antigravity login" to add one.`));
         return;
     }
     console.log(chalk.bold("\n  Antigravity accounts\n"));

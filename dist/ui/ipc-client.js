@@ -7,7 +7,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 // Must match companion/main.js.
-const BRIDGE = path.join(os.tmpdir(), 'clawmoney-ui-bridge');
+const BRIDGE = path.join(os.tmpdir(), 'spareai-ui-bridge');
 const REQ_DIR = path.join(BRIDGE, 'requests');
 const RES_DIR = path.join(BRIDGE, 'responses');
 const PID_FILE = path.join(BRIDGE, 'companion.pid');

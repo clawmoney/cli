@@ -39,14 +39,14 @@ function normalizeResult(raw) {
 }
 function loadUploadConfig() {
     const config = loadConfig();
-    const apiKey = process.env.CLAWMONEY_API_KEY ||
+    const apiKey = (process.env.SPAREAI_API_KEY ?? process.env.CLAWMONEY_API_KEY) ||
         process.env.API_KEY ||
         config?.api_key;
     if (!apiKey) {
-        throw new Error("missing API key for CDN upload; set API_KEY or run clawmoney setup");
+        throw new Error("missing API key for CDN upload; set API_KEY or run spareai setup");
     }
     const providerRaw = (config?.provider ?? {});
-    const apiBaseUrl = process.env.CLAWMONEY_API_BASE_URL ||
+    const apiBaseUrl = (process.env.SPAREAI_API_BASE_URL ?? process.env.CLAWMONEY_API_BASE_URL) ||
         process.env.BNBOT_API_BASE_URL ||
         providerRaw.api_base_url ||
         DEFAULT_API_BASE_URL;

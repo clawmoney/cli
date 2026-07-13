@@ -81,13 +81,13 @@ async function pollForClaim(apiKey: string, onTick?: () => void): Promise<MeResp
 }
 
 export async function setupCommand(): Promise<void> {
-  console.log(chalk.bold('\n  ClawMoney Setup\n'));
+  console.log(chalk.bold('\n  SpareAI Setup\n'));
 
   // Non-interactive mode: skill-install path.
   if (!process.stdin.isTTY) {
-    console.log('ClawMoney skill installed successfully.');
+    console.log('SpareAI skill installed successfully.');
     console.log('');
-    console.log('NEXT STEP: Run /clawmoney now to complete onboarding.');
+    console.log('NEXT STEP: Run /spareai now to complete onboarding.');
     console.log('The skill will walk you through agent registration and earning.');
     console.log('');
     return;
@@ -95,7 +95,7 @@ export async function setupCommand(): Promise<void> {
 
   // Short-circuit: if an agent is already configured, skip the OTP + claim
   // flow and jump straight to provider role selection. This makes re-running
-  // `clawmoney setup` cheap — users add new provider roles without going
+  // `spareai setup` cheap — users add new provider roles without going
   // through email verification every time.
   const existing = loadConfig();
   if (existing?.api_key && existing?.agent_slug) {
@@ -231,8 +231,8 @@ export async function setupCommand(): Promise<void> {
     console.log(chalk.dim(`  Config:      ${getConfigPath()}`));
     console.log('');
     console.log(`  Next steps:`);
-    console.log(`    ${chalk.cyan('clawmoney wallet balance')}  Check your wallet balance`);
-    console.log(`    ${chalk.cyan('clawmoney browse')}          Browse available tasks`);
+    console.log(`    ${chalk.cyan('spareai wallet balance')}  Check your wallet balance`);
+    console.log(`    ${chalk.cyan('spareai browse')}          Browse available tasks`);
     console.log('');
     return;
   }
@@ -292,7 +292,7 @@ export async function setupCommand(): Promise<void> {
   if (!completed) {
     pollSpinner.warn('Claim not completed within 15 minutes.');
     console.log('');
-    console.log(chalk.yellow('  You can re-run'), chalk.cyan('clawmoney setup'), chalk.yellow('later to resume.'));
+    console.log(chalk.yellow('  You can re-run'), chalk.cyan('spareai setup'), chalk.yellow('later to resume.'));
     console.log(chalk.dim('  Your API key is already saved and will activate once you click the claim link.'));
     console.log('');
     return;

@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import YAML from 'yaml';
 
+import { spareaiDir } from './home.js';
 export interface ClawConfig {
   api_key: string;
   agent_id: string;
@@ -16,7 +17,7 @@ export interface ClawConfig {
   };
   // SpareAPI data-provider role: this agent's bnbot serves browser-delegated
   // requests for the platforms listed below. Customer flow:
-  //   customer → SpareAPI → ClawMoney router → this operator's bnbot →
+  //   customer → SpareAPI → SpareAI router → this operator's bnbot →
   //   real Chrome → target platform → JSON back to customer.
   api_provider?: {
     platforms: string[];     // platform slugs the operator opted in to serve
@@ -26,7 +27,7 @@ export interface ClawConfig {
   };
 }
 
-const CONFIG_DIR = path.join(os.homedir(), '.clawmoney');
+const CONFIG_DIR = spareaiDir();
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.yaml');
 
 export function getConfigPath(): string {
@@ -72,7 +73,7 @@ export function requireConfig(): ClawConfig {
   const config = loadConfig();
   if (!config) {
     throw new Error(
-      `No config found. Run "clawmoney setup" first.\nExpected config at: ${CONFIG_FILE}`
+      `No config found. Run "spareai setup" first.\nExpected config at: ${CONFIG_FILE}`
     );
   }
   return config;

@@ -7,6 +7,8 @@ import type {
 import { relayLogger as logger } from "./logger.js";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
+const HEARTBEAT_TIMEOUT_MS = HEARTBEAT_INTERVAL_MS * 3;
+const HEARTBEAT_FRAME = JSON.stringify({ event: "heartbeat" });
 
 export type RelayEventCallback = (event: RelayIncomingEvent) => void;
 
@@ -20,6 +22,7 @@ export class RelayWsClient {
   private _connected = false;
   private wsFailLogged = false;
   private stopping = false;
+  private lastAliveAt = 0;
 
   constructor(config: RelayProviderConfig, onEvent: RelayEventCallback) {
     this.config = config;
@@ -39,10 +42,11 @@ export class RelayWsClient {
   stop(): void {
     this.stopping = true;
     this.clearTimers();
-    if (this.ws) {
-      this.ws.removeAllListeners();
-      this.ws.close();
-      this.ws = null;
+    const ws = this.ws;
+    this.ws = null;
+    if (ws) {
+      ws.removeAllListeners();
+      ws.close();
     }
     this._connected = false;
   }
@@ -64,29 +68,53 @@ export class RelayWsClient {
   // ── Private ──
 
   private connect(): void {
-    if (this.stopping) return;
+    if (this.stopping || this.reconnectTimer) return;
+
+    // A close event normally clears this.ws before the next attempt. Keep
+    // this guard as a second line of defence against duplicate connect calls
+    // caused by a stale socket event or an overlapping start().
+    if (this.ws && this.ws.readyState !== WebSocket.CLOSED) return;
 
     const url = `${this.config.relay.ws_url}?api_key=${this.config.api_key}`;
-    this.ws = new WebSocket(url);
+    const ws = new WebSocket(url);
+    this.ws = ws;
 
-    this.ws.on("open", () => {
+    ws.on("open", () => {
+      if (this.ws !== ws || this.stopping) {
+        ws.close(4000, "stale connection");
+        return;
+      }
       this._connected = true;
       this.wsFailLogged = false;
       this.reconnectDelay = this.config.relay.reconnect.initial;
+      this.lastAliveAt = Date.now();
       logger.info("WebSocket connected");
       this.startHeartbeat();
     });
 
-    this.ws.on("message", (data: WebSocket.Data) => {
+    ws.on("message", (data: WebSocket.Data) => {
+      if (this.ws !== ws) return;
       try {
         const msg = JSON.parse(data.toString()) as RelayIncomingEvent;
+        if (msg.event === "heartbeat_ack") {
+          this.lastAliveAt = Date.now();
+        }
         this.onEvent(msg);
       } catch (err) {
         logger.error("WS message parse error:", err);
       }
     });
 
-    this.ws.on("close", (code: number, reason: Buffer) => {
+    ws.on("pong", () => {
+      if (this.ws === ws) this.lastAliveAt = Date.now();
+    });
+
+    ws.on("close", (code: number, reason: Buffer) => {
+      // A previous socket can finish closing after a replacement socket has
+      // already opened. Its event must not mark the replacement offline or
+      // schedule a second reconnect loop.
+      if (this.ws !== ws) return;
+      this.ws = null;
       this._connected = false;
       this.stopHeartbeat();
 
@@ -100,16 +128,21 @@ export class RelayWsClient {
       this.scheduleReconnect();
     });
 
-    this.ws.on("error", (err: Error) => {
+    ws.on("error", (err: Error) => {
+      if (this.ws !== ws) return;
       if (!this.wsFailLogged) {
         logger.error("WebSocket error:", err.message);
         this.wsFailLogged = true;
       }
+      // ws normally emits close after error, but terminate here as a
+      // safeguard for a handshake/socket error that would otherwise leave
+      // the client stuck in CONNECTING or OPEN forever.
+      if (ws.readyState !== WebSocket.CLOSED) ws.terminate();
     });
   }
 
   private scheduleReconnect(): void {
-    if (this.stopping) return;
+    if (this.stopping || this.reconnectTimer) return;
 
     const delay = this.reconnectDelay;
     logger.info(`Reconnecting in ${delay}s...`);
@@ -132,8 +165,23 @@ export class RelayWsClient {
   private startHeartbeat(): void {
     this.stopHeartbeat();
     this.heartbeatTimer = setInterval(() => {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.ping();
+      const ws = this.ws;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+      // The Hub's hibernatable DO does not receive WebSocket control frames
+      // in webSocketMessage(). Send the application-level heartbeat that it
+      // understands, while retaining protocol ping/pong as a transport-level
+      // liveness check.
+      if (Date.now() - this.lastAliveAt > HEARTBEAT_TIMEOUT_MS) {
+        logger.warn("WebSocket heartbeat timed out; terminating stale socket");
+        ws.terminate();
+        return;
+      }
+      try {
+        ws.send(HEARTBEAT_FRAME);
+        ws.ping();
+      } catch {
+        // The close handler owns reconnect scheduling.
       }
     }, HEARTBEAT_INTERVAL_MS);
     this.heartbeatTimer.unref();

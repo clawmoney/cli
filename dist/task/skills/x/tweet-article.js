@@ -6,7 +6,7 @@ import { tweetArticleToTwitter283 } from "./_mapper.js";
  * Throws upstream if the tweet has no Article attached.
  */
 export const xTweetArticleSkill = {
-    price_usd: 0.003,
+    price_usd: 0.0001,
     async run(input, ctx) {
         const { tweet_id } = (input ?? {});
         if (!tweet_id)

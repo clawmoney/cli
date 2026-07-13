@@ -8,7 +8,8 @@ import { apiGet, apiPost } from "../utils/api.js";
 import { readRelayPid, isRelayPidAlive, removeRelayPid } from "../relay/provider.js";
 import { API_PRICES, RELAY_DISCOUNT } from "../relay/pricing.js";
 
-const LOG_FILE = join(homedir(), ".clawmoney", "relay.log");
+import { spareaiDir } from "../utils/home.js";
+const LOG_FILE = join(spareaiDir(), "relay.log");
 
 // ── relay register ──
 
@@ -26,7 +27,7 @@ export async function relayRegisterCommand(options: RegisterOptions): Promise<vo
   const config = requireConfig();
 
   // Validate CLI type
-  const validClis = ["claude", "codex", "gemini", "antigravity", "chatgpt-web"];
+  const validClis = ["claude", "codex", "gemini", "grok", "antigravity", "chatgpt-web"];
   if (!validClis.includes(options.cli)) {
     console.error(chalk.red(`Invalid CLI type "${options.cli}". Must be one of: ${validClis.join(", ")}`));
     process.exit(1);
@@ -42,7 +43,7 @@ export async function relayRegisterCommand(options: RegisterOptions): Promise<vo
       if (file.accounts.length === 0) {
         spinner.fail(chalk.red("No Antigravity accounts found."));
         console.log(
-          chalk.dim(`  Run "clawmoney antigravity login" first to link a Google account.`)
+          chalk.dim(`  Run "spareai antigravity login" first to link a Google account.`)
         );
         process.exit(1);
       }
@@ -53,6 +54,18 @@ export async function relayRegisterCommand(options: RegisterOptions): Promise<vo
       spinner.fail(chalk.red(`Antigravity token check failed: ${(err as Error).message}`));
       process.exit(1);
     }
+  } else if (options.cli === "grok") {
+    const spinner = ora("Checking Grok Build CLI + cached OAuth state...").start();
+    const { inspectGrokLocalState } = await import(
+      "../relay/upstream/grok-api.js"
+    );
+    const state = inspectGrokLocalState(options.model);
+    if (!state.available) {
+      spinner.fail(chalk.red("Grok Build is not ready"));
+      console.log(chalk.dim(`  ${state.hint}`));
+      process.exit(1);
+    }
+    spinner.succeed(`Grok Build is available (${state.binaryPath})`);
   } else {
     // chatgpt-web drives the browser via opencli — there's no "chatgpt-web" binary.
     const probeBin = options.cli === "chatgpt-web" ? "opencli" : options.cli;
@@ -77,7 +90,7 @@ export async function relayRegisterCommand(options: RegisterOptions): Promise<vo
     );
     console.log(
       chalk.dim(
-        `  Either add it to clawmoney-cli/src/relay/pricing.ts, or pass both ` +
+        `  Either add it to spareai-cli/src/relay/pricing.ts, or pass both ` +
           `--price-input and --price-output explicitly.`
       )
     );
@@ -138,7 +151,7 @@ export async function relayRegisterCommand(options: RegisterOptions): Promise<vo
     console.log("");
     console.log(chalk.bold("  Next steps"));
     console.log(chalk.dim(`    1. Start the daemon:`));
-    console.log(chalk.dim(`         clawmoney relay start`));
+    console.log(chalk.dim(`         spareai relay start`));
     if (process.platform === "darwin") {
       console.log(
         chalk.dim(
@@ -162,7 +175,7 @@ export async function relayRegisterCommand(options: RegisterOptions): Promise<vo
       );
       console.log(
         chalk.dim(
-          `       (from the clawmoney-cli repo; see scripts/README for details)`
+          `       (from the spareai-cli repo; see scripts/README for details)`
         )
       );
     }
@@ -179,7 +192,7 @@ export async function relayRegisterCommand(options: RegisterOptions): Promise<vo
     );
     console.log(
       chalk.dim(
-        `  request mode, set \`relay.execution_mode: cli\` in ~/.clawmoney/config.yaml.`
+        `  request mode, set \`relay.execution_mode: cli\` in ~/.spareai/config.yaml.`
       )
     );
   } catch (err) {
@@ -195,7 +208,7 @@ export async function relayStartCommand(options: { cli?: string }): Promise<void
 
   // If an old daemon is still running, auto-stop and replace it instead
   // of bailing with "already running, use stop first". Previously re-
-  // running `clawmoney relay setup` (or `relay start`) with a previous
+  // running `spareai relay setup` (or `relay start`) with a previous
   // daemon alive produced a confusing error at the last step of an
   // otherwise-successful flow. SIGTERM → poll for exit (3s) →
   // SIGKILL on stubborn processes → clean PID file → start fresh.
@@ -253,7 +266,7 @@ export async function relayStartCommand(options: { cli?: string }): Promise<void
       detached: true,
       env: {
         ...process.env,
-        CLAWMONEY_RELAY_DAEMON: "1",
+        SPAREAI_RELAY_DAEMON: "1",
       },
     });
 
@@ -336,7 +349,7 @@ export async function relayLogsCommand(options: {
 
   if (!existsSync(LOG_FILE)) {
     console.log(chalk.dim(`No log file yet at ${LOG_FILE}`));
-    console.log(chalk.dim("Start the daemon first: clawmoney relay start"));
+    console.log(chalk.dim("Start the daemon first: spareai relay start"));
     return;
   }
 
@@ -411,7 +424,7 @@ export async function relayStatusCommand(): Promise<void> {
     if (!resp.ok) {
       if (resp.status === 404) {
         spinner.info("Not registered as relay provider yet.");
-        console.log(chalk.dim(`  Run "clawmoney relay setup" to get started.`));
+        console.log(chalk.dim(`  Run "spareai relay setup" to get started.`));
         return;
       }
       const detail =
@@ -431,14 +444,14 @@ export async function relayStatusCommand(): Promise<void> {
 
     if (providers.length === 0) {
       spinner.info("No providers registered yet.");
-      console.log(chalk.dim(`  Run "clawmoney relay setup" to get started.`));
+      console.log(chalk.dim(`  Run "spareai relay setup" to get started.`));
       return;
     }
 
     // Group rows by cli_type so `claude-*` lines stay together, then
-    // `codex-*`, then `gemini-*`, then `antigravity-*`. Within a family
+    // `codex-*`, `gemini-*`, `grok-*`, and `antigravity-*`. Within a family
     // we sort by model name so the ordering is stable across calls.
-    const CLI_ORDER = ["claude", "codex", "gemini", "antigravity"];
+    const CLI_ORDER = ["claude", "codex", "gemini", "grok", "antigravity"];
     providers.sort((a, b) => {
       const ai = CLI_ORDER.indexOf(a.cli_type ?? "");
       const bi = CLI_ORDER.indexOf(b.cli_type ?? "");
@@ -587,11 +600,11 @@ export async function relayModelsCommand(): Promise<void> {
 // `relay start`.
 //
 // With --cli <type> we preflight just that one. Without, we loop over a
-// sensible default set (claude / codex / gemini / api-key) and report
+// sensible default set (claude / codex / gemini / grok / antigravity) and report
 // each independently — a failure in one cli_type doesn't short-circuit
 // the others.
 
-const PREFLIGHT_DEFAULTS = ["claude", "codex", "gemini", "antigravity"];
+const PREFLIGHT_DEFAULTS = ["claude", "codex", "gemini", "grok", "antigravity"];
 
 export async function relayPreflightCommand(options: {
   cli?: string;
@@ -655,6 +668,12 @@ async function resolvePreflightFn(
       );
       return () => preflightGeminiApi();
     }
+    case "grok": {
+      const { preflightGrokApi } = await import(
+        "../relay/upstream/grok-api.js"
+      );
+      return () => preflightGrokApi();
+    }
     case "antigravity": {
       const { preflightAntigravityApi } = await import(
         "../relay/upstream/antigravity-api.js"
@@ -684,4 +703,3 @@ async function resolvePreflightFn(
     }
   }
 }
-

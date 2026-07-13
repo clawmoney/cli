@@ -1,4 +1,4 @@
-// ClawMoney companion — Electron main process.
+// SpareAI companion — Electron main process.
 //
 // A tiny menu-bar (tray) app that gives CLI-only users a persistent icon +
 // a dashboard window, WITHOUT installing the full Tauri desktop app.
@@ -15,16 +15,16 @@ const http = require('node:http');
 const { spawn, spawnSync } = require('node:child_process');
 
 // Rebrand from "Electron" — sets the macOS menu-bar app name (and userData path).
-app.setName('ClawMoney');
+app.setName('SpareAI');
 
 // Single shared bridge dir, must match src/ui/ipc-client.ts.
-const BRIDGE = path.join(os.tmpdir(), 'clawmoney-ui-bridge');
+const BRIDGE = path.join(os.tmpdir(), 'spareai-ui-bridge');
 const REQ_DIR = path.join(BRIDGE, 'requests');
 const RES_DIR = path.join(BRIDGE, 'responses');
 const PID_FILE = path.join(BRIDGE, 'companion.pid');
 
 // The CLI passes the resolved dashboard URL (with auth token) via env.
-const DASHBOARD_URL = process.env.CLAWMONEY_DASHBOARD_URL || 'https://clawmoney.ai/dashboard';
+const DASHBOARD_URL = (process.env.SPAREAI_DASHBOARD_URL ?? process.env.CLAWMONEY_DASHBOARD_URL) || 'https://clawmoney.ai/dashboard';
 
 // Verbose log so the CLI side can diagnose render failures (white screen etc).
 const LOG_FILE = path.join(__dirname, 'companion.log');
@@ -86,12 +86,12 @@ function startUIServer() {
 
 // ── Tauri invoke bridge ─────────────────────────────────────────────────────
 // preload.js injects window.__TAURI_INTERNALS__.invoke -> ipcRenderer -> here.
-// We implement the desktop UI's commands against clawmoney config + backend so
+// We implement the desktop UI's commands against spareai config + backend so
 // the UI runs in real (isTauri) mode. Mirrors the Rust commands in
-// clawmoney-desktop/src-tauri/src/main.rs (which mostly call the same backend
-// or `clawmoney` CLI).
-const API_BASE = process.env.CLAWMONEY_API_BASE || 'https://api.bnbot.ai';
-const CONFIG_PATH = path.join(os.homedir(), '.clawmoney', 'config.yaml');
+// spareai-desktop/src-tauri/src/main.rs (which mostly call the same backend
+// or `spareai` CLI).
+const API_BASE = (process.env.SPAREAI_API_BASE ?? process.env.CLAWMONEY_API_BASE) || 'https://api.bnbot.ai';
+const CONFIG_PATH = path.join(os.homedir(), '.spareai', 'config.yaml');
 const EXTENSION_URL = 'https://clawmoney.ai/extension';
 
 // Electron GUI apps inherit a minimal PATH; extend it so `bnbot` resolves.
@@ -103,7 +103,7 @@ const CLI_PATH = [
 
 // Mirror Rust service_status: read the daemon pid file, check the process is alive.
 function readPidStatus(name, pidFile) {
-  const pidPath = path.join(os.homedir(), '.clawmoney', pidFile);
+  const pidPath = path.join(os.homedir(), '.spareai', pidFile);
   try {
     const pid = parseInt(fs.readFileSync(pidPath, 'utf8').trim(), 10) || null;
     if (pid) process.kill(pid, 0); // throws if the process isn't alive
@@ -178,15 +178,15 @@ async function apiGet(p, apiKey) {
 // user is logged in but the Market provider isn't running, start it — so the
 // companion auto-takes orders on open, just like the desktop app does.
 // Uses ELECTRON_RUN_AS_NODE so the companion's own node runs the CLI entry
-// (no dependency on a global `clawmoney` or system node on PATH).
+// (no dependency on a global `spareai` or system node on PATH).
 function ensureMarketRunning() {
-  const entry = process.env.CLAWMONEY_CLI_ENTRY;
+  const entry = (process.env.SPAREAI_CLI_ENTRY ?? process.env.CLAWMONEY_CLI_ENTRY);
   if (!entry || !fs.existsSync(entry)) return;
   const cfg = readClawConfig();
   if (!cfg || !cfg.api_key) return; // not logged in → don't take orders
   if (readPidStatus('market', 'provider.pid').running) return; // already up
   try {
-    // Use system `node` (not process.execPath). process.execPath is the ClawMoney
+    // Use system `node` (not process.execPath). process.execPath is the SpareAI
     // electron binary; even with ELECTRON_RUN_AS_NODE, the CLI's daemon inherits
     // that execPath and re-launches as a GUI electron window → single-instance
     // clash → the companion flickers/relaunches. `node` keeps the daemon headless.
@@ -196,7 +196,7 @@ function ensureMarketRunning() {
       stdio: 'ignore',
     });
     child.unref();
-    log('ensureMarketRunning: started `node clawmoney market start`');
+    log('ensureMarketRunning: started `node spareai market start`');
   } catch (e) {
     log(`ensureMarketRunning failed: ${e.message}`);
   }
@@ -269,11 +269,11 @@ async function loadDashboard() {
 
 // LLM subscriptions that can be resold via the relay (mirrors desktop LLM_SPECS).
 const LLM_SPECS = [
-  { cli: 'codex', package: '@openai/codex', token: '.codex/auth.json', model: 'gpt-5.5' },
+  { cli: 'codex', package: '@openai/codex', token: '.codex/auth.json', model: 'gpt-5.6-sol' },
   { cli: 'chatgpt-web', package: '@jackwener/opencli', token: '', model: 'gpt-5.2' },
   { cli: 'gemini', package: '@google/gemini-cli', token: '.gemini/oauth_creds.json', model: 'gemini-2.5-flash' },
 ];
-const RELAY_RESALE_PATH = path.join(os.homedir(), '.clawmoney', 'relay-resale.json');
+const RELAY_RESALE_PATH = path.join(os.homedir(), '.spareai', 'relay-resale.json');
 
 function commandExists(bin) {
   try {
@@ -324,10 +324,10 @@ function runProc(cmd, procArgs, timeoutMs = 25000) {
   });
 }
 
-// Run a clawmoney CLI subcommand via system `node` (not process.execPath, which
+// Run a spareai CLI subcommand via system `node` (not process.execPath, which
 // is the electron binary — see ensureMarketRunning). Returns a Promise.
 function runCli(cliArgs, timeoutMs = 25000) {
-  const entry = process.env.CLAWMONEY_CLI_ENTRY;
+  const entry = (process.env.SPAREAI_CLI_ENTRY ?? process.env.CLAWMONEY_CLI_ENTRY);
   if (!entry || !fs.existsSync(entry)) return Promise.resolve({ ok: false, error: 'CLI entry not found' });
   return runProc('node', [entry, ...cliArgs], timeoutMs);
 }
@@ -340,7 +340,7 @@ async function handleTauriCommand(cmd, args) {
         return await loadDashboard();
       case 'load_provider_log':
         return { ok: true, providerLog: [] };
-      // Local-service controls → drive the clawmoney CLI daemons.
+      // Local-service controls → drive the spareai CLI daemons.
       case 'start_market': return await runCli(['market', 'start']);
       case 'stop_market': return await runCli(['market', 'stop']);
       case 'start_surf': return await runCli(['relay', 'start']);
@@ -545,10 +545,10 @@ function createTray() {
   let icon = nativeImage.createFromPath(path.join(__dirname, 'tray-icon.png'));
   if (process.platform === 'darwin') icon = icon.resize({ width: 18, height: 18 });
   tray = new Tray(icon);
-  tray.setToolTip('ClawMoney');
+  tray.setToolTip('SpareAI');
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: 'Open ClawMoney', click: showWindow },
+      { label: 'Open SpareAI', click: showWindow },
       { type: 'separator' },
       {
         label: 'Quit',

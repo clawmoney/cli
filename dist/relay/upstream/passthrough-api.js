@@ -15,7 +15,7 @@
  *   1. Openclaw api_key profile (provider field matches spec.openclawProvider)
  *   2. Environment variable named by spec.envVarName
  *
- * Anything more (clawmoney-managed keystore, per-request key rotation) is
+ * Anything more (spareai-managed keystore, per-request key rotation) is
  * out of scope here; users who need that today set the env var before
  * launching the daemon.
  */

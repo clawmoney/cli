@@ -21,7 +21,7 @@ function envOr(name: string, fallback: string): string {
 
 // ── Design note: subscription-only catalog ───────────────────────────────
 //
-// clawmoney relay only supports upstreams where the provider is selling
+// spareai relay only supports upstreams where the provider is selling
 // *idle capacity from a fixed monthly subscription*. Pay-per-token API
 // keys (Moonshot Open Platform, generic Z.AI API, openai.com API, raw
 // DashScope) are deliberately NOT registered here: a provider would spend
@@ -36,7 +36,7 @@ function envOr(name: string, fallback: string): string {
 // ── Z.AI GLM Coding Plan ──────────────────────────────────────────────────
 // Z.AI sells a monthly Coding Plan subscription separately from their
 // token-priced general API. Only the subscription endpoint is routable
-// from clawmoney.
+// from spareai.
 
 registerPassthroughSpec({
   cliType: "zai-coding",
@@ -85,7 +85,7 @@ export const PASSTHROUGH_CLI_TYPES = new Set<string>([
 // backend/app/core/relay_catalog.py:_ALL_CLI_TYPES). For static-key and
 // bearer-passthrough upstreams the canonical value is `api-key` — the
 // fine-grained internal names above (zai-coding, moonshot, etc.) are
-// clawmoney-cli concepts only and must be folded to `api-key` on the wire
+// spareai-cli concepts only and must be folded to `api-key` on the wire
 // when registering providers and when dispatching inbound requests.
 //
 // Routing from `api-key` back to an internal spec is done by model prefix
@@ -110,7 +110,7 @@ export function hubCliTypeFor(internalCli: string): string {
   if (internalCli === "minimax" || internalCli === "kimi-coding") {
     return HUB_CLI_TYPE_FOR_PASSTHROUGH;
   }
-  // claude / codex / gemini / antigravity pass through unchanged.
+  // claude / codex / gemini / grok / antigravity pass through unchanged.
   return internalCli;
 }
 

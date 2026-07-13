@@ -6,7 +6,7 @@ import { userListToTwitter283 } from "./_mapper.js";
  * which X resolves to canonical.
  */
 export const xTweetLikersSkill = {
-    price_usd: 0.005,
+    price_usd: 0.0001,
     async run(input, ctx) {
         const { tweet_id, count, cursor } = (input ?? {});
         if (!tweet_id)

@@ -6,7 +6,8 @@ import ora from "ora";
 import { requireConfig } from "../utils/config.js";
 import { readTaskPid, isPidAlive } from "../task/daemon.js";
 
-const LOG_FILE = join(homedir(), ".clawmoney", "task.log");
+import { spareaiDir } from "../utils/home.js";
+const LOG_FILE = join(spareaiDir(), "task.log");
 
 export async function taskStartCommand(): Promise<void> {
   const config = requireConfig();
@@ -14,7 +15,7 @@ export async function taskStartCommand(): Promise<void> {
   const existing = readTaskPid();
   if (existing !== null && isPidAlive(existing)) {
     console.log(
-      chalk.yellow(`Task daemon is already running (PID ${existing}). Use "clawmoney task stop" first.`)
+      chalk.yellow(`Task daemon is already running (PID ${existing}). Use "spareai task stop" first.`)
     );
     return;
   }
@@ -34,11 +35,11 @@ export async function taskStartCommand(): Promise<void> {
       detached: true,
       env: {
         ...process.env,
-        CLAWMONEY_DAEMON: "1",
-        // daemon reads these from env first, then ~/.clawmoney/config.yaml as fallback
+        SPAREAI_DAEMON: "1",
+        // daemon reads these from env first, then ~/.spareai/config.yaml as fallback
         API_KEY: config.api_key,
         AGENT_ID: config.agent_id ?? "",
-        AGENT_NAME: config.agent_slug ?? "clawmoney-task",
+        AGENT_NAME: config.agent_slug ?? "spareai-task",
       },
     });
 

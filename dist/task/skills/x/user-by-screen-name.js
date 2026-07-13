@@ -12,7 +12,7 @@ import { userProfileToTwitter283 } from "./_mapper.js";
  * "field not available".
  */
 export const xUserByScreenNameSkill = {
-    price_usd: 0.003,
+    price_usd: 0.0001,
     async run(input, ctx) {
         const { username } = (input ?? {});
         if (!username)

@@ -8,7 +8,7 @@
  *
  * The server intercepts the request to cloudcode-pa.googleapis.com,
  * extracts project_id, user_agent, cli_version, writes them to
- * ~/.clawmoney/gemini-fingerprint.json, then proxies the request to the real
+ * ~/.spareai/gemini-fingerprint.json, then proxies the request to the real
  * upstream so the CLI receives a valid response and exits cleanly.
  *
  * All capture files are scrubbed after successful fingerprint extraction
@@ -24,7 +24,7 @@ import { homedir } from "node:os";
 import { fetch as undiciFetch, ProxyAgent } from "undici";
 
 const PORT = 8789;
-const OUT_DIR = join(homedir(), ".clawmoney");
+const OUT_DIR = join(homedir(), ".spareai");
 const FINGERPRINT_PATH = join(OUT_DIR, "gemini-fingerprint.json");
 
 // Honor HTTPS_PROXY so we can reach Google from behind a GFW egress.

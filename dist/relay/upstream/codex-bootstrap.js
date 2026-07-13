@@ -8,7 +8,7 @@
  * decoder. So instead we reuse the existing
  * `scripts/capture-codex-request.mjs` script which already handles
  * all of that correctly: spawn it as a subprocess, run `codex -p hi`
- * against it, and wait for `~/.clawmoney/codex-fingerprint.json` to
+ * against it, and wait for `~/.spareai/codex-fingerprint.json` to
  * appear. On success we SIGINT the capture proxy so it can scrub the
  * transient capture files the way the manual flow does.
  *
@@ -18,10 +18,10 @@
  */
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-const CONFIG_DIR = join(homedir(), ".clawmoney");
+import { spareaiDir } from "../../utils/home.js";
+const CONFIG_DIR = spareaiDir();
 const FINGERPRINT_PATH = join(CONFIG_DIR, "codex-fingerprint.json");
 const CAPTURE_PORT = 8788;
 const CAPTURE_SCRIPT = "capture-codex-request.mjs";
@@ -54,7 +54,7 @@ export async function bootstrapCodexFingerprint(opts = {}) {
     }
     const scriptPath = findCaptureScript();
     if (!scriptPath) {
-        throw new Error(`capture-codex-request.mjs not found in the installed clawmoney package`);
+        throw new Error(`capture-codex-request.mjs not found in the installed spareai package`);
     }
     let proxyChild = null;
     let codexChild = null;

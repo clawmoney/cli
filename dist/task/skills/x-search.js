@@ -16,7 +16,7 @@ const exec = promisify(execFile);
  * NDJSON stream alive past Cloudflare's idle threshold.
  */
 export const xSearchSkill = {
-    price_usd: 0.005,
+    price_usd: 0.0001,
     async run(input, ctx) {
         const raw = (input ?? {});
         const q = (raw.q ?? raw.query ?? "").trim();

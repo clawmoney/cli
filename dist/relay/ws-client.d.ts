@@ -10,6 +10,7 @@ export declare class RelayWsClient {
     private _connected;
     private wsFailLogged;
     private stopping;
+    private lastAliveAt;
     constructor(config: RelayProviderConfig, onEvent: RelayEventCallback);
     get connected(): boolean;
     start(): void;

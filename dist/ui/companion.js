@@ -2,7 +2,7 @@
 // then talk to it. This is the "reverse-launch" awal does — the CLI brings up
 // the GUI on demand, zero app install for the user.
 //
-// Why a per-user run dir (~/.clawmoney/companion) instead of running straight
+// Why a per-user run dir (~/.spareai/companion) instead of running straight
 // from the installed package: the global npm package dir is often not writable,
 // and we need to `npm i electron` somewhere. So we copy the tiny companion
 // files into the user's home and install Electron there (awal uses env-paths
@@ -14,11 +14,12 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { getCompanionPid, sendIpc } from './ipc-client.js';
 import { loadConfig } from '../utils/config.js';
+import { spareaiDir } from '../utils/home.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Companion source shipped in the npm package: dist/ui/ -> ../../companion
 const PKG_COMPANION = path.resolve(__dirname, '../../companion');
 // Writable run dir in the user's home.
-const RUN_DIR = path.join(os.homedir(), '.clawmoney', 'companion');
+const RUN_DIR = path.join(spareaiDir(), 'companion');
 const COMPANION_FILES = ['main.js', 'package.json', 'tray-icon.png', 'icon.png', 'icon.icns', 'preload.js'];
 function copyCompanionFiles() {
     fs.mkdirSync(RUN_DIR, { recursive: true });
@@ -38,16 +39,22 @@ function copyCompanionFiles() {
 // instead of "Electron". The Dock name follows the running executable's name
 // (CFBundleExecutable), so we rename the binary itself — CFBundleName /
 // app.setName() alone don't change it.
-const MACOS_BIN_NAME = 'ClawMoney';
+const MACOS_BIN_NAME = 'SpareAI';
 function electronBinaryPath() {
     if (process.platform === 'darwin') {
         const dist = path.join(RUN_DIR, 'node_modules', 'electron', 'dist');
         // Prefer the rebranded, path-renamed app — sidesteps LaunchServices' cached
-        // com.github.Electron association entirely.
-        for (const app of ['ClawMoney.app', 'Electron.app']) {
-            const bin = path.join(dist, app, 'Contents', 'MacOS', MACOS_BIN_NAME);
-            if (fs.existsSync(bin))
-                return bin;
+        // com.github.Electron association entirely. ClawMoney is the pre-SpareAI
+        // rebrand; patchElectronApp migrates it, but resolve it here too in case
+        // that migration couldn't rename.
+        for (const [app, bin] of [
+            ['SpareAI.app', MACOS_BIN_NAME],
+            ['ClawMoney.app', 'ClawMoney'],
+            ['Electron.app', MACOS_BIN_NAME],
+        ]) {
+            const p = path.join(dist, app, 'Contents', 'MacOS', bin);
+            if (fs.existsSync(p))
+                return p;
         }
         return path.join(dist, 'Electron.app', 'Contents', 'MacOS', 'Electron');
     }
@@ -58,9 +65,25 @@ function patchElectronApp() {
         return;
     const dist = path.join(RUN_DIR, 'node_modules', 'electron', 'dist');
     const appOld = path.join(dist, 'Electron.app');
-    const appNew = path.join(dist, 'ClawMoney.app');
+    const appNew = path.join(dist, 'SpareAI.app');
     if (fs.existsSync(appNew))
         return; // already rebranded + renamed
+    // Migrate a pre-SpareAI rebrand (ClawMoney.app with a ClawMoney binary):
+    // fold it back into the Electron.app shape so the rebrand below applies.
+    const appLegacy = path.join(dist, 'ClawMoney.app');
+    if (!fs.existsSync(appOld) && fs.existsSync(appLegacy)) {
+        try {
+            fs.renameSync(appLegacy, appOld);
+            const legacyBin = path.join(appOld, 'Contents', 'MacOS', 'ClawMoney');
+            const electronBin = path.join(appOld, 'Contents', 'MacOS', 'Electron');
+            if (fs.existsSync(legacyBin) && !fs.existsSync(electronBin)) {
+                fs.renameSync(legacyBin, electronBin);
+            }
+        }
+        catch {
+            /* keep whatever shape we got to; electronBinaryPath still resolves it */
+        }
+    }
     if (!fs.existsSync(appOld))
         return;
     const contents = path.join(appOld, 'Contents');
@@ -76,13 +99,13 @@ function patchElectronApp() {
     const plist = path.join(contents, 'Info.plist');
     const buddy = '/usr/libexec/PlistBuddy';
     if (fs.existsSync(buddy) && fs.existsSync(plist)) {
-        spawnSync(buddy, ['-c', 'Set :CFBundleName ClawMoney', plist]);
-        const dn = spawnSync(buddy, ['-c', 'Set :CFBundleDisplayName ClawMoney', plist]);
+        spawnSync(buddy, ['-c', 'Set :CFBundleName SpareAI', plist]);
+        const dn = spawnSync(buddy, ['-c', 'Set :CFBundleDisplayName SpareAI', plist]);
         if (dn.status !== 0)
-            spawnSync(buddy, ['-c', 'Add :CFBundleDisplayName string ClawMoney', plist]);
+            spawnSync(buddy, ['-c', 'Add :CFBundleDisplayName string SpareAI', plist]);
         if (fs.existsSync(newBin))
             spawnSync(buddy, ['-c', `Set :CFBundleExecutable ${MACOS_BIN_NAME}`, plist]);
-        spawnSync(buddy, ['-c', 'Set :CFBundleIdentifier ai.clawmoney.companion', plist]);
+        spawnSync(buddy, ['-c', 'Set :CFBundleIdentifier org.spareai.companion', plist]);
     }
     const icnsSrc = path.join(PKG_COMPANION, 'icon.icns');
     const icnsDst = path.join(contents, 'Resources', 'electron.icns');
@@ -93,7 +116,7 @@ function patchElectronApp() {
         catch { /* ignore */ }
     }
     // Move the whole .app to a fresh path. LaunchServices keys its cached app name
-    // by bundle path + id; a brand-new path (ClawMoney.app) registers clean and
+    // by bundle path + id; a brand-new path (SpareAI.app) registers clean and
     // sidesteps any stale com.github.Electron / "Electron" association — this is
     // what finally makes the Dock/Cmd-Tab name stick.
     try {
@@ -115,7 +138,7 @@ function ensureElectron() {
             stdio: 'inherit',
         });
         if (r.status !== 0) {
-            throw new Error('Failed to install the ClawMoney companion UI (Electron).');
+            throw new Error('Failed to install the SpareAI companion UI (Electron).');
         }
         patchElectronApp();
     }
@@ -132,9 +155,9 @@ export async function ensureCompanionRunning(dashboardUrl) {
     const electronBin = ensureElectron();
     const env = { ...process.env };
     if (dashboardUrl)
-        env.CLAWMONEY_DASHBOARD_URL = dashboardUrl;
+        env.SPAREAI_DASHBOARD_URL = dashboardUrl;
     // Pass the CLI entry so the companion can auto-start `market start` on load.
-    env.CLAWMONEY_CLI_ENTRY = process.argv[1] || '';
+    env.SPAREAI_CLI_ENTRY = process.argv[1] || '';
     // Route Electron stdout/stderr to a log file so render issues are debuggable.
     const outLog = fs.openSync(path.join(RUN_DIR, 'companion.out.log'), 'a');
     const child = spawn(electronBin, [path.join(RUN_DIR, 'main.js')], {
@@ -152,9 +175,9 @@ export async function ensureCompanionRunning(dashboardUrl) {
     }
     throw new Error('Companion did not come up in time.');
 }
-/** Resolve the dashboard URL (with auth token) from ~/.clawmoney/config.yaml. */
+/** Resolve the dashboard URL (with auth token) from ~/.spareai/config.yaml. */
 function resolveDashboardUrl() {
-    const base = process.env.CLAWMONEY_DASHBOARD_URL || 'https://clawmoney.ai/dashboard';
+    const base = (process.env.SPAREAI_DASHBOARD_URL ?? process.env.CLAWMONEY_DASHBOARD_URL) || 'https://clawmoney.ai/dashboard';
     try {
         const cfg = loadConfig();
         if (cfg?.api_key)
@@ -165,11 +188,13 @@ function resolveDashboardUrl() {
     }
     return base;
 }
-// If the full ClawMoney Desktop (Tauri) app is installed, launch THAT and skip
+// If the full SpareAI Desktop (Tauri) app is installed, launch THAT and skip
 // the Electron companion entirely — same tray icon, no duplicate UI.
 const DESKTOP_APP_PATHS = [
-    '/Applications/ClawMoney.app',
-    '/Applications/Claw Money.app', // legacy name (pre-rename), still detect it
+    '/Applications/SpareAI.app',
+    '/Applications/ClawMoney.app', // legacy name (pre-SpareAI rename), still detect it
+    '/Applications/Claw Money.app', // even older legacy name
+    path.join(os.homedir(), 'Applications', 'SpareAI.app'),
     path.join(os.homedir(), 'Applications', 'ClawMoney.app'),
     path.join(os.homedir(), 'Applications', 'Claw Money.app'),
 ];
@@ -180,8 +205,8 @@ function installedDesktopApp() {
 }
 /** Open the menu-bar UI: the installed Desktop app if present, else the companion. */
 export async function openCompanion(dashboardUrl) {
-    // CLAWMONEY_UI=companion forces the Electron companion even if Desktop is installed (testing).
-    const forceCompanion = process.env.CLAWMONEY_UI === 'companion';
+    // SPAREAI_UI=companion forces the Electron companion even if Desktop is installed (testing).
+    const forceCompanion = (process.env.SPAREAI_UI ?? process.env.CLAWMONEY_UI) === 'companion';
     const desktop = forceCompanion ? null : installedDesktopApp();
     if (desktop) {
         // Desktop app is installed → launch it, do NOT start the Electron companion.

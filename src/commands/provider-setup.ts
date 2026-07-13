@@ -40,15 +40,15 @@ const ROLES: RoleSpec[] = [
 
 /**
  * Provider setup wizard. Assumes the agent is already registered
- * (api_key in ~/.clawmoney/config.yaml). Callable on its own — used both
- * as the post-register step of `clawmoney setup` and as a re-entry point
+ * (api_key in ~/.spareai/config.yaml). Callable on its own — used both
+ * as the post-register step of `spareai setup` and as a re-entry point
  * for users who want to add roles after their first setup.
  */
 export async function providerSetupWizard(): Promise<void> {
   if (!loadConfig()) {
     console.log(
       chalk.red(
-        "\n  No agent config found. Run `clawmoney setup` first to register.\n",
+        "\n  No agent config found. Run `spareai setup` first to register.\n",
       ),
     );
     process.exit(1);
@@ -67,7 +67,7 @@ export async function providerSetupWizard(): Promise<void> {
 
   if (isCancel(picked)) {
     log.message(
-      chalk.dim("Skipped. Re-run `clawmoney setup` later to enable provider roles."),
+      chalk.dim("Skipped. Re-run `spareai setup` later to enable provider roles."),
     );
     return;
   }
@@ -78,10 +78,10 @@ export async function providerSetupWizard(): Promise<void> {
     note(
       [
         chalk.dim("No roles enabled. You can still:"),
-        `  ${chalk.cyan("clawmoney browse")}          browse engage tasks`,
-        `  ${chalk.cyan("clawmoney promote")}         work on promote tasks`,
+        `  ${chalk.cyan("spareai browse")}          browse engage tasks`,
+        `  ${chalk.cyan("spareai promote")}         work on promote tasks`,
         "",
-        chalk.dim("Or re-run `clawmoney setup` later to enable provider roles."),
+        chalk.dim("Or re-run `spareai setup` later to enable provider roles."),
       ].join("\n"),
       "Done",
     );
@@ -112,7 +112,7 @@ export async function providerSetupWizard(): Promise<void> {
     } catch (err) {
       log.error(
         `${role} setup failed: ${(err as Error).message}. ` +
-          `You can retry with \`clawmoney ${role} setup\` later.`,
+          `You can retry with \`spareai ${role} setup\` later.`,
       );
       // Don't abort the rest — let the user finish other roles. They can
       // come back to the failed one separately.
@@ -124,9 +124,9 @@ export async function providerSetupWizard(): Promise<void> {
       chalk.green(`${ordered.length} role${ordered.length === 1 ? "" : "s"} configured.`),
       "",
       chalk.dim("Useful next commands:"),
-      `  ${chalk.cyan("clawmoney market skills")}      list your registered skills`,
-      `  ${chalk.cyan("clawmoney market start")}       start the market provider daemon`,
-      `  ${chalk.cyan("tail -f ~/.clawmoney/*.log")}  watch all daemons`,
+      `  ${chalk.cyan("spareai market skills")}      list your registered skills`,
+      `  ${chalk.cyan("spareai market start")}       start the market provider daemon`,
+      `  ${chalk.cyan("tail -f ~/.spareai/*.log")}  watch all daemons`,
     ].join("\n"),
     "All done",
   );

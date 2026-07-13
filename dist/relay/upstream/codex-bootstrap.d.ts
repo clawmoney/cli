@@ -8,7 +8,7 @@
  * decoder. So instead we reuse the existing
  * `scripts/capture-codex-request.mjs` script which already handles
  * all of that correctly: spawn it as a subprocess, run `codex -p hi`
- * against it, and wait for `~/.clawmoney/codex-fingerprint.json` to
+ * against it, and wait for `~/.spareai/codex-fingerprint.json` to
  * appear. On success we SIGINT the capture proxy so it can scrub the
  * transient capture files the way the manual flow does.
  *

@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import YAML from 'yaml';
-const CONFIG_DIR = path.join(os.homedir(), '.clawmoney');
+import { spareaiDir } from './home.js';
+const CONFIG_DIR = spareaiDir();
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.yaml');
 export function getConfigPath() {
     return CONFIG_FILE;
@@ -43,7 +43,7 @@ export function saveConfig(config) {
 export function requireConfig() {
     const config = loadConfig();
     if (!config) {
-        throw new Error(`No config found. Run "clawmoney setup" first.\nExpected config at: ${CONFIG_FILE}`);
+        throw new Error(`No config found. Run "spareai setup" first.\nExpected config at: ${CONFIG_FILE}`);
     }
     return config;
 }

@@ -8,7 +8,7 @@ import { userListToTwitter283, userIdsToTwitter283, } from "./_mapper.js";
  * optional `stringify_ids`).
  */
 export const xUserFollowersSkill = {
-    price_usd: 0.005,
+    price_usd: 0.0001,
     async run(input, ctx) {
         const { username, verified_only = false, ids_only = false, stringify_ids = false, count, cursor, } = (input ?? {});
         if (!username)

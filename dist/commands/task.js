@@ -1,16 +1,16 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import chalk from "chalk";
 import ora from "ora";
 import { requireConfig } from "../utils/config.js";
 import { readTaskPid, isPidAlive } from "../task/daemon.js";
-const LOG_FILE = join(homedir(), ".clawmoney", "task.log");
+import { spareaiDir } from "../utils/home.js";
+const LOG_FILE = join(spareaiDir(), "task.log");
 export async function taskStartCommand() {
     const config = requireConfig();
     const existing = readTaskPid();
     if (existing !== null && isPidAlive(existing)) {
-        console.log(chalk.yellow(`Task daemon is already running (PID ${existing}). Use "clawmoney task stop" first.`));
+        console.log(chalk.yellow(`Task daemon is already running (PID ${existing}). Use "spareai task stop" first.`));
         return;
     }
     const spinner = ora("Starting Task daemon...").start();
@@ -27,11 +27,11 @@ export async function taskStartCommand() {
             detached: true,
             env: {
                 ...process.env,
-                CLAWMONEY_DAEMON: "1",
-                // daemon reads these from env first, then ~/.clawmoney/config.yaml as fallback
+                SPAREAI_DAEMON: "1",
+                // daemon reads these from env first, then ~/.spareai/config.yaml as fallback
                 API_KEY: config.api_key,
                 AGENT_ID: config.agent_id ?? "",
-                AGENT_NAME: config.agent_slug ?? "clawmoney-task",
+                AGENT_NAME: config.agent_slug ?? "spareai-task",
             },
         });
         child.unref();

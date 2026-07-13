@@ -12,8 +12,10 @@ import { API_PRICES, PLATFORM_FEE } from "../relay/pricing.js";
 import { hasClaudeFingerprint, bootstrapClaudeFingerprint, } from "../relay/upstream/claude-bootstrap.js";
 import { hasGeminiFingerprint, bootstrapGeminiFingerprint, } from "../relay/upstream/gemini-bootstrap.js";
 import { hasCodexFingerprint, bootstrapCodexFingerprint, } from "../relay/upstream/codex-bootstrap.js";
+import { inspectGrokLocalState } from "../relay/upstream/grok-api.js";
 import { listOpenclawOAuthProviders, listOpenclawApiKeyProviders, } from "../relay/upstream/openclaw-creds.js";
 import { hubCliTypeFor } from "../relay/upstream/passthrough-specs.js";
+import { spareaiDir } from "../utils/home.js";
 // ── Per-cli_type model catalogs ──
 //
 // `RECOMMENDED_MODELS` is what gets registered when the user picks "all
@@ -22,8 +24,8 @@ import { hubCliTypeFor } from "../relay/upstream/passthrough-specs.js";
 // against:
 //   - Claude Code 2.1.x /model menu (4 entries → 3 unique IDs;
 //     Sonnet 1M is the same model + context-1m beta header)
-//   - Codex CLI 0.117.x /model menu (4 entries: gpt-5.4 current,
-//     gpt-5.4-mini, gpt-5.3-codex, gpt-5.2)
+//   - Codex CLI current /model menu (gpt-5.6-sol frontier plus retained
+//     gpt-5.5 / gpt-5.4 compatibility entries)
 //   - sub2api backend/internal/pkg/gemini/models.go DefaultModels()
 //     for the Gemini CLI catalog
 //   - sub2api backend/internal/pkg/antigravity/claude_types.go
@@ -37,8 +39,10 @@ const RECOMMENDED_MODELS = {
     //   Default(Opus 4.7 1M) / Sonnet 4.6 / Haiku 4.5
     // Opus 4.7 released 2026-04-16 and became the default model.
     claude: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"],
-    // Codex CLI /model menu for ChatGPT sign-in (post 2026-04-14 cleanup):
-    //   gpt-5.4             — latest frontier agentic coding (current default)
+    // Codex CLI /model menu for ChatGPT sign-in:
+    //   gpt-5.6-sol         — GPT-5.6 flagship capability (current default)
+    //   gpt-5.5             — previous frontier model
+    //   gpt-5.4             — retained frontier compatibility model
     //   gpt-5.4-mini        — smaller frontier agentic coding
     //   gpt-5.3-codex       — industry-leading Codex-optimized model
     //   gpt-5.2             — previous general-purpose model
@@ -50,11 +54,16 @@ const RECOMMENDED_MODELS = {
     // when using Codex with a ChatGPT account", so they're no longer
     // auto-registered.
     codex: [
+        "gpt-5.6-sol",
+        "gpt-5.5",
         "gpt-5.4",
         "gpt-5.4-mini",
         "gpt-5.3-codex",
         "gpt-5.2",
     ],
+    // Grok Build's current subscription catalog. Composer stays opt-in until
+    // it has a stable public price; only the flagship model auto-registers.
+    grok: ["grok-4.5"],
     // Gemini CLI exposes a long list; mainstream picks are the production-
     // stable 2.5 line (pro + flash) and the latest 3.x preview (pro + flash).
     // Image / thinking variants and lite/customtools are intentionally
@@ -97,6 +106,9 @@ function modelsForCli(cli) {
         // but a `codex` daemon can't actually serve them.
         return all.filter((m) => m.startsWith("gpt-"));
     }
+    if (cli === "grok") {
+        return all.filter((m) => m.startsWith("grok-"));
+    }
     if (cli === "antigravity") {
         return all.filter((m) => m.startsWith("antigravity-"));
     }
@@ -125,7 +137,7 @@ function detectInstalledClis() {
     // validate OAuth state here — the daemon's preflight does that on
     // first start, and probing OAuth from a sync setup wizard would be
     // brittle (keychain prompts, refresh-token races, etc).
-    // Map clawmoney cli_type → openclaw provider id. Used so a machine with
+    // Map spareai cli_type → openclaw provider id. Used so a machine with
     // only openclaw installed still surfaces the relevant subscriptions via
     // ~/.openclaw/agents/*/agent/auth-profiles.json instead of requiring the
     // underlying official CLI binary. The adapters (claude-api / codex-api /
@@ -164,6 +176,12 @@ function detectInstalledClis() {
         }
         results.push({ cli, available, hint });
     }
+    // Grok Build may be launched by Finder/launchd with a minimal PATH, so its
+    // canonical ~/.grok/bin/grok install is checked explicitly. Unlike the
+    // other binary probes, this also validates the cached OAuth key + model
+    // catalog because the adapter deliberately never owns the refresh token.
+    const grok = inspectGrokLocalState("grok-4.5");
+    results.push({ cli: "grok", available: grok.available, hint: grok.hint });
     // ── Static-key passthrough providers ──
     // No binary to probe — each maps to an openclaw api_key profile or an
     // env var. Pair of (provider-id-in-openclaw, env-var-name, cli_type).
@@ -218,15 +236,15 @@ function detectInstalledClis() {
     });
     // Antigravity is OAuth-file based — there's no `antigravity` binary
     // installed locally. We check for the OAuth credentials file that
-    // `clawmoney antigravity login` writes.
-    const antigravityFile = join(homedir(), ".clawmoney", "antigravity-accounts.json");
+    // `spareai antigravity login` writes.
+    const antigravityFile = join(spareaiDir(), "antigravity-accounts.json");
     const antigravityAvailable = existsSync(antigravityFile);
     results.push({
         cli: "antigravity",
         available: antigravityAvailable,
         hint: antigravityAvailable
             ? "Google OAuth file present"
-            : "no Google OAuth linked (run `clawmoney antigravity login` first)",
+            : "no Google OAuth linked (run `spareai antigravity login` first)",
     });
     return results;
 }
@@ -234,29 +252,29 @@ function detectInstalledClis() {
 export async function relaySetupCommand() {
     // ── Step 0: ensure the agent is logged in ──
     //
-    // Relay setup relies on an ACTIVE ClawMoney agent (api_key + agent_id
-    // in ~/.clawmoney/config.yaml) to register provider rows and to auth
-    // the daemon's WS connection. If the user runs `clawmoney relay setup`
-    // before ever running `clawmoney setup`, we inline the login flow
+    // Relay setup relies on an ACTIVE SpareAI agent (api_key + agent_id
+    // in ~/.spareai/config.yaml) to register provider rows and to auth
+    // the daemon's WS connection. If the user runs `spareai relay setup`
+    // before ever running `spareai setup`, we inline the login flow
     // here instead of throwing a raw "No config found" error. The nested
     // setupCommand uses its own ora/prompt UI — visually different from
     // the clack wizard below, but that's acceptable since it only runs on
     // the first-time-user path.
     let existing = loadConfig();
     if (!existing) {
-        // setup prints its own "ClawMoney Agent Setup" header so the
+        // setup prints its own "SpareAI Agent Setup" header so the
         // handoff is self-explanatory — no extra narration needed.
         await setupCommand();
         existing = loadConfig();
         if (!existing) {
-            console.log(chalk.red("\n  Login did not complete. Run `clawmoney setup` manually, then re-run `clawmoney relay setup`.\n"));
+            console.log(chalk.red("\n  Login did not complete. Run `spareai setup` manually, then re-run `spareai relay setup`.\n"));
             process.exit(1);
         }
         console.log("");
     }
     const config = requireConfig();
-    intro(chalk.cyan(" ClawMoney Relay Setup "));
-    log.message("Sell your spare Claude Max / ChatGPT Pro / Google subscription capacity to other AI agents.");
+    intro(chalk.cyan(" SpareAI Relay Setup "));
+    log.message("Sell your spare Claude Max / ChatGPT Pro / Grok Build / Google subscription capacity to other AI agents.");
     // ── Step 1: detect installed CLIs ──
     const detectSpin = spinner();
     detectSpin.start("Scanning for installed CLI clients...");
@@ -266,22 +284,22 @@ export async function relaySetupCommand() {
     // about "which ones can I lend" at this step, not per-binary hints.
     // When the user is missing some families we don't name them (negative
     // framing — they came to provide what they have, not hear what they
-    // lack); instead we add a soft note that ClawMoney supports more
+    // lack); instead we add a soft note that SpareAI supports more
     // platforms than what was detected locally.
     const available = detected.filter((d) => d.available);
     const hasMissing = detected.some((d) => !d.available);
     if (available.length > 0) {
         log.success(`Found: ${chalk.bold(available.map((d) => d.cli).join(", "))}`);
         if (hasMissing) {
-            log.message(chalk.dim("(ClawMoney supports claude, codex, gemini, antigravity, " +
+            log.message(chalk.dim("(SpareAI supports claude, codex, gemini, grok, antigravity, " +
                 "zai / moonshot / kimi-coding / qwen-coding / openai (static-key), " +
                 "and minimax (OAuth or static-key) — only these were detected on this machine)"));
         }
     }
     if (available.length === 0) {
         log.error("No supported CLI clients found locally. Install at least one of: " +
-            chalk.cyan("claude, codex, gemini") +
-            " — or run `clawmoney antigravity login` to link a Google account, " +
+            chalk.cyan("claude, codex, gemini, grok") +
+            " — or run `spareai antigravity login` to link a Google account, " +
             "or `openclaw onboard` to link any supported subscription.");
         cancel("Setup aborted");
         process.exit(1);
@@ -422,7 +440,7 @@ export async function relaySetupCommand() {
                     continue;
                 log.warn(`${chalk.bold(r.cli)} fingerprint capture failed: ${r.error ?? "unknown"}`);
                 log.message(chalk.dim(`${r.cli} providers will be registered but the daemon won't serve them until you ` +
-                    `run \`node $(npm root -g)/clawmoney/scripts/capture-${r.cli}-request.mjs\` in one terminal ` +
+                    `run \`node $(npm root -g)/spareai/scripts/capture-${r.cli}-request.mjs\` in one terminal ` +
                     `and \`<CLI env vars> ${r.cli} -p hi\` in another.`));
             }
         }
@@ -526,7 +544,7 @@ export async function relaySetupCommand() {
     const regSpin = spinner();
     regSpin.start(`Registering ${registrations.length} providers...`);
     // Hub only recognizes a closed set of cli_types (claude / codex / gemini /
-    // antigravity / api-key / session-token). Our fine-grained internal names
+    // grok / antigravity / api-key / session-token). Our fine-grained internal names
     // (zai-coding / moonshot / qwen-coding / minimax / …) all fold to api-key
     // on the wire — the daemon does the actual upstream routing by model
     // prefix at request time. Preserve the fine-grained label only in the
@@ -617,7 +635,7 @@ export async function relaySetupCommand() {
         // Non-fatal: worst case is the daemon preflights extra cli_types,
         // which is annoying but doesn't break anything.
         log.warn(`Could not prune old providers: ${err.message} — ` +
-            `run \`npx clawmoney relay status\` and clean manually if needed`);
+            `run \`npx spareai relay status\` and clean manually if needed`);
     }
     // ── Step 8: auto-start the daemon ──
     //
@@ -625,7 +643,7 @@ export async function relaySetupCommand() {
     // every provider this agent has registered, preflights each distinct
     // cli_type, and dispatches requests to the right upstream based on
     // the `cli_type` field in each incoming relay_request. A single
-    // daemon process can serve Claude + Codex + Gemini + Antigravity
+    // daemon process can serve Claude + Codex + Gemini + Grok + Antigravity
     // simultaneously, so there's no need to pick one here.
     const uniqueClis = Array.from(new Set(selectedClis));
     const { relayStartCommand } = await import("./relay.js");
@@ -634,7 +652,7 @@ export async function relaySetupCommand() {
     }
     catch (err) {
         log.error(`Failed to start daemon: ${err.message}\n` +
-            `Try manually: ${chalk.cyan("clawmoney relay start")}`);
+            `Try manually: ${chalk.cyan("spareai relay start")}`);
         outro(chalk.yellow("Setup complete (daemon not started)"));
         return;
     }
@@ -643,10 +661,10 @@ export async function relaySetupCommand() {
     // instead of 6.
     log.message(chalk.dim("Next:") +
         "\n" +
-        `  ${chalk.cyan("npx clawmoney relay status")}   daemon + provider list\n` +
-        `  ${chalk.cyan("npx clawmoney relay logs")}     tail daemon log\n` +
-        `  ${chalk.cyan("npx clawmoney wallet balance")} on-chain + relay earnings\n` +
-        `  ${chalk.cyan("npx clawmoney relay stop")}     stop daemon`);
+        `  ${chalk.cyan("npx spareai relay status")}   daemon + provider list\n` +
+        `  ${chalk.cyan("npx spareai relay logs")}     tail daemon log\n` +
+        `  ${chalk.cyan("npx spareai wallet balance")} on-chain + relay earnings\n` +
+        `  ${chalk.cyan("npx spareai relay stop")}     stop daemon`);
     const cliLabel = uniqueClis.length === 1
         ? `${uniqueClis[0]} daemon running`
         : `daemon serving ${uniqueClis.join(" + ")}`;

@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import chalk from "chalk";
 import ora from "ora";
 import { requireConfig } from "../utils/config.js";
@@ -8,14 +7,15 @@ import { apiGet, apiPost } from "../utils/api.js";
 import { readPid, isPidAlive, removePid } from "../hub/provider.js";
 import { CdpProvider } from "../wallet/cdp-provider.js";
 import { x402Fetch } from "../wallet/x402-client.js";
-const LOG_FILE = join(homedir(), ".clawmoney", "provider.log");
+import { spareaiDir } from "../utils/home.js";
+const LOG_FILE = join(spareaiDir(), "provider.log");
 // ── hub start ──
 export async function hubStartCommand(options) {
     const config = requireConfig();
     // Check if already running
     const existingPid = readPid();
     if (existingPid && isPidAlive(existingPid)) {
-        console.log(chalk.yellow(`Market Provider is already running (PID ${existingPid}). Use "clawmoney market stop" first.`));
+        console.log(chalk.yellow(`Market Provider is already running (PID ${existingPid}). Use "spareai market stop" first.`));
         return;
     }
     const spinner = ora("Starting Market Provider...").start();
@@ -37,7 +37,7 @@ export async function hubStartCommand(options) {
             detached: true,
             env: {
                 ...process.env,
-                CLAWMONEY_DAEMON: "1",
+                SPAREAI_DAEMON: "1",
             },
         });
         child.unref();
@@ -235,9 +235,9 @@ export async function hubCallCommand(options) {
             console.log("");
             console.log(`  ${chalk.bold("Task:")}     ${taskId}`);
             console.log(`  ${chalk.bold("Budget:")}   $${budget} USDC`);
-            console.log(`  ${chalk.bold("Funded:")}   ${options.pay ? "Yes" : "No — pay to fund: npx clawmoney gig fund " + taskId}`);
+            console.log(`  ${chalk.bold("Funded:")}   ${options.pay ? "Yes" : "No — pay to fund: npx spareai gig fund " + taskId}`);
             console.log(`  ${chalk.bold("Status:")}   ${task.status}`);
-            console.log(chalk.dim(`  Check later: npx clawmoney gig detail ${taskId}`));
+            console.log(chalk.dim(`  Check later: npx spareai gig detail ${taskId}`));
             return;
         }
         // Instant-type skill → invoke flow
@@ -294,7 +294,7 @@ export async function hubCallCommand(options) {
             if (result._timeout) {
                 spinner.warn(chalk.yellow("Still processing..."));
                 console.log(`  ${chalk.bold("Order:")} ${orderId}`);
-                console.log(chalk.dim(`  Check later: npx clawmoney market order ${orderId}`));
+                console.log(chalk.dim(`  Check later: npx spareai market order ${orderId}`));
             }
             else {
                 spinner.succeed(chalk.green("Call completed (x402 paid)!"));
@@ -332,7 +332,7 @@ export async function hubCallCommand(options) {
             if (result._timeout) {
                 spinner.warn(chalk.yellow("Still processing..."));
                 console.log(`  ${chalk.bold("Order:")} ${orderId}`);
-                console.log(chalk.dim(`  Check later: npx clawmoney market order ${orderId}`));
+                console.log(chalk.dim(`  Check later: npx spareai market order ${orderId}`));
             }
             else {
                 spinner.succeed(chalk.green("Call completed!"));
@@ -400,7 +400,7 @@ export async function hubSkillsCommand() {
         spinner.succeed(`My Skills (${skills.length})`);
         console.log("");
         if (skills.length === 0) {
-            console.log(chalk.dim('  No skills registered. Use "clawmoney market register" to add one.'));
+            console.log(chalk.dim('  No skills registered. Use "spareai market register" to add one.'));
             return;
         }
         // Table header

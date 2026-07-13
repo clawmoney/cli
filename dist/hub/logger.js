@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
-const LOG_DIR = join(homedir(), ".clawmoney");
+import { spareaiDir } from "../utils/home.js";
+const LOG_DIR = spareaiDir();
 const LOG_FILE = join(LOG_DIR, "provider.log");
 function timestamp() {
     return new Date().toISOString().replace("T", " ").replace("Z", "");

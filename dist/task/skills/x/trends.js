@@ -6,7 +6,7 @@ import { trendsToTwitter283 } from "./_mapper.js";
  * accounts but accepts it as a best-effort hint.
  */
 export const xTrendsSkill = {
-    price_usd: 0.001,
+    price_usd: 0.0001,
     async run(input, ctx) {
         const { woeid, count } = (input ?? {});
         ctx.report({

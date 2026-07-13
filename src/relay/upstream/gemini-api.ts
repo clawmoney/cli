@@ -6,7 +6,7 @@
  * loading, same HTTPS_PROXY dispatcher setup.
  *
  * Token source:  ~/.gemini/oauth_creds.json  (written by `gemini auth login`)
- * Fingerprint:   ~/.clawmoney/gemini-fingerprint.json  (written by capture script)
+ * Fingerprint:   ~/.spareai/gemini-fingerprint.json  (written by capture script)
  * Upstream:      https://cloudcode-pa.googleapis.com/v1internal:generateContent
  *
  * The v1internal endpoint is what the real Gemini CLI uses for Code Assist
@@ -34,6 +34,7 @@ import {
   type OpenclawOAuthProfile,
 } from "./openclaw-creds.js";
 
+import { spareaiDir } from "../../utils/home.js";
 export { RateGuardBudgetExceededError, RateGuardCooldownError };
 
 // ── Constants ──
@@ -66,8 +67,8 @@ const CODE_ASSIST_BASE_URL = "https://cloudcode-pa.googleapis.com";
 const CODE_ASSIST_GENERATE_PATH = "/v1internal:streamGenerateContent?alt=sse";
 
 const GEMINI_CREDS_FILE = join(homedir(), ".gemini", "oauth_creds.json");
-const CLAWMONEY_DIR = join(homedir(), ".clawmoney");
-const FINGERPRINT_FILE = join(CLAWMONEY_DIR, "gemini-fingerprint.json");
+const SPAREAI_DIR = spareaiDir();
+const FINGERPRINT_FILE = join(SPAREAI_DIR, "gemini-fingerprint.json");
 
 // Fallback UA used before the capture script has bootstrapped this machine.
 // Real captured format: "GeminiCLI/<cli>/<default-model> (darwin; arm64; terminal) google-api-nodejs-client/9.15.1"
@@ -865,7 +866,7 @@ async function parseGeminiSseResponse(
 // ── Exports for capture script ──
 
 export function ensureClawmoneyDir(): void {
-  mkdirSync(CLAWMONEY_DIR, { recursive: true });
+  mkdirSync(SPAREAI_DIR, { recursive: true });
 }
 
 export { FINGERPRINT_FILE as GEMINI_FINGERPRINT_FILE };

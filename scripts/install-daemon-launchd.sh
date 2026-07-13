@@ -7,7 +7,7 @@
 # runs in the user's GUI session context, where the Keychain is unlocked as
 # long as the user is logged in at the console.
 #
-# This script generates ~/Library/LaunchAgents/ai.clawmoney.relay.plist, wires
+# This script generates ~/Library/LaunchAgents/org.spareai.relay.plist, wires
 # it up to the absolute path of the clawmoney binary, and loads it. After
 # running this once, the daemon will auto-start on login and auto-restart if
 # it crashes — no more "why did my daemon die overnight" pages.
@@ -17,15 +17,23 @@
 #   ./scripts/install-daemon-launchd.sh uninstall # unload + remove plist
 #
 # Pre-reqs:
-#   - `clawmoney setup` has already written ~/.clawmoney/config.yaml
+#   - `clawmoney setup` has already written ~/.spareai/config.yaml
 #   - `clawmoney antigravity login` (if using antigravity)
 #   - You've installed clawmoney globally (npm i -g clawmoney)
 
 set -euo pipefail
 
-LABEL="ai.clawmoney.relay"
+LABEL="org.spareai.relay"
+LEGACY_LABEL="ai.clawmoney.relay"
+# One-time migration: unload + remove the pre-SpareAI-rename agent so two
+# labels never run the same daemon side by side (hub presence gets poisoned
+# by multi-instance connections).
+if [[ -f "$HOME/Library/LaunchAgents/$LEGACY_LABEL.plist" ]]; then
+  launchctl bootout "gui/$(id -u)/$LEGACY_LABEL" 2>/dev/null || true
+  rm -f "$HOME/Library/LaunchAgents/$LEGACY_LABEL.plist"
+fi
 PLIST_PATH="$HOME/Library/LaunchAgents/$LABEL.plist"
-LOG_DIR="$HOME/.clawmoney"
+LOG_DIR="$HOME/.spareai"
 STDOUT_LOG="$LOG_DIR/launchd.out.log"
 STDERR_LOG="$LOG_DIR/launchd.err.log"
 

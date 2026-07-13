@@ -33,12 +33,16 @@ export const API_PRICES = {
     // below this comment that's deprecated was removed from the CLI-side
     // pricing table so `modelsForCli("codex")` no longer offers them.
     //
-    // gpt-5.5 — current Codex CLI default (config.toml `model = "gpt-5.5"`)
-    // after the mid-2026 bump. Upgraded ChatGPT accounts now 404 the older
+    // gpt-5.6-sol — current Codex CLI default and the concrete flagship model
+    // behind the gpt-5.6 alias. Official 2026-07 pricing is $5/$30 per Mtok;
+    // explicit cache prices are $6.25 write / $0.50 read.
+    // gpt-5.5 remains for accounts that have not received the 5.6 rollout.
+    // Upgraded ChatGPT accounts may 404 older
     // 5.4/5.3-codex/5.2 ids with "not supported when using Codex with a
     // ChatGPT account", so gpt-5.5 must be offered. Priced at the 5.4 tier
     // pending an official LiteLLM entry.
-    "gpt-5.5": { input: 2.50, output: 15 },
+    "gpt-5.6-sol": { input: 5, output: 30, cacheWrite: 6.25, cacheRead: 0.50 },
+    "gpt-5.5": { input: 5, output: 30 },
     "gpt-5.4": { input: 2.50, output: 15 },
     "gpt-5.4-mini": { input: 0.75, output: 4.50 },
     "gpt-5.3-codex": { input: 1.75, output: 14 },
@@ -51,6 +55,10 @@ export const API_PRICES = {
     // These are API-only (not Codex CLI), kept for OpenAI SDK callers.
     "o3": { input: 2, output: 8 },
     "o4-mini": { input: 1.1, output: 4.4 },
+    // ── xAI Grok Build subscription ──
+    // Grok 4.5 public API list price; relay uses the cached Grok Build
+    // subscription access key and the Hub applies RELAY_DISCOUNT separately.
+    "grok-4.5": { input: 2, output: 6, cacheWrite: 2, cacheRead: 0.50 },
     // ── Google Antigravity (Ultra-bundled IDE quota pool) ──
     // Antigravity is the only path that exposes Claude to Google-OAuth users.
     // We price these at the public Anthropic / Google API rates (providers earn
@@ -126,7 +134,7 @@ const DEFAULT_PRICING = { input: 5, output: 25 };
 // Pricing strategy (April 2026):
 //   1. Buyer pays RELAY_DISCOUNT × API_price  (currently 20% of official
 //      Anthropic / OpenAI / Google API prices — i.e. an 80% discount).
-//   2. ClawMoney platform takes PLATFORM_FEE of what the buyer pays.
+//   2. SpareAI platform takes PLATFORM_FEE of what the buyer pays.
 //   3. Provider keeps the rest.
 //
 // Concretely, for a 1M-token Claude Sonnet input+output at default rates:
@@ -139,7 +147,7 @@ const DEFAULT_PRICING = { input: 5, output: 25 };
 //   - The Provider's subscription fee is a sunk cost; their marginal cost
 //     per relayed request is zero (modulo rate-limit guards).
 //   - 80% off the official API is a strong enough discount that most buyers
-//     would rather route through ClawMoney than pay Anthropic/OpenAI/Google
+//     would rather route through SpareAI than pay Anthropic/OpenAI/Google
 //     direct.
 //   - Simpler to explain to both sides than a per-platform discount table.
 //
@@ -155,15 +163,18 @@ export const PLATFORM_FEE = 0.10; // 10%
 export function getModelPricing(model) {
     return API_PRICES[model] ?? DEFAULT_PRICING;
 }
-// Cache pricing multipliers (relative to base input price)
+// Cache pricing fallbacks (relative to base input price). Models with
+// provider-specific absolute cache rates override these through ModelPricing.
 const CACHE_WRITE_MULTIPLIER = 1.25; // 5-minute cache write
 const CACHE_READ_MULTIPLIER = 0.10; // cache hit
 export function calculateCost(model, inputTokens, outputTokens, cacheCreationTokens = 0, cacheReadTokens = 0) {
     const p = getModelPricing(model);
     const M = 1_000_000;
     const inputCost = (inputTokens * p.input) / M;
-    const cacheCreationCost = (cacheCreationTokens * p.input * CACHE_WRITE_MULTIPLIER) / M;
-    const cacheReadCost = (cacheReadTokens * p.input * CACHE_READ_MULTIPLIER) / M;
+    const cacheWritePrice = p.cacheWrite ?? p.input * CACHE_WRITE_MULTIPLIER;
+    const cacheReadPrice = p.cacheRead ?? p.input * CACHE_READ_MULTIPLIER;
+    const cacheCreationCost = (cacheCreationTokens * cacheWritePrice) / M;
+    const cacheReadCost = (cacheReadTokens * cacheReadPrice) / M;
     const outputCost = (outputTokens * p.output) / M;
     const apiCost = inputCost + cacheCreationCost + cacheReadCost + outputCost;
     const relayCost = apiCost * RELAY_DISCOUNT;

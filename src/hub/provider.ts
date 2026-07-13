@@ -16,7 +16,8 @@ import type {
   EscrowTaskEvent,
 } from "./types.js";
 
-const CONFIG_DIR = join(homedir(), ".clawmoney");
+import { spareaiDir } from "../utils/home.js";
+const CONFIG_DIR = spareaiDir();
 const CONFIG_FILE = join(CONFIG_DIR, "config.yaml");
 const PID_FILE = join(CONFIG_DIR, "provider.pid");
 
@@ -84,7 +85,7 @@ function loadProviderConfig(cliCommand?: string, autoAccept?: boolean): Provider
   }
 
   if (!raw.api_key || typeof raw.api_key !== "string") {
-    logger.error("api_key is required in config.yaml. Run 'clawmoney setup' first.");
+    logger.error("api_key is required in config.yaml. Run 'spareai setup' first.");
     process.exit(1);
   }
 
@@ -186,7 +187,7 @@ export function runProvider(cliCommand?: string, autoAccept?: boolean): void {
         break;
 
       default:
-        if (process.env.CLAWMONEY_DEBUG_EVENTS === "1") {
+        if ((process.env.SPAREAI_DEBUG_EVENTS ?? process.env.CLAWMONEY_DEBUG_EVENTS) === "1") {
           logger.info("Unknown event:", event);
         }
     }

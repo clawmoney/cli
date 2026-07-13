@@ -125,7 +125,7 @@ export async function walletBalanceCommand() {
         console.log(chalk.dim(`    (${relayRows.length} provider${relayRows.length === 1 ? "" : "s"} · ${requests} request${requests === 1 ? "" : "s"} served)`));
     }
     else if (relayRows && relayRows.length === 0) {
-        console.log(`    ${chalk.dim('No providers registered yet. Run `clawmoney relay setup` to start earning.')}`);
+        console.log(`    ${chalk.dim('No providers registered yet. Run `spareai relay setup` to start earning.')}`);
     }
     else {
         console.log(`    ${chalk.yellow('unavailable')} ${chalk.dim('(relay backend unreachable)')}`);

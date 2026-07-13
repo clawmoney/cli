@@ -6,7 +6,7 @@
  * loading, same HTTPS_PROXY dispatcher setup.
  *
  * Token source:  ~/.gemini/oauth_creds.json  (written by `gemini auth login`)
- * Fingerprint:   ~/.clawmoney/gemini-fingerprint.json  (written by capture script)
+ * Fingerprint:   ~/.spareai/gemini-fingerprint.json  (written by capture script)
  * Upstream:      https://cloudcode-pa.googleapis.com/v1internal:generateContent
  *
  * The v1internal endpoint is what the real Gemini CLI uses for Code Assist

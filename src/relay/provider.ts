@@ -20,6 +20,11 @@ import {
   preflightGeminiApi,
   getGeminiRateGuardSnapshot,
 } from "./upstream/gemini-api.js";
+import {
+  callGrokApi,
+  preflightGrokApi,
+  getGrokRateGuardSnapshot,
+} from "./upstream/grok-api.js";
 import { callChatGPTWeb } from "./upstream/chatgpt-web.js";
 import {
   callAntigravityApi,
@@ -63,6 +68,8 @@ function getRateGuardSnapshotForCli(
       return getCodexRateGuardSnapshot();
     case "gemini":
       return getGeminiRateGuardSnapshot();
+    case "grok":
+      return getGrokRateGuardSnapshot();
     case "antigravity":
       return getAntigravityRateGuardSnapshot();
     case "minimax":
@@ -99,7 +106,8 @@ import type {
 } from "./types.js";
 import type { ParsedOutput } from "./types.js";
 
-const CONFIG_DIR = join(homedir(), ".clawmoney");
+import { spareaiDir } from "../utils/home.js";
+const CONFIG_DIR = spareaiDir();
 const CONFIG_FILE = join(CONFIG_DIR, "config.yaml");
 const PID_FILE = join(CONFIG_DIR, "relay.pid");
 
@@ -112,7 +120,10 @@ const DEFAULT_RELAY: RelayProviderSettings = {
   ws_url: "wss://api.spareapi.ai/ws/relay",
   reconnect: {
     initial: 5,
-    max: 300,
+    // Keep recovery responsive after a transient Hub/edge outage. A five-
+    // minute cap turns a short-lived network problem into a long provider
+    // blackout once exponential backoff reaches the ceiling.
+    max: 60,
     multiplier: 2,
   },
 };
@@ -164,7 +175,7 @@ function loadRelayConfig(cliOverride?: string): RelayProviderConfig {
   }
 
   if (!raw.api_key || typeof raw.api_key !== "string") {
-    logger.error("api_key is required in config.yaml. Run 'clawmoney setup' first.");
+    logger.error("api_key is required in config.yaml. Run 'spareai setup' first.");
     process.exit(1);
   }
 
@@ -266,7 +277,7 @@ function messagesToPrompt(
 //
 // Key properties:
 //   - Per cli_type: a broken Claude OAuth doesn't take down Codex or
-//     Gemini on the same daemon, because each has its own counter and
+//     Gemini/Grok on the same daemon, because each has its own counter and
 //     its own disable flag.
 //   - In-memory only: state resets on daemon restart. If the operator
 //     re-authed between restarts, the next request proves the token
@@ -278,9 +289,9 @@ function messagesToPrompt(
 //     to ban this provider row (its existing _is_auth_broken_error
 //     pattern catches our "OAuth authentication broken" message).
 //
-// Operator recovery: run `clawmoney login <cli>` (or re-auth the
+// Operator recovery: run `spareai login <cli>` (or re-auth the
 // relevant CLI directly — `claude login`, `codex login`, etc.), then
-// `clawmoney relay restart` to reset the counter.
+// `spareai relay restart` to reset the counter.
 
 const AUTH_ERROR_THRESHOLD = 3;
 const consecutiveAuthErrorsByCli: Map<string, number> = new Map();
@@ -307,6 +318,9 @@ const AUTH_BROKEN_PATTERNS: readonly string[] = [
   // responses from codex / gemini / antigravity that carry the same
   // meaning even when the upstream-specific message format differs.
   "unauthorized",
+  // Grok adapter uses this stable prefix after an official-CLI refresh
+  // still leaves the cached access key rejected (401/403).
+  "grok authentication",
 ];
 
 function isAuthBrokenError(errMsg: string): boolean {
@@ -336,7 +350,7 @@ function noteUpstreamAuthError(cliType: string): void {
     logger.error(
       `  ║ TO RESUME: re-authenticate your ${cliType} CLI locally, then`
     );
-    logger.error(`  ║           run 'clawmoney relay restart'.`);
+    logger.error(`  ║           run 'spareai relay restart'.`);
     logger.error(`  ║`);
     logger.error(
       `  ║ Other cli_types on this daemon continue to serve normally.`
@@ -413,7 +427,7 @@ async function executeRelayRequest(
 
     // Direct upstream API call — the right handler is picked by cli_type
     // (claude → Anthropic, codex → chatgpt.com WS, gemini → cloudcode-pa,
-    // antigravity → daily-cloudcode-pa). Each handler has its own
+    // grok → Grok Build Responses, antigravity → daily-cloudcode-pa). Each has its own
     // fingerprint file and rate-guard instance.
     if (cliType === "codex") {
       // Passthrough ONLY when the Hub forwarded a real Responses API body —
@@ -443,6 +457,22 @@ async function executeRelayRequest(
         prompt,
         model,
         maxTokens: max_budget_usd ? undefined : 8192,
+      });
+    } else if (cliType === "grok") {
+      // Responses passthrough is identified by the presence of `input`.
+      // Chat Completions requests carry `messages` instead, so those use
+      // template mode with provider.ts's flattened prompt.
+      const passthrough = request.passthrough_body;
+      const isResponsesBody = Boolean(
+        passthrough &&
+          Object.prototype.hasOwnProperty.call(passthrough, "input")
+      );
+      parsed = await callGrokApi({
+        prompt,
+        passthroughBody: isResponsesBody ? passthrough : undefined,
+        model,
+        maxTokens: max_budget_usd ? undefined : 8192,
+        onRawEvent: sendChunk,
       });
     } else if (cliType === "chatgpt-web") {
       // Web send/read path — drive chatgpt.com via opencli (temporary chat)
@@ -600,16 +630,16 @@ async function executeRelayRequest(
       };
     }
 
-    // CLAWMONEY_FAKE_MODEL_USED — test-only lever. When set, rewrite the
+    // SPAREAI_FAKE_MODEL_USED — test-only lever. When set, rewrite the
     // reported `model_used` field to the env var's value before returning
     // to the Hub. Used to manually exercise the Hub's model-mismatch guard
     // + quarantine flow without having to juggle real subscription tiers
     // or fake upstream accounts. DO NOT set this in production.
-    const fakeModelUsed = process.env.CLAWMONEY_FAKE_MODEL_USED;
+    const fakeModelUsed = (process.env.SPAREAI_FAKE_MODEL_USED ?? process.env.CLAWMONEY_FAKE_MODEL_USED);
     const reportedModel = fakeModelUsed || parsed.model || model;
     if (fakeModelUsed) {
       logger.warn(
-        `  ! CLAWMONEY_FAKE_MODEL_USED=${fakeModelUsed} — reporting fake model to Hub (test mode)`
+        `  ! SPAREAI_FAKE_MODEL_USED=${fakeModelUsed} — reporting fake model to Hub (test mode)`
       );
     }
 
@@ -661,6 +691,8 @@ function getPreflightFn(cliType: string) {
       return preflightCodexApi;
     case "gemini":
       return preflightGeminiApi;
+    case "grok":
+      return preflightGrokApi;
     case "antigravity":
       return preflightAntigravityApi;
     case "minimax":
@@ -972,6 +1004,9 @@ export function runRelayProvider(cliOverride?: string): void {
         logger.info(
           `Connected as "${event.agent_name}" (id=${event.agent_id}, provider=${event.provider_id})`
         );
+        break;
+
+      case "heartbeat_ack":
         break;
 
       case "relay_request":

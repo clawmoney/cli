@@ -1,19 +1,19 @@
 /**
- * ClawMoney "API" provider setup.
+ * SpareAI "API" provider setup.
  *
  * Enables this agent to serve SpareAPI marketplace requests via bnbot
  * browser delegation. End-to-end flow when a customer hits SpareAPI:
  *
  *   customer  →  spareapi.io/v1/<platform>/scrape/...
- *             →  ClawMoney router picks an online "api" operator
+ *             →  SpareAI router picks an online "api" operator
  *             →  this operator's bnbot daemon (local WS @ port 18900)
  *             →  real logged-in Chrome on the operator's machine
  *             →  target platform (X / XHS / IG / ...)
  *             ←  JSON results back through the chain
  *
  * This wizard only collects the operator's preferences (which platforms
- * to serve, soft RPM cap) and persists them to ~/.clawmoney/config.yaml.
- * The runtime piece — bnbot listening for ClawMoney router messages and
+ * to serve, soft RPM cap) and persists them to ~/.spareai/config.yaml.
+ * The runtime piece — bnbot listening for SpareAI router messages and
  * dispatching to the right scrape command — is provided separately by
  * the bnbot CLI (`bnbot serve`).
  */
@@ -56,16 +56,16 @@ function formatProjectedEarnings(selected) {
 export async function apiSetupCommand(opts = {}) {
     const cfg = loadConfig();
     if (!cfg) {
-        console.log(chalk.red("\n  No config found. Run `clawmoney setup` first to register your agent.\n"));
+        console.log(chalk.red("\n  No config found. Run `spareai setup` first to register your agent.\n"));
         process.exit(1);
     }
     if (!opts.nested) {
-        intro(chalk.cyan(" ClawMoney API Data Provider Setup "));
+        intro(chalk.cyan(" SpareAI API Data Provider Setup "));
     }
     log.message([
         "Serve SpareAPI marketplace requests via bnbot browser delegation.",
         "",
-        chalk.dim("Customer hits SpareAPI → ClawMoney routes to your agent → bnbot opens"),
+        chalk.dim("Customer hits SpareAPI → SpareAI routes to your agent → bnbot opens"),
         chalk.dim("the target site in real Chrome → JSON returns. You keep 70% per call."),
     ].join("\n"));
     // Preselect whatever the operator already opted into.
@@ -81,7 +81,7 @@ export async function apiSetupCommand(opts = {}) {
         required: false,
     });
     if (isCancel(picked)) {
-        log.message(chalk.dim("Cancelled. Re-run `clawmoney setup` later to enable the API role."));
+        log.message(chalk.dim("Cancelled. Re-run `spareai setup` later to enable the API role."));
         if (!opts.nested)
             outro("");
         return;
@@ -92,7 +92,7 @@ export async function apiSetupCommand(opts = {}) {
             chalk.dim("No platforms selected. The API role stays disabled."),
             "",
             chalk.dim("You can come back any time:"),
-            `  ${chalk.cyan("clawmoney setup")}     re-open the role wizard`,
+            `  ${chalk.cyan("spareai setup")}     re-open the role wizard`,
         ].join("\n"), "Skipped");
         if (!opts.nested)
             outro("");
@@ -128,7 +128,7 @@ export async function apiSetupCommand(opts = {}) {
             max_rpm: maxRpm,
         },
     });
-    log.success(`Saved ${platforms.length} platform${platforms.length === 1 ? "" : "s"} to ~/.clawmoney/config.yaml`);
+    log.success(`Saved ${platforms.length} platform${platforms.length === 1 ? "" : "s"} to ~/.spareai/config.yaml`);
     // Try to verify bnbot is installed + status check. We don't hard-fail
     // here — operator may run the bnbot daemon on a separate machine.
     const checkBnbot = await confirm({
@@ -157,10 +157,10 @@ export async function apiSetupCommand(opts = {}) {
         "",
         `  1. ${chalk.cyan("bnbot serve")}                                start the local browser daemon`,
         `  2. Log in to selected platforms in the bnbot Chrome (one-time per account)`,
-        `  3. ${chalk.cyan("clawmoney wallet balance")}                   confirm USDC wallet is set`,
+        `  3. ${chalk.cyan("spareai wallet balance")}                   confirm USDC wallet is set`,
         "",
         chalk.dim("Earnings settle in USDC every successful served request."),
-        chalk.dim("Pause any platform: re-run `clawmoney setup` and uncheck it."),
+        chalk.dim("Pause any platform: re-run `spareai setup` and uncheck it."),
     ].join("\n"), "Ready");
     if (!opts.nested) {
         outro(chalk.green("API provider role enabled."));

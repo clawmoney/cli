@@ -27,7 +27,7 @@
  *     or logging into x.com recovers the platform on the next boot — no
  *     persistent blacklist to clear.
  *
- * The verdict is written to ~/.clawmoney/preflight.json for the desktop
+ * The verdict is written to ~/.spareai/preflight.json for the desktop
  * app to surface as a home-screen notice + per-card status.
  */
 import { execFile } from "node:child_process";
@@ -35,7 +35,8 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const PREFLIGHT_FILE = join(homedir(), ".clawmoney", "preflight.json");
+import { spareaiDir } from "../utils/home.js";
+const PREFLIGHT_FILE = join(spareaiDir(), "preflight.json");
 
 // A navigation login-probe costs ~15s and login state rarely flips, so reuse a
 // recent verdict across daemon restarts (KeepAlive / app self-heal) instead of
@@ -572,7 +573,7 @@ export async function runPreflight(skills: string[]): Promise<PreflightOutcome> 
         result = {
           status: "unknown",
           reason: `预演异常: ${err instanceof Error ? err.message : String(err)}`,
-          hint: "查看 ~/.clawmoney/task.log",
+          hint: "查看 ~/.spareai/task.log",
         };
       }
     }
@@ -618,7 +619,7 @@ export async function runPreflight(skills: string[]): Promise<PreflightOutcome> 
 /** Persist the verdict for the desktop app to read on its next dashboard load. */
 export function writePreflightReport(report: PreflightReport): void {
   try {
-    mkdirSync(join(homedir(), ".clawmoney"), { recursive: true });
+    mkdirSync(spareaiDir(), { recursive: true });
     writeFileSync(PREFLIGHT_FILE, JSON.stringify(report, null, 2), "utf-8");
   } catch (err) {
     console.error(

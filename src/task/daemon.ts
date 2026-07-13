@@ -6,19 +6,19 @@
  * Run for local development against `wrangler dev`:
  *
  *   HUB_URL=ws://127.0.0.1:8787/ws/relay \
- *   AGENT_ID=clawmoney-dev \
+ *   AGENT_ID=spareai-dev \
  *   SKILLS=echo,x.search \
  *   npx tsx src/task/daemon.ts
  *
  * Run against production:
  *
  *   HUB_URL=wss://api.spareapi.ai/ws/relay \
- *   API_KEY=$CLAWMONEY_API_KEY \
+ *   API_KEY=$SPAREAI_API_KEY \
  *   SKILLS=x.search \
  *   npx tsx src/task/daemon.ts
  *
  * No CLI integration yet — that lands in Phase 3 alongside the proper
- * `clawmoney task start` command.
+ * `spareai task start` command.
  */
 import { readFileSync, writeFileSync, unlinkSync, existsSync, appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -27,7 +27,7 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import YAML from "yaml";
 
-const TASK_LOG_FILE = join(homedir(), ".clawmoney", "task.log");
+const TASK_LOG_FILE = join(spareaiDir(), "task.log");
 
 function tsLine(level: string, msg: string): string {
   const ts = new Date().toISOString().replace("T", " ").replace("Z", "");
@@ -38,7 +38,7 @@ function logToFile(level: string, ...args: unknown[]): void {
   const msg = args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
   const line = tsLine(level, msg);
   try {
-    mkdirSync(join(homedir(), ".clawmoney"), { recursive: true });
+    mkdirSync(spareaiDir(), { recursive: true });
     appendFileSync(TASK_LOG_FILE, line, "utf-8");
   } catch {
     /* best effort */
@@ -60,7 +60,8 @@ import type {
   TaskRequest,
 } from "./types.js";
 
-const CONFIG_DIR = join(homedir(), ".clawmoney");
+import { spareaiDir } from "../utils/home.js";
+const CONFIG_DIR = spareaiDir();
 const CONFIG_FILE = join(CONFIG_DIR, "config.yaml");
 const PID_FILE = join(CONFIG_DIR, "task.pid");
 const TASK_STATE_FILE = join(CONFIG_DIR, "task-state.json");
@@ -109,7 +110,7 @@ function loadConfig(): TaskDaemonConfig {
     hub_url: process.env.HUB_URL ?? "wss://api.spareapi.ai/ws/relay",
     api_key: pickString(process.env.API_KEY, yaml.api_key) ?? "",
     agent_id: pickString(process.env.AGENT_ID, yaml.agent_id),
-    agent_name: pickString(process.env.AGENT_NAME, yaml.agent_slug) ?? "clawmoney-task",
+    agent_name: pickString(process.env.AGENT_NAME, yaml.agent_slug) ?? "spareai-task",
     skills: filtered,
     max_concurrency: process.env.MAX_CONCURRENCY
       ? Number.parseInt(process.env.MAX_CONCURRENCY, 10)
@@ -279,7 +280,7 @@ function applySystemProxy(): void {
 
 async function main(): Promise<void> {
   // Daemon was started as a script (stdio:"ignore"); from here on, all
-  // log lines should land in ~/.clawmoney/task.log.
+  // log lines should land in ~/.spareai/task.log.
   installFileLogger();
   applySystemProxy();
 
@@ -291,7 +292,7 @@ async function main(): Promise<void> {
 
   const config = loadConfig();
   if (!config.api_key) {
-    console.error("[task] api_key missing — set API_KEY env or run `clawmoney setup`");
+    console.error("[task] api_key missing — set API_KEY env or run `spareai setup`");
     process.exit(1);
   }
 
@@ -304,7 +305,7 @@ async function main(): Promise<void> {
 
   // Preflight: probe each platform's external dependency and drop the ones
   // that would fail every task (Codex not installed, X not logged in, the
-  // Chrome extension down, …). Writes ~/.clawmoney/preflight.json so the
+  // Chrome extension down, …). Writes ~/.spareai/preflight.json so the
   // desktop app can surface a home-screen notice. Re-runs every start, so
   // fixing the dependency recovers the platform on the next boot.
   console.log(`[task] preflight on ${config.skills.length} skills…`);

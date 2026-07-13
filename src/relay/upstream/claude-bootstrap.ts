@@ -10,7 +10,7 @@
  *   2. Spawn `claude -p "hi"` with ANTHROPIC_BASE_URL pointing at us.
  *   3. When the first POST /v1/messages arrives, extract device_id,
  *      account_uuid, user_agent, cc_version, cc_entrypoint from the
- *      body + headers, persist to ~/.clawmoney/claude-fingerprint.json,
+ *      body + headers, persist to ~/.spareai/claude-fingerprint.json,
  *      and forward the request to api.anthropic.com so the claude CLI
  *      still sees a real response.
  *   4. Clean up proxy server + claude subprocess.
@@ -33,7 +33,8 @@ import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { fetch as undiciFetch, ProxyAgent, type Dispatcher } from "undici";
 
-const CONFIG_DIR = join(homedir(), ".clawmoney");
+import { spareaiDir } from "../../utils/home.js";
+const CONFIG_DIR = spareaiDir();
 const FINGERPRINT_PATH = join(CONFIG_DIR, "claude-fingerprint.json");
 
 export interface ClaudeFingerprint {

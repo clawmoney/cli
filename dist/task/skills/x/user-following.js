@@ -6,7 +6,7 @@ import { userListToTwitter283, userIdsToTwitter283, } from "./_mapper.js";
  * twitter-v1-style numeric id list.
  */
 export const xUserFollowingSkill = {
-    price_usd: 0.005,
+    price_usd: 0.0001,
     async run(input, ctx) {
         const { username, ids_only = false, stringify_ids = false, count, cursor, } = (input ?? {});
         if (!username)

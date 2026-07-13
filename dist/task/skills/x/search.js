@@ -7,7 +7,7 @@ import { searchToTwitter283 } from "./_mapper.js";
  * envelope.
  */
 export const xSearchSkill = {
-    price_usd: 0.005,
+    price_usd: 0.0001,
     async run(input, ctx) {
         const args = (input ?? {});
         if (!args.q)

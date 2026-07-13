@@ -18,6 +18,10 @@
 export interface ModelPricing {
     input: number;
     output: number;
+    /** Optional absolute cache-write price per 1M tokens. */
+    cacheWrite?: number;
+    /** Optional absolute cache-read price per 1M tokens. */
+    cacheRead?: number;
 }
 export declare const API_PRICES: Record<string, ModelPricing>;
 export declare const RELAY_DISCOUNT = 0.2;

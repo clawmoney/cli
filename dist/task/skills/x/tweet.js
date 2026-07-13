@@ -7,7 +7,7 @@ import { tweetConversationToTwitter283, tweetToTwitter283Result, } from "./_mapp
  * conversation) or just the single tweet wrapped in a result.
  */
 export const xTweetSkill = {
-    price_usd: 0.004,
+    price_usd: 0.0001,
     async run(input, ctx) {
         const { tweet_id: tweetId, include_replies = false } = (input ?? {});
         if (!tweetId)

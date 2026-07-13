@@ -1,4 +1,4 @@
-const API_BASE = process.env.CLAWMONEY_API_BASE || 'https://api.bnbot.ai';
+const API_BASE = (process.env.SPAREAI_API_BASE ?? process.env.CLAWMONEY_API_BASE) || 'https://api.bnbot.ai';
 function buildUrl(path) {
     const base = API_BASE.replace(/\/+$/, '');
     const cleanPath = path.startsWith('/') ? path : `/${path}`;

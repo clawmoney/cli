@@ -6,7 +6,7 @@
 // The server logs headers + body to a file so we can see exactly what the
 // real CLI sends, then proxies the request to api.anthropic.com so Claude
 // Code doesn't error out. All captured data is written to
-// ~/.clawmoney/capture-<timestamp>.json.
+// ~/.spareai/capture-<timestamp>.json.
 
 import { createServer } from "node:http";
 import { writeFileSync, mkdirSync, unlinkSync, readdirSync } from "node:fs";
@@ -15,7 +15,7 @@ import { homedir } from "node:os";
 import { fetch as undiciFetch, ProxyAgent } from "undici";
 
 const PORT = 8787;
-const FINGERPRINT_PATH = join(homedir(), ".clawmoney", "claude-fingerprint.json");
+const FINGERPRINT_PATH = join(homedir(), ".spareai", "claude-fingerprint.json");
 
 // Honor shell HTTPS_PROXY / http_proxy so we can reach api.anthropic.com from
 // behind a GFW-style egress. Node's native fetch/https does not read these
@@ -30,7 +30,7 @@ if (proxyUrl && /^https?:\/\//.test(proxyUrl)) {
   upstreamDispatcher = new ProxyAgent(proxyUrl);
   console.log(`[proxy] forwarding upstream through ${proxyUrl}`);
 }
-const OUT_DIR = join(homedir(), ".clawmoney");
+const OUT_DIR = join(homedir(), ".spareai");
 mkdirSync(OUT_DIR, { recursive: true });
 
 // Headers that must not be forwarded as-is (they refer to the inbound hop).
@@ -103,7 +103,7 @@ const server = createServer((req, res) => {
       try {
         const fp = extractFingerprint(parsedBody, req.headers);
         if (fp) {
-          mkdirSync(join(homedir(), ".clawmoney"), { recursive: true });
+          mkdirSync(join(homedir(), ".spareai"), { recursive: true });
           writeFileSync(FINGERPRINT_PATH, JSON.stringify(fp, null, 2), "utf-8");
           console.log(`\n  ✓ fingerprint written → ${FINGERPRINT_PATH}`);
           console.log(`    device_id:     ${fp.device_id.slice(0, 20)}...`);

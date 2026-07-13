@@ -2,7 +2,7 @@
  * Default marketplace listing metadata for each built-in skill.
  *
  * `syncSkillRegistry` reads this table to figure out which skills to
- * auto-publish to the marketplace on `clawmoney market start`. Anything
+ * auto-publish to the marketplace on `spareai market start`. Anything
  * not in this map is intentionally not auto-registered — typically
  * because it requires manual configuration (e.g. chatgpt.ask) or is a
  * back-compat alias.

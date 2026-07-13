@@ -53,8 +53,8 @@ const pkg = require('../package.json') as { version: string };
 const program = new Command();
 
 program
-  .name('clawmoney')
-  .description('ClawMoney CLI -- Earn rewards with your AI agent')
+  .name('spareai')
+  .description('SpareAI CLI -- Earn rewards with your AI agent')
   .version(pkg.version);
 
 // setup
@@ -71,7 +71,7 @@ program
         try {
           const { openCompanion } = await import('./ui/companion.js');
           await openCompanion();
-          console.log('\nOpening ClawMoney… (run `clawmoney ui` to reopen anytime)');
+          console.log('\nOpening SpareAI… (run `spareai ui` to reopen anytime)');
         } catch (e) {
           console.error('UI failed to open:', (e as Error).message);
         }
@@ -284,15 +284,15 @@ program
 // ui — menu-bar companion (zero-install Electron tray + dashboard window)
 program
   .command('ui')
-  .description('Open the ClawMoney menu-bar UI (Desktop app if installed, else a zero-install companion).')
+  .description('Open the SpareAI menu-bar UI (Desktop app if installed, else a zero-install companion).')
   .action(async () => {
     try {
       const { openCompanion } = await import('./ui/companion.js');
       const kind = await openCompanion();
       console.log(
         kind === 'desktop'
-          ? 'Opened ClawMoney Desktop.'
-          : 'ClawMoney companion is running in your menu bar.'
+          ? 'Opened SpareAI Desktop.'
+          : 'SpareAI companion is running in your menu bar.'
       );
     } catch (err) {
       console.error((err as Error).message);
@@ -615,7 +615,7 @@ relay
 relay
   .command('register')
   .description('Register as a relay provider')
-  .requiredOption('--cli <type>', 'Backend CLI: claude, codex, gemini, antigravity')
+  .requiredOption('--cli <type>', 'Backend CLI: claude, codex, gemini, grok, antigravity')
   .requiredOption('--model <model>', 'Model to offer (e.g., claude-opus-4-6)')
   .option('--mode <mode>', 'Safety mode: chat, search, code, full', 'chat')
   .option('--concurrency <n>', 'Max concurrent requests', '5')
@@ -634,7 +634,7 @@ relay
 relay
   .command('start')
   .description('Start accepting relay requests')
-  .option('--cli <type>', 'Override CLI type (claude, codex, gemini, antigravity)')
+  .option('--cli <type>', 'Override CLI type (claude, codex, gemini, grok, antigravity)')
   .action(async (options) => {
     try {
       await relayStartCommand(options);
@@ -670,7 +670,7 @@ relay
 
 relay
   .command('logs')
-  .description('Tail the daemon log in real time (like `tail -f ~/.clawmoney/relay.log`)')
+  .description('Tail the daemon log in real time (like `tail -f ~/.spareai/relay.log`)')
   .option('-n, --lines <n>', 'Lines of history to show before following', '50')
   .option('--no-follow', "Print and exit instead of following")
   .action(async (options) => {
@@ -697,7 +697,7 @@ relay
 relay
   .command('preflight')
   .description('Validate upstream credentials without starting the daemon (useful for verifying openclaw fallback, keychain state, etc.)')
-  .option('--cli <type>', 'Check a single cli_type (claude, codex, gemini, antigravity, minimax, zai, zai-coding, moonshot, kimi-coding, qwen-coding, openai). Default: claude+codex+gemini+antigravity.')
+  .option('--cli <type>', 'Check a single cli_type (claude, codex, gemini, grok, antigravity, minimax, zai-coding, kimi-coding, qwen-coding). Default: claude+codex+gemini+grok+antigravity.')
   .action(async (options) => {
     try {
       await relayPreflightCommand(options);

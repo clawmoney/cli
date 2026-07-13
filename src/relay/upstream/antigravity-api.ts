@@ -13,8 +13,8 @@
  * OAuth. Ultra subscribers who have no Anthropic subscription can still
  * provide Claude capacity through this daemon.
  *
- * Token source:  ~/.clawmoney/antigravity-accounts.json (written by
- *                `clawmoney antigravity login`)
+ * Token source:  ~/.spareai/antigravity-accounts.json (written by
+ *                `spareai antigravity login`)
  * Upstream:      https://daily-cloudcode-pa.sandbox.googleapis.com
  *                → https://autopush-cloudcode-pa.sandbox.googleapis.com
  *                → https://cloudcode-pa.googleapis.com
@@ -40,6 +40,7 @@ import {
 } from "./rate-guard.js";
 import { calculateCost } from "../pricing.js";
 
+import { spareaiDir } from "../../utils/home.js";
 export { RateGuardBudgetExceededError, RateGuardCooldownError };
 
 // ── OAuth constants (verified against opencode-antigravity-auth and sub2api) ──
@@ -157,8 +158,8 @@ const ANTIGRAVITY_DEFAULT_PROJECT_ID = "rising-fact-p41fc";
 // chance the request gets flagged as a bot.
 const ANTIGRAVITY_VERSION = "1.21.9";
 
-const CLAWMONEY_DIR = join(homedir(), ".clawmoney");
-const ACCOUNTS_FILE = join(CLAWMONEY_DIR, "antigravity-accounts.json");
+const SPAREAI_DIR = spareaiDir();
+const ACCOUNTS_FILE = join(SPAREAI_DIR, "antigravity-accounts.json");
 
 // ── Types ──
 
@@ -360,7 +361,7 @@ const configureDispatcher = configureAntigravityDispatcher;
 // ── Account storage ──
 
 export function ensureClawmoneyDir(): void {
-  mkdirSync(CLAWMONEY_DIR, { recursive: true });
+  mkdirSync(SPAREAI_DIR, { recursive: true });
 }
 
 export function loadAccounts(): AntigravityAccountsFile {
@@ -399,14 +400,14 @@ function loadPrimaryAccount(): AntigravityAccount {
   if (file.accounts.length === 0) {
     throw new Error(
       `No Antigravity accounts found at ${ACCOUNTS_FILE}. ` +
-        `Run \`clawmoney antigravity login\` to authenticate first.`
+        `Run \`spareai antigravity login\` to authenticate first.`
     );
   }
   const primary = file.accounts[0]!;
   if (!primary.refresh_token) {
     throw new Error(
       `Antigravity account at ${ACCOUNTS_FILE} is missing a refresh_token. ` +
-        `Re-run \`clawmoney antigravity login\`.`
+        `Re-run \`spareai antigravity login\`.`
     );
   }
   return primary;

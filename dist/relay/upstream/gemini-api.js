@@ -6,7 +6,7 @@
  * loading, same HTTPS_PROXY dispatcher setup.
  *
  * Token source:  ~/.gemini/oauth_creds.json  (written by `gemini auth login`)
- * Fingerprint:   ~/.clawmoney/gemini-fingerprint.json  (written by capture script)
+ * Fingerprint:   ~/.spareai/gemini-fingerprint.json  (written by capture script)
  * Upstream:      https://cloudcode-pa.googleapis.com/v1internal:generateContent
  *
  * The v1internal endpoint is what the real Gemini CLI uses for Code Assist
@@ -23,6 +23,7 @@ import { relayLogger as logger } from "../logger.js";
 import { RateGuard, RateGuardBudgetExceededError, RateGuardCooldownError, } from "./rate-guard.js";
 import { calculateCost } from "../pricing.js";
 import { readOpenclawOAuthProfile, persistOpenclawOAuthProfile, } from "./openclaw-creds.js";
+import { spareaiDir } from "../../utils/home.js";
 export { RateGuardBudgetExceededError, RateGuardCooldownError };
 // ── Constants ──
 const OAUTH_CLIENT_ID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
@@ -50,8 +51,8 @@ const OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const CODE_ASSIST_BASE_URL = "https://cloudcode-pa.googleapis.com";
 const CODE_ASSIST_GENERATE_PATH = "/v1internal:streamGenerateContent?alt=sse";
 const GEMINI_CREDS_FILE = join(homedir(), ".gemini", "oauth_creds.json");
-const CLAWMONEY_DIR = join(homedir(), ".clawmoney");
-const FINGERPRINT_FILE = join(CLAWMONEY_DIR, "gemini-fingerprint.json");
+const SPAREAI_DIR = spareaiDir();
+const FINGERPRINT_FILE = join(SPAREAI_DIR, "gemini-fingerprint.json");
 // Fallback UA used before the capture script has bootstrapped this machine.
 // Real captured format: "GeminiCLI/<cli>/<default-model> (darwin; arm64; terminal) google-api-nodejs-client/9.15.1"
 const DEFAULT_CLI_VERSION = "0.36.0";
@@ -619,6 +620,6 @@ async function parseGeminiSseResponse(resp, fallbackModel) {
 }
 // ── Exports for capture script ──
 export function ensureClawmoneyDir() {
-    mkdirSync(CLAWMONEY_DIR, { recursive: true });
+    mkdirSync(SPAREAI_DIR, { recursive: true });
 }
 export { FINGERPRINT_FILE as GEMINI_FINGERPRINT_FILE };

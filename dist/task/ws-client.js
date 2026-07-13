@@ -91,6 +91,8 @@ export class TaskWsClient {
         if (this.config.agent_name) {
             u.searchParams.set("agent_name", this.config.agent_name);
         }
+        // Protocol value the hub matches on — predates the SpareAI rename, do not
+        // rebrand without a hub-side migration.
         u.searchParams.set("cli_type", "task-clawmoney");
         u.searchParams.set("skills", this.config.skills.join(","));
         u.searchParams.set("concurrency", String(this.config.max_concurrency ?? 5));

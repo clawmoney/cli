@@ -39,6 +39,7 @@ import {
   type OpenclawOAuthProfile,
 } from "./openclaw-creds.js";
 
+import { spareaiDir } from "../../utils/home.js";
 export { RateGuardBudgetExceededError, RateGuardCooldownError };
 
 // ── Constants (sourced from sub2api + claude-cli/2.1.100 capture) ──
@@ -48,8 +49,8 @@ const OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages?beta=true";
 
 const KEYCHAIN_SERVICE = "Claude Code-credentials";
-const CLAWMONEY_DIR = join(homedir(), ".clawmoney");
-const FINGERPRINT_FILE = join(CLAWMONEY_DIR, "claude-fingerprint.json");
+const SPAREAI_DIR = spareaiDir();
+const FINGERPRINT_FILE = join(SPAREAI_DIR, "claude-fingerprint.json");
 
 // Default fingerprint values used when the per-machine fingerprint file
 // doesn't carry these fields (e.g. older bootstraps before we extended the
@@ -320,7 +321,7 @@ function configureDispatcher(): void {
 //
 // The metadata.user_id field (JSON format since Claude Code 2.1.78) must
 // contain a 64-hex device_id and a real Anthropic account_uuid. These are
-// stable per-account — we read them once from ~/.clawmoney/claude-fingerprint.json
+// stable per-account — we read them once from ~/.spareai/claude-fingerprint.json
 // which the bootstrap `scripts/capture-claude-request.mjs` writes after
 // observing a real Claude CLI request.
 //

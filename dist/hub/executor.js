@@ -16,7 +16,7 @@ export class Executor {
     }
     /**
      * Fire a progress update for an in-flight order. The buyer-facing UI
-     * (clawmoney-web playground) polls /market/orders/{id} and reads the
+     * (spareai-web playground) polls /market/orders/{id} and reads the
      * `progress` field that backend Redis-caches from these events.
      * Best-effort: failed sends are non-fatal (the UI just sees a slightly
      * stale stage label until the next progress fires).

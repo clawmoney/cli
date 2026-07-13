@@ -19,7 +19,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
 
-const CONFIG_DIR = join(homedir(), ".clawmoney");
+import { spareaiDir } from "../../utils/home.js";
+const CONFIG_DIR = spareaiDir();
 const FINGERPRINT_PATH = join(CONFIG_DIR, "gemini-fingerprint.json");
 const CAPTURE_PORT = 8789;
 const CAPTURE_SCRIPT = "capture-gemini-request.mjs";
@@ -63,7 +64,7 @@ export async function bootstrapGeminiFingerprint(
   const scriptPath = findCaptureScript();
   if (!scriptPath) {
     throw new Error(
-      "capture-gemini-request.mjs not found in the installed clawmoney package"
+      "capture-gemini-request.mjs not found in the installed spareai package"
     );
   }
 

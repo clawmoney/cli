@@ -23,6 +23,10 @@ export interface RelayRequest {
   stateful?: boolean;
   model?: string;
   max_budget_usd?: number;
+  // Hub route shape. Historical Responses label is "codex"; OpenAI Chat
+  // Completions uses "openai". Upstreams still inspect passthrough_body as
+  // the source of truth because older Hubs may omit this field.
+  api_style?: string;
   // Passthrough mode — when set, the Hub is forwarding a real Claude
   // Code request body verbatim and wants the daemon to send it to
   // Anthropic almost unchanged (only metadata.user_id / billing header /
@@ -42,6 +46,10 @@ export interface RelayConnectedEvent {
   agent_id: string;
   agent_name: string;
   provider_id: string;
+}
+
+export interface RelayHeartbeatAckEvent {
+  event: "heartbeat_ack";
 }
 
 export interface RelayErrorEvent {
@@ -65,6 +73,7 @@ export interface RelayNoticeEvent {
 export type RelayIncomingEvent =
   | RelayRequest
   | RelayConnectedEvent
+  | RelayHeartbeatAckEvent
   | RelayErrorEvent
   | RelayNoticeEvent;
 
@@ -142,7 +151,7 @@ export interface RelayRateGuardConfig {
 }
 
 export interface RelayProviderSettings {
-  cli_type: string;          // "claude", "codex", "gemini", "antigravity"
+  cli_type: string;          // "claude", "codex", "gemini", "grok", "antigravity"
   // Anti-ban rate-guard settings for direct upstream API calls.
   rate_guard?: RelayRateGuardConfig;
   model: string;

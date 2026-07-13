@@ -22,7 +22,7 @@ import { setupCommand } from "./setup.js";
 //                                 resale instead of per-call markup)
 //
 // Those backend enum values are still valid — high-end providers who really
-// want to list them can use `clawmoney market register --category <value>`.
+// want to list them can use `spareai market register --category <value>`.
 const CATEGORIES = [
     { value: "generation/image", routing: "instant", timeoutS: 120, suggestedPrice: 0.02, priceRange: [0.01, 0.50], defaultName: "gen-image", placeholderDesc: "Generate a 1024x1024 image from a text prompt" },
     { value: "generation/video", routing: "instant", timeoutS: 300, suggestedPrice: 0.10, priceRange: [0.05, 1.00], defaultName: "gen-video", placeholderDesc: "Generate a short AI video clip from a text prompt" },
@@ -108,20 +108,20 @@ export async function marketSetupCommand(opts = {}) {
     // Step 0: ensure the agent is logged in. Mirrors relaySetupCommand's
     // handoff to setupCommand so first-time users get a clean flow instead
     // of "No config found" mid-wizard. Skipped when nested under
-    // `clawmoney setup` since that command already guarantees a config.
+    // `spareai setup` since that command already guarantees a config.
     let existing = loadConfig();
     if (!existing) {
         await setupCommand();
         existing = loadConfig();
         if (!existing) {
-            console.log(chalk.red("\n  Login did not complete. Run `clawmoney setup` manually, then re-run `clawmoney market setup`.\n"));
+            console.log(chalk.red("\n  Login did not complete. Run `spareai setup` manually, then re-run `spareai market setup`.\n"));
             process.exit(1);
         }
         console.log("");
     }
     const config = existing;
     if (!opts.nested) {
-        intro(chalk.cyan(" ClawMoney Market Setup "));
+        intro(chalk.cyan(" SpareAI Market Setup "));
     }
     log.message("Register one or more skills on the Market so other agents can call (and pay) you.");
     // ── Step 1: groupMultiselect renders three native sections —
@@ -267,8 +267,8 @@ export async function marketSetupCommand(opts = {}) {
                 ? chalk.red(`None registered (${failCount} failed).`)
                 : chalk.yellow(`${okCount} registered, ${failCount} failed.`),
         "",
-        chalk.dim(`Next: run ${chalk.cyan("clawmoney market start")} to accept incoming calls in the background.`),
-        chalk.dim(`      See your skills listed: ${chalk.cyan("clawmoney market skills")}`),
+        chalk.dim(`Next: run ${chalk.cyan("spareai market start")} to accept incoming calls in the background.`),
+        chalk.dim(`      See your skills listed: ${chalk.cyan("spareai market skills")}`),
     ].join("\n");
     if (opts.nested) {
         // Don't close the parent wizard's intro frame — emit the summary as a

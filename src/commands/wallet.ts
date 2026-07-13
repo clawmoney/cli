@@ -156,7 +156,7 @@ export async function walletBalanceCommand(): Promise<void> {
       )
     );
   } else if (relayRows && relayRows.length === 0) {
-    console.log(`    ${chalk.dim('No providers registered yet. Run `clawmoney relay setup` to start earning.')}`);
+    console.log(`    ${chalk.dim('No providers registered yet. Run `spareai relay setup` to start earning.')}`);
   } else {
     console.log(`    ${chalk.yellow('unavailable')} ${chalk.dim('(relay backend unreachable)')}`);
   }

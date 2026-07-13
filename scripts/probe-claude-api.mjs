@@ -44,7 +44,7 @@ const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages?beta=true";
 
 const KEYCHAIN_SERVICE = "Claude Code-credentials";
 
-const CLAWMONEY_DIR = join(homedir(), ".clawmoney");
+const CLAWMONEY_DIR = join(homedir(), ".spareai");
 const FINGERPRINT_FILE = join(CLAWMONEY_DIR, "claude-fingerprint.json");
 
 // Fingerprint captured from claude-cli/2.1.100 on macOS.

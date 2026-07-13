@@ -1,6 +1,5 @@
 import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import YAML from "yaml";
 import { WsClient } from "./ws-client.js";
 import { Poller } from "./poller.js";
@@ -8,7 +7,8 @@ import { Executor } from "./executor.js";
 import { startDedup, stopDedup } from "./dedup.js";
 import { logger } from "./logger.js";
 import { syncSkillRegistry } from "./sync-skills.js";
-const CONFIG_DIR = join(homedir(), ".clawmoney");
+import { spareaiDir } from "../utils/home.js";
+const CONFIG_DIR = spareaiDir();
 const CONFIG_FILE = join(CONFIG_DIR, "config.yaml");
 const PID_FILE = join(CONFIG_DIR, "provider.pid");
 const DEFAULT_PROVIDER = {
@@ -70,7 +70,7 @@ function loadProviderConfig(cliCommand, autoAccept) {
         process.exit(1);
     }
     if (!raw.api_key || typeof raw.api_key !== "string") {
-        logger.error("api_key is required in config.yaml. Run 'clawmoney setup' first.");
+        logger.error("api_key is required in config.yaml. Run 'spareai setup' first.");
         process.exit(1);
     }
     const userProvider = (raw.provider ?? {});
@@ -144,7 +144,7 @@ export function runProvider(cliCommand, autoAccept) {
             case "heartbeat_ack":
                 break;
             default:
-                if (process.env.CLAWMONEY_DEBUG_EVENTS === "1") {
+                if ((process.env.SPAREAI_DEBUG_EVENTS ?? process.env.CLAWMONEY_DEBUG_EVENTS) === "1") {
                     logger.info("Unknown event:", event);
                 }
         }

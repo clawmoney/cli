@@ -15,7 +15,7 @@
  *   1. Openclaw api_key profile (provider field matches spec.openclawProvider)
  *   2. Environment variable named by spec.envVarName
  *
- * Anything more (clawmoney-managed keystore, per-request key rotation) is
+ * Anything more (spareai-managed keystore, per-request key rotation) is
  * out of scope here; users who need that today set the env var before
  * launching the daemon.
  */
@@ -39,10 +39,10 @@ export { RateGuardBudgetExceededError, RateGuardCooldownError };
 
 /**
  * Describes one passthrough upstream. One `PassthroughSpec` corresponds to
- * one clawmoney cli_type.
+ * one spareai cli_type.
  */
 export interface PassthroughSpec {
-  /** clawmoney cli_type identifier (matches `RelayRequest.cli_type`). */
+  /** spareai cli_type identifier (matches `RelayRequest.cli_type`). */
   cliType: string;
   /** OpenClaw provider id used for api_key profile lookup. */
   openclawProvider: string;

@@ -7,7 +7,7 @@
 # process — fine until the user reboots, closes their laptop, or the
 # daemon crashes overnight.
 #
-# This script generates ~/Library/LaunchAgents/ai.clawmoney.market.plist
+# This script generates ~/Library/LaunchAgents/org.spareai.market.plist
 # pointing at the absolute path of the clawmoney binary, then loads it.
 # After running once:
 #   - Daemon auto-starts when the user logs into GUI
@@ -23,7 +23,7 @@
 #   ./scripts/install-market-launchd.sh uninstall   # unload + remove plist
 #
 # Pre-reqs:
-#   - `clawmoney setup` has written ~/.clawmoney/config.yaml
+#   - `clawmoney setup` has written ~/.spareai/config.yaml
 #   - Provider role registered: `clawmoney market setup` (or `register`)
 #   - Whatever underlying CLI you pass via --cli must work standalone first:
 #       e.g. `codex --version`, `claude --version`, `openclaw --version`
@@ -31,9 +31,17 @@
 
 set -euo pipefail
 
-LABEL="ai.clawmoney.market"
+LABEL="org.spareai.market"
+LEGACY_LABEL="ai.clawmoney.market"
+# One-time migration: unload + remove the pre-SpareAI-rename agent so two
+# labels never run the same daemon side by side (hub presence gets poisoned
+# by multi-instance connections).
+if [[ -f "$HOME/Library/LaunchAgents/$LEGACY_LABEL.plist" ]]; then
+  launchctl bootout "gui/$(id -u)/$LEGACY_LABEL" 2>/dev/null || true
+  rm -f "$HOME/Library/LaunchAgents/$LEGACY_LABEL.plist"
+fi
 PLIST_PATH="$HOME/Library/LaunchAgents/$LABEL.plist"
-LOG_DIR="$HOME/.clawmoney"
+LOG_DIR="$HOME/.spareai"
 STDOUT_LOG="$LOG_DIR/market.launchd.out.log"
 STDERR_LOG="$LOG_DIR/market.launchd.err.log"
 

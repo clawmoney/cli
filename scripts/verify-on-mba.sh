@@ -71,14 +71,14 @@ env -u http_proxy -u https_proxy -u all_proxy \
 
 # After the capture server prints "Captured POST /v1/messages?beta=true",
 # Ctrl+C the capture server. Then extract the fingerprint:
-DEVICE=$(jq -r '.body.metadata.user_id' ~/.clawmoney/capture-*.json | jq -r '.device_id')
-ACCOUNT=$(jq -r '.body.metadata.user_id' ~/.clawmoney/capture-*.json | jq -r '.account_uuid')
+DEVICE=$(jq -r '.body.metadata.user_id' ~/.spareai/capture-*.json | jq -r '.device_id')
+ACCOUNT=$(jq -r '.body.metadata.user_id' ~/.spareai/capture-*.json | jq -r '.account_uuid')
 printf '{"device_id":"%s","account_uuid":"%s"}\n' "$DEVICE" "$ACCOUNT" \
-  > ~/.clawmoney/claude-fingerprint.json
+  > ~/.spareai/claude-fingerprint.json
 
 # IMPORTANT — security hygiene: capture files contain OAuth bearer tokens
 # from the request headers. Delete them after extracting the fingerprint:
-rm ~/.clawmoney/capture-*.json
+rm ~/.spareai/capture-*.json
 
 # ── Step B: run probe (should return HTTP 200 and "ok") ──
 cd ~/clawmoney-verify

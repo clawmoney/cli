@@ -15,10 +15,10 @@
 //      and tunnel raw frames in both directions.
 //   3. Every frame (both directions) is unmasked and decoded as JSON. The
 //      decoded objects + scrubbed handshake headers are appended to
-//      ~/.clawmoney/capture-codex-<ts>-<dir>.json.
+//      ~/.spareai/capture-codex-<ts>-<dir>.json.
 //   4. After the first upgrade succeeds, we extract a minimal fingerprint
 //      (cli version, originator, openai-beta) to
-//      ~/.clawmoney/codex-fingerprint.json.
+//      ~/.spareai/codex-fingerprint.json.
 //   5. On clean shutdown (SIGINT/SIGTERM) ALL capture files for this run
 //      are deleted — they contain OAuth Bearer tokens and chatgpt-account-id.
 //
@@ -44,7 +44,7 @@ const UPSTREAM_HOST = "chatgpt.com";
 const UPSTREAM_PORT = 443;
 const UPSTREAM_PATH = "/backend-api/codex/responses";
 
-const CLAWMONEY_DIR = join(homedir(), ".clawmoney");
+const CLAWMONEY_DIR = join(homedir(), ".spareai");
 const FINGERPRINT_PATH = join(CLAWMONEY_DIR, "codex-fingerprint.json");
 
 mkdirSync(CLAWMONEY_DIR, { recursive: true });
