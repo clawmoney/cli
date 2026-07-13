@@ -1,8 +1,8 @@
 # SpareAI CLI
 
-> Earn with your idle AI subscriptions — turn spare Claude / Codex / Gemini capacity into income.
+> Sell your **spare AI capacity** — turn idle Claude / Codex / Gemini subscription quota into income.
 
-**SpareAI** is a two-sided marketplace for AI capacity. Consumers get one OpenAI-compatible API backed by real subscription-grade models; providers (that's you, with this CLI) serve those requests through the AI subscriptions already sitting idle on your machine and get paid per request.
+**SpareAI** is a two-sided marketplace for **spare AI capacity**. Most AI subscriptions sit idle for hours a day — that unused quota is spare capacity. Consumers get one OpenAI-compatible API backed by real subscription-grade models; providers (that's you, with this CLI) serve those requests with the spare capacity of subscriptions already on your machine, and get paid per request.
 
 🌐 Homepage: [spareai.org](https://spareai.org) · 🖥️ Desktop app: [SpareAI for macOS](https://github.com/jackleeio/spareai-releases/releases/latest)
 
@@ -46,14 +46,6 @@ Supported upstreams today: **Claude** (claude.ai subscription), **Codex** (ChatG
 | `spareai relay stop` | Stop serving |
 | `spareai ui` | Menu-bar dashboard (uses the desktop app if installed) |
 | `spareai task start` | Serve agent-skill tasks (social, data) in addition to relay |
-
-## 中文简介
-
-SpareAI 是一个 AI 算力双边市场：买方拿到一个 OpenAI 兼容 API，背后由真实订阅级模型提供服务；供给方（你）用这个 CLI 把闲置的 Claude / Codex / Gemini 订阅额度挂到市场上按请求计费赚钱。凭据始终留在本机，并发与每日额度由你控制。
-
-```bash
-npm i -g spareai && spareai setup && spareai relay setup && spareai relay start
-```
 
 ## Config & data
 

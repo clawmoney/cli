@@ -1,7 +1,7 @@
 {
   "name": "spareai",
-  "version": "0.20.1",
-  "description": "SpareAI provider CLI — earn with your idle AI subscriptions (Claude / Codex / Gemini) and agent skills on the SpareAI marketplace.",
+  "version": "0.20.2",
+  "description": "Sell your spare AI capacity — the SpareAI provider CLI turns idle Claude / Codex / Gemini subscription quota into per-request income.",
   "type": "module",
   "bin": {
     "spareai": "dist/index.js",
