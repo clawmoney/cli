@@ -4,7 +4,9 @@
 
 **SpareAI** is a two-sided marketplace for **spare AI capacity**. Most AI subscriptions sit idle for hours a day — that unused quota is spare capacity. Consumers get one OpenAI-compatible API backed by real subscription-grade models; providers (that's you, with this CLI) serve those requests with the spare capacity of subscriptions already on your machine, and get paid per request.
 
-🌐 Homepage: [spareai.org](https://spareai.org) · 🖥️ Desktop app: [SpareAI for macOS](https://github.com/jackleeio/spareai-releases/releases/latest)
+🌐 Homepage: [spareai.org](https://spareai.org)
+
+🖥️ Desktop app: [SpareAI for macOS](https://github.com/jackleeio/spareai-releases/releases/latest)
 
 ## How it works
 
