@@ -253,21 +253,25 @@ function detectInstalledClis(): CliDetection[] {
     results.push({ cli, available, hint });
   }
 
-  // Kimi Coding: OAuth via kimi-cli (~/.kimi/credentials/kimi-code.json),
-  // or api_key fallback from openclaw / env. Listed separately so the hint
-  // can explain which path will actually be used at runtime.
-  const kimiOAuthPath = join(homedir(), ".kimi", "credentials", "kimi-code.json");
-  const hasKimiOAuth = existsSync(kimiOAuthPath);
+  // Kimi Coding: OAuth via Kimi Code CLI (~/.kimi-code) or legacy kimi-cli
+  // (~/.kimi) — same credential schema — or api_key fallback from openclaw /
+  // env. Listed separately so the hint can explain which path will actually
+  // be used at runtime.
+  const kimiOAuthPath = [
+    join(homedir(), ".kimi-code", "credentials", "kimi-code.json"),
+    join(homedir(), ".kimi", "credentials", "kimi-code.json"),
+  ].find(existsSync);
+  const hasKimiOAuth = !!kimiOAuthPath;
   const hasKimiKey =
     openclawApiKeyProviders.has("kimi") || !!process.env.KIMI_API_KEY;
   results.push({
     cli: "kimi-coding",
     available: hasKimiOAuth || hasKimiKey,
     hint: hasKimiOAuth
-      ? "kimi-cli OAuth token (~/.kimi/credentials/kimi-code.json)"
+      ? `Kimi OAuth token (${kimiOAuthPath})`
       : hasKimiKey
       ? "Kimi api_key (openclaw or KIMI_API_KEY env)"
-      : "no Kimi credential (run `kimi login` via kimi-cli, export KIMI_API_KEY, or `openclaw onboard --auth-choice kimi-code-api-key`)",
+      : "no Kimi credential (run `kimi login` via Kimi Code CLI, export KIMI_API_KEY, or `openclaw onboard --auth-choice kimi-code-api-key`)",
   });
 
   // MiniMax: OAuth Coding Plan OR api_key fallback. List separately so the

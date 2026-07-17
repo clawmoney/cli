@@ -24,9 +24,10 @@
  *   - Moonshot-flavored fingerprint headers (X-Msh-Platform, -Version,
  *     -Device-Id, etc.) — matches what a real kimi-cli sends so upstream
  *     fraud detection doesn't flag relay traffic as unknown-client.
- *     Device id is read from ~/.kimi/device_id; if the operator hasn't
- *     run kimi-cli locally we synthesize one and persist it (same thing
- *     kimi-cli does on first launch).
+ *     Device id is read from <share-dir>/device_id (~/.kimi-code first,
+ *     legacy ~/.kimi as fallback); if the operator hasn't run a Kimi CLI
+ *     locally we synthesize one and persist it (same thing the CLIs do
+ *     on first launch).
  *
  * Source of truth for all the above is
  * https://github.com/MoonshotAI/kimi-cli/blob/main/src/kimi_cli/auth/oauth.py.
@@ -60,9 +61,24 @@ export { RateGuardBudgetExceededError, RateGuardCooldownError };
 const KIMI_CODE_CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098";
 const KIMI_OAUTH_HOST = "https://auth.kimi.com";
 const KIMI_COD_BASE_URL = "https://api.kimi.com/coding/v1";
-const KIMI_SHARE_DIR = join(homedir(), ".kimi");
-const KIMI_CREDENTIALS_FILE = join(KIMI_SHARE_DIR, "credentials", "kimi-code.json");
-const KIMI_DEVICE_ID_FILE = join(KIMI_SHARE_DIR, "device_id");
+// Two generations of Moonshot CLIs share the same credential schema:
+// the current npm "Kimi Code" keeps state in ~/.kimi-code, the legacy pip
+// kimi-cli in ~/.kimi. Prefer whichever actually holds a credentials file
+// (new first), and keep every read/write inside that same directory so a
+// token refresh never splits state across generations.
+const KIMI_CODE_DIR = join(homedir(), ".kimi-code");
+const KIMI_LEGACY_DIR = join(homedir(), ".kimi");
+function kimiShareDir(): string {
+  if (existsSync(join(KIMI_CODE_DIR, "credentials", "kimi-code.json"))) return KIMI_CODE_DIR;
+  if (existsSync(join(KIMI_LEGACY_DIR, "credentials", "kimi-code.json"))) return KIMI_LEGACY_DIR;
+  return KIMI_CODE_DIR;
+}
+function kimiCredentialsFile(): string {
+  return join(kimiShareDir(), "credentials", "kimi-code.json");
+}
+function kimiDeviceIdFile(): string {
+  return join(kimiShareDir(), "device_id");
+}
 
 // Refresh proactively when within 5 minutes of expiry, matching kimi-cli's
 // MIN_REFRESH_THRESHOLD_SECONDS = 300.
@@ -71,7 +87,8 @@ const REFRESH_SKEW_MS = 5 * 60 * 1000;
 // ── Types ────────────────────────────────────────────────────────────────
 
 /**
- * Shape of ~/.kimi/credentials/kimi-code.json. Matches
+ * Shape of <share-dir>/credentials/kimi-code.json (same schema in
+ * ~/.kimi-code and legacy ~/.kimi). Matches
  * kimi_cli.auth.oauth.OAuthToken.to_dict(). `expires_at` is unix seconds,
  * not milliseconds — we convert to ms internally.
  */
@@ -114,14 +131,14 @@ function configureDispatcher(): void {
   dispatcherConfigured = true;
 }
 
-// ── Device id (~/.kimi/device_id) ────────────────────────────────────────
+// ── Device id (<share-dir>/device_id) ────────────────────────────────────
 
 let cachedDeviceId: string | null = null;
 function getDeviceId(): string {
   if (cachedDeviceId) return cachedDeviceId;
   try {
-    if (existsSync(KIMI_DEVICE_ID_FILE)) {
-      const raw = readFileSync(KIMI_DEVICE_ID_FILE, "utf-8").trim();
+    if (existsSync(kimiDeviceIdFile())) {
+      const raw = readFileSync(kimiDeviceIdFile(), "utf-8").trim();
       if (raw) {
         cachedDeviceId = raw;
         return raw;
@@ -133,8 +150,8 @@ function getDeviceId(): string {
   // First launch on this host — synthesize and persist the same way kimi-cli does.
   const fresh = randomUUID().replace(/-/g, "");
   try {
-    mkdirSync(KIMI_SHARE_DIR, { recursive: true });
-    writeFileSync(KIMI_DEVICE_ID_FILE, fresh, { encoding: "utf-8", mode: 0o600 });
+    mkdirSync(kimiShareDir(), { recursive: true });
+    writeFileSync(kimiDeviceIdFile(), fresh, { encoding: "utf-8", mode: 0o600 });
   } catch (err) {
     logger.warn(`[kimi-coding] failed to persist device_id: ${(err as Error).message}`);
   }
@@ -173,26 +190,28 @@ function commonMshHeaders(): Record<string, string> {
 // ── Credential I/O ───────────────────────────────────────────────────────
 
 function readCredentialsFile(): KimiOAuthFile | null {
-  if (!existsSync(KIMI_CREDENTIALS_FILE)) return null;
+  const credsFile = kimiCredentialsFile();
+  if (!existsSync(credsFile)) return null;
   try {
-    const parsed = JSON.parse(readFileSync(KIMI_CREDENTIALS_FILE, "utf-8")) as Partial<KimiOAuthFile>;
+    const parsed = JSON.parse(readFileSync(credsFile, "utf-8")) as Partial<KimiOAuthFile>;
     if (!parsed.access_token || !parsed.refresh_token) return null;
     return parsed as KimiOAuthFile;
   } catch (err) {
-    logger.warn(`[kimi-coding] failed to parse ${KIMI_CREDENTIALS_FILE}: ${(err as Error).message}`);
+    logger.warn(`[kimi-coding] failed to parse ${credsFile}: ${(err as Error).message}`);
     return null;
   }
 }
 
 function writeCredentialsFile(file: KimiOAuthFile): void {
-  mkdirSync(join(KIMI_SHARE_DIR, "credentials"), { recursive: true });
-  const tmp = `${KIMI_CREDENTIALS_FILE}.tmp`;
+  const credsFile = kimiCredentialsFile();
+  mkdirSync(join(kimiShareDir(), "credentials"), { recursive: true });
+  const tmp = `${credsFile}.tmp`;
   writeFileSync(tmp, JSON.stringify(file, null, 2), { encoding: "utf-8", mode: 0o600 });
-  renameSync(tmp, KIMI_CREDENTIALS_FILE);
+  renameSync(tmp, credsFile);
 }
 
 function loadCreds(): LoadedCreds {
-  // Preferred: ~/.kimi/credentials/kimi-code.json (OAuth).
+  // Preferred: <share-dir>/credentials/kimi-code.json (OAuth).
   const file = readCredentialsFile();
   if (file) {
     return {
@@ -228,10 +247,10 @@ function loadCreds(): LoadedCreds {
   }
 
   throw new Error(
-    `Kimi Coding credentials not found (checked ${KIMI_CREDENTIALS_FILE}, ` +
+    `Kimi Coding credentials not found (checked ${kimiCredentialsFile()}, ` +
       `openclaw kimi api_key profile, and env KIMI_API_KEY). ` +
-      `Run \`kimi login\` (installs kimi-cli from pypi), \`openclaw onboard --auth-choice kimi-code-api-key\`, ` +
-      `or \`export KIMI_API_KEY=sk-...\`.`
+      `Run \`kimi login\` (Kimi Code CLI, or legacy kimi-cli from pypi), ` +
+      `\`openclaw onboard --auth-choice kimi-code-api-key\`, or \`export KIMI_API_KEY=sk-...\`.`
   );
 }
 
@@ -310,7 +329,7 @@ async function doRefreshAndPersist(current: LoadedCreds): Promise<LoadedCreds> {
   };
   try {
     writeCredentialsFile(updatedFile);
-    logger.info(`[kimi-coding] ${KIMI_CREDENTIALS_FILE} updated`);
+    logger.info(`[kimi-coding] ${kimiCredentialsFile()} updated`);
   } catch (err) {
     logger.error(
       `[kimi-coding] CRITICAL: persist failed — keeping old token: ${(err as Error).message}`
