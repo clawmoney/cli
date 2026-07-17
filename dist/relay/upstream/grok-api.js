@@ -21,6 +21,12 @@ const CLI_REFRESH_TIMEOUT_MS = 45_000;
 const PREFLIGHT_REQUEST_TIMEOUT_MS = 30_000;
 const RESPONSES_REQUEST_TIMEOUT_MS = 10 * 60_000;
 const OFFICIAL_GROK_PROXY_HOST = "cli-chat-proxy.grok.com";
+// cli-chat-proxy rejects requests whose Grok CLI version is absent/too old
+// with a 426 ("version (none) is outdated, need >=0.1.202"). The official
+// grok-shell sends x-grok-client-version + x-grok-client-identifier on every
+// call (see xai-org/grok-build). Mirror that; bump when the floor rises.
+const GROK_CLIENT_VERSION = "0.2.93";
+const GROK_CLIENT_IDENTIFIER = "grok-shell";
 let testHooks = {};
 /** Test-only dependency injection. Production callers must not use this. */
 export function __setGrokApiTestHooks(hooks) {
@@ -487,6 +493,8 @@ export async function preflightGrokApi(config) {
             headers: {
                 accept: "application/json",
                 authorization: `Bearer ${creds.accessKey}`,
+                "x-grok-client-version": GROK_CLIENT_VERSION,
+                "x-grok-client-identifier": GROK_CLIENT_IDENTIFIER,
             },
         });
         if (response.status === 401 && attempt === 0) {
@@ -768,10 +776,10 @@ function buildRequestBody(opts) {
                 model: opts.model,
                 stream,
                 // Responses defaults store=true. Relay traffic must never be retained
-                // in the provider's Grok account, and async background jobs cannot be
-                // represented by the current relay response envelope.
+                // in the provider's Grok account. (The `background` field is omitted
+                // entirely — Grok's Responses API rejects it with 400, unlike OpenAI;
+                // buyer-supplied background:true is refused earlier in this function.)
                 store: false,
-                background: false,
             },
             stream,
         };
@@ -790,7 +798,6 @@ function buildRequestBody(opts) {
             ],
             stream,
             store: false,
-            background: false,
             ...(opts.maxTokens ? { max_output_tokens: opts.maxTokens } : {}),
         },
         stream,
@@ -824,6 +831,8 @@ async function doCallGrokApi(opts) {
                 "content-type": "application/json",
                 accept: request.stream ? "text/event-stream" : "application/json",
                 authorization: `Bearer ${creds.accessKey}`,
+                "x-grok-client-version": GROK_CLIENT_VERSION,
+                "x-grok-client-identifier": GROK_CLIENT_IDENTIFIER,
             },
             body: serializedBody,
         });
