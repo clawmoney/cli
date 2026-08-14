@@ -140,6 +140,7 @@ function detectInstalledClis() {
         { cli: "claude", bin: "claude" },
         { cli: "codex", bin: "codex" },
         { cli: "gemini", bin: "gemini" },
+        { cli: "grok", bin: "grok" },
     ];
     for (const { cli, bin } of binaries) {
         let installed = false;
@@ -163,6 +164,14 @@ function detectInstalledClis() {
             hint = `${bin} not found in PATH`;
         }
         results.push({ cli, available, hint });
+    }
+    // Grok Build: official installer drops `grok` under ~/.grok/bin, which
+    // may be off PATH. Treat a populated ~/.grok/auth.json as logged-in.
+    const grokAuth = join(homedir(), ".grok", "auth.json");
+    const grokRow = results.find((r) => r.cli === "grok");
+    if (grokRow && !grokRow.available && existsSync(grokAuth)) {
+        grokRow.available = true;
+        grokRow.hint = "OIDC token in ~/.grok/auth.json (binary may be off PATH)";
     }
     // ── Static-key passthrough providers ──
     // No binary to probe — each maps to an openclaw api_key profile or an

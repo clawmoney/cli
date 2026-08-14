@@ -28,8 +28,11 @@
  *     run kimi-cli locally we synthesize one and persist it (same thing
  *     kimi-cli does on first launch).
  *
- * Source of truth for all the above is
- * https://github.com/MoonshotAI/kimi-cli/blob/main/src/kimi_cli/auth/oauth.py.
+ * Source of truth (2026-08-14, MoonshotAI/kimi-code @ 0.36.0):
+ *   packages/oauth/src/constants.ts
+ *   packages/oauth/src/identity.ts
+ *   packages/oauth/src/toolkit.ts  → ~/.kimi-code
+ * Legacy kimi-cli (~/.kimi) is still accepted as a fallback.
  */
 import type { ParsedOutput, RelayRateGuardConfig } from "../types.js";
 import { RateGuard, RateGuardBudgetExceededError, RateGuardCooldownError } from "./rate-guard.js";

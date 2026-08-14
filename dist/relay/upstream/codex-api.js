@@ -54,18 +54,20 @@ const CODEX_AUTH_FILE = join(homedir(), ".codex", "auth.json");
 const CLAWMONEY_DIR = join(homedir(), ".clawmoney");
 const FINGERPRINT_FILE = join(CLAWMONEY_DIR, "codex-fingerprint.json");
 // Default fingerprint values. Overridden per-machine by the capture script.
-const DEFAULT_CLI_VERSION = "0.118.0";
-// Verified against codex-rs/login/src/auth/default_client.rs:34 —
+// Pinned to openai/codex npm @openai/codex@0.147.0 (2026-08-14 source).
+const DEFAULT_CLI_VERSION = "0.147.0";
+// Verified against codex-rs/login/src/auth/default_client.rs:40 —
 // `pub const DEFAULT_ORIGINATOR: &str = "codex_cli_rs"`. A prior audit
 // claimed this was "codex_exec" which was wrong; real Codex CLI sends
 // `codex_cli_rs` on every /backend-api/codex/responses upgrade, and a
 // different originator value is a direct fingerprint mismatch against
 // OpenAI's allowlist of known first-party clients.
 const DEFAULT_ORIGINATOR = "codex_cli_rs";
-// Observed in the 0.118 capture: there is NO user-agent header. Leave empty
-// by default; the fingerprint file may still override with a real value for
-// older codex-cli that does send one.
-const DEFAULT_USER_AGENT = "";
+// Codex 0.147+ always sends a User-Agent from get_codex_user_agent():
+//   `{originator}/{version} ({os_type} {os_version}; {arch}) {terminal_ua}`
+// 0.118 captures had no UA — that is stale. Fingerprint file can still
+// override with a machine-captured value.
+const DEFAULT_USER_AGENT = `${DEFAULT_ORIGINATOR}/${DEFAULT_CLI_VERSION} (Mac OS; arm64)`;
 // openai-beta header value for the 0.118+ WebSocket protocol.
 const OPENAI_BETA_WS_VALUE = "responses_websockets=2026-02-06";
 const REFRESH_SKEW_MS = 3 * 60 * 1000;
@@ -147,9 +149,12 @@ function loadCodexFingerprint() {
             logger.warn(`[codex-api] could not persist installation_id: ${err.message}`);
         }
     }
+    const capturedUa = (raw.user_agent ?? "").trim();
+    const capturedVersion = (raw.cli_version ?? "").trim();
+    const stalePin = !capturedVersion || capturedVersion.startsWith("0.118");
     cachedFingerprint = {
-        user_agent: raw.user_agent ?? DEFAULT_USER_AGENT,
-        cli_version: raw.cli_version ?? DEFAULT_CLI_VERSION,
+        user_agent: capturedUa || DEFAULT_USER_AGENT,
+        cli_version: stalePin ? DEFAULT_CLI_VERSION : capturedVersion,
         originator: raw.originator ?? DEFAULT_ORIGINATOR,
         openai_beta: raw.openai_beta ?? OPENAI_BETA_WS_VALUE,
         installation_id: installationId,
@@ -851,9 +856,7 @@ async function doCallCodexApi(opts) {
             "x-codex-window-id": windowId,
             "x-codex-turn-metadata": turnMetadata,
         };
-        if (fingerprint.user_agent) {
-            headers["user-agent"] = fingerprint.user_agent;
-        }
+        headers["user-agent"] = fingerprint.user_agent || DEFAULT_USER_AGENT;
         let dialed;
         try {
             dialed = await dialCodexWebSocket(headers);
@@ -1181,9 +1184,7 @@ async function doCallCodexApiPassthrough(opts) {
             "x-codex-window-id": windowId,
             "x-codex-turn-metadata": turnMetadata,
         };
-        if (fingerprint.user_agent) {
-            headers["user-agent"] = fingerprint.user_agent;
-        }
+        headers["user-agent"] = fingerprint.user_agent || DEFAULT_USER_AGENT;
         let dialed;
         try {
             dialed = await dialCodexWebSocket(headers);
