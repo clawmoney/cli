@@ -70,9 +70,12 @@ const CLAWMONEY_DIR = join(homedir(), ".clawmoney");
 const FINGERPRINT_FILE = join(CLAWMONEY_DIR, "gemini-fingerprint.json");
 
 // Fallback UA used before the capture script has bootstrapped this machine.
-// Real captured format: "GeminiCLI/<cli>/<default-model> (darwin; arm64; terminal) google-api-nodejs-client/9.15.1"
-const DEFAULT_CLI_VERSION = "0.36.0";
-const DEFAULT_USER_AGENT = `GeminiCLI/${DEFAULT_CLI_VERSION} (darwin; arm64; terminal) google-api-nodejs-client/9.15.1`;
+// Official 0.55.1 format (packages/core/src/core/contentGenerator.ts:269-272):
+//   `GeminiCLI/${version}/${model} (${platform}; ${arch}; ${surface})`
+// The old "… google-api-nodejs-client/9.15.1" suffix is no longer sent.
+const DEFAULT_CLI_VERSION = "0.55.1";
+const DEFAULT_MODEL_FOR_UA = "gemini-2.5-flash";
+const DEFAULT_USER_AGENT = `GeminiCLI/${DEFAULT_CLI_VERSION}/${DEFAULT_MODEL_FOR_UA} (darwin; arm64; terminal)`;
 const DEFAULT_X_GOOG_API_CLIENT = "gl-node/25.2.1";
 
 // Real gemini-cli does NOT send safetySettings in the request body — the
@@ -99,7 +102,7 @@ interface GeminiFingerprint {
   x_goog_api_client?: string;
 }
 
-// v1internal request envelope captured from real gemini-cli/0.36.0 traffic.
+// v1internal request envelope captured from real gemini-cli traffic.
 // NOTE: this is NOT the Antigravity envelope (which has {project, requestId,
 // userAgent, model, request}). The Gemini CLI envelope is simpler:
 //   {model, project, user_prompt_id, request}
@@ -200,10 +203,15 @@ function loadFingerprint(): ResolvedGeminiFingerprint {
         `:retrieveUserQuota request body, not :loadCodeAssist.`
     );
   }
+  const capturedVersion = (raw.cli_version ?? "").trim();
+  const stalePin = !capturedVersion || capturedVersion.startsWith("0.36.");
+  const cliVersion = stalePin ? DEFAULT_CLI_VERSION : capturedVersion;
+  const capturedUa = (raw.user_agent ?? "").trim();
+  const staleUa = !capturedUa || capturedUa.includes("google-api-nodejs-client") || capturedUa.startsWith("GeminiCLI/0.36.");
   cachedFingerprint = {
     project_id: raw.project_id,
-    cli_version: raw.cli_version ?? DEFAULT_CLI_VERSION,
-    user_agent: raw.user_agent ?? DEFAULT_USER_AGENT,
+    cli_version: cliVersion,
+    user_agent: staleUa ? DEFAULT_USER_AGENT : capturedUa,
     x_goog_api_client: raw.x_goog_api_client ?? DEFAULT_X_GOOG_API_CLIENT,
   };
   logger.info(

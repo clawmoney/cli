@@ -1,4 +1,5 @@
 import { spawn, execSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import chalk from "chalk";
@@ -26,7 +27,7 @@ export async function relayRegisterCommand(options: RegisterOptions): Promise<vo
   const config = requireConfig();
 
   // Validate CLI type
-  const validClis = ["claude", "codex", "gemini", "antigravity", "chatgpt-web"];
+  const validClis = ["claude", "codex", "gemini", "antigravity", "chatgpt-web", "grok"];
   if (!validClis.includes(options.cli)) {
     console.error(chalk.red(`Invalid CLI type "${options.cli}". Must be one of: ${validClis.join(", ")}`));
     process.exit(1);
@@ -52,6 +53,22 @@ export async function relayRegisterCommand(options: RegisterOptions): Promise<vo
     } catch (err) {
       spinner.fail(chalk.red(`Antigravity token check failed: ${(err as Error).message}`));
       process.exit(1);
+    }
+  } else if (options.cli === "grok") {
+    const spinner = ora("Checking Grok Build login...").start();
+    const grokAuth = join(homedir(), ".grok", "auth.json");
+    const grokBin = join(homedir(), ".grok", "bin", "grok");
+    try {
+      execSync("which grok", { stdio: "pipe" });
+      spinner.succeed("grok is available");
+    } catch {
+      if (existsSync(grokBin) || existsSync(grokAuth)) {
+        spinner.succeed("Grok OIDC token found (~/.grok)");
+      } else {
+        spinner.fail(chalk.red("Grok Build is not logged in"));
+        console.log(chalk.dim("  Run `grok login` (or install from https://x.ai/cli/install.sh) first."));
+        process.exit(1);
+      }
     }
   } else {
     // chatgpt-web drives the browser via opencli — there's no "chatgpt-web" binary.
@@ -438,7 +455,7 @@ export async function relayStatusCommand(): Promise<void> {
     // Group rows by cli_type so `claude-*` lines stay together, then
     // `codex-*`, then `gemini-*`, then `antigravity-*`. Within a family
     // we sort by model name so the ordering is stable across calls.
-    const CLI_ORDER = ["claude", "codex", "gemini", "antigravity"];
+    const CLI_ORDER = ["claude", "codex", "gemini", "antigravity", "grok"];
     providers.sort((a, b) => {
       const ai = CLI_ORDER.indexOf(a.cli_type ?? "");
       const bi = CLI_ORDER.indexOf(b.cli_type ?? "");
@@ -591,7 +608,7 @@ export async function relayModelsCommand(): Promise<void> {
 // each independently — a failure in one cli_type doesn't short-circuit
 // the others.
 
-const PREFLIGHT_DEFAULTS = ["claude", "codex", "gemini", "antigravity"];
+const PREFLIGHT_DEFAULTS = ["claude", "codex", "gemini", "antigravity", "grok"];
 
 export async function relayPreflightCommand(options: {
   cli?: string;

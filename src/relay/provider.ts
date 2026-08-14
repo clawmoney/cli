@@ -37,6 +37,11 @@ import {
   getKimiCodingRateGuardSnapshot,
 } from "./upstream/kimi-coding-api.js";
 import {
+  callGrokApi,
+  preflightGrokApi,
+  getGrokRateGuardSnapshot,
+} from "./upstream/grok-api.js";
+import {
   callPassthroughApi,
   preflightPassthroughApi,
   getPassthroughRateGuardSnapshot,
@@ -69,6 +74,8 @@ function getRateGuardSnapshotForCli(
       return getMinimaxRateGuardSnapshot();
     case "kimi-coding":
       return getKimiCodingRateGuardSnapshot();
+    case "grok":
+      return getGrokRateGuardSnapshot();
     case "api-key":
       // api-key multiplexes multiple internal specs; without model context
       // we can't pick one snapshot. Hub treats null as "no signal", which
@@ -444,6 +451,15 @@ async function executeRelayRequest(
         model,
         maxTokens: max_budget_usd ? undefined : 8192,
       });
+    } else if (cliType === "grok") {
+      parsed = await callGrokApi({
+        prompt,
+        passthroughBody: request.passthrough_body,
+        model,
+        maxTokens: max_budget_usd ? undefined : 8192,
+        onRawEvent: sendChunk,
+        sessionKey: cliSessionId || request_id,
+      });
     } else if (cliType === "chatgpt-web") {
       // Web send/read path — drive chatgpt.com via opencli (temporary chat)
       // instead of the reverse-proxy API. Real-browser route, un-bannable.
@@ -667,6 +683,8 @@ function getPreflightFn(cliType: string) {
       return preflightMinimaxApi;
     case "kimi-coding":
       return preflightKimiCodingApi;
+    case "grok":
+      return preflightGrokApi;
     case "api-key":
       // Credential validation for api-key happens lazily on first request —
       // we can't know which internal specs to preflight without the list of

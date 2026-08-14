@@ -128,6 +128,16 @@ export const API_PRICES: Record<string, ModelPricing> = {
   "gemini-2.5-flash":        { input: 0.30, output: 2.50 },
   "gemini-2.5-flash-lite":   { input: 0.10, output: 0.40 },
   "gemini-2.0-flash":        { input: 0.10, output: 0.40 },
+
+  // ── xAI / Grok Build (SuperGrok subscription via cli-chat-proxy) ──
+  // Subscription is sunk cost; these are public API proxy prices so
+  // opportunity-cost billing stays comparable. grok-4.5 is the desktop
+  // default; 4.6 / 4.20 appear in the open-sourced grok-build tree.
+  "grok-4.20": { input: 3, output: 15 },
+  "grok-4.6":  { input: 3, output: 15 },
+  "grok-4.5":  { input: 3, output: 15 },
+  "grok-4":    { input: 3, output: 15 },
+  "grok-3":    { input: 3, output: 15 },
 };
 
 // Default fallback for unknown models. Priced at the Claude Opus rate
