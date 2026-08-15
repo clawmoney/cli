@@ -28,7 +28,7 @@
  *     run kimi-cli locally we synthesize one and persist it (same thing
  *     kimi-cli does on first launch).
  *
- * Source of truth (2026-08-14, MoonshotAI/kimi-code @ 0.36.0):
+ * Source of truth (2026-08-15, MoonshotAI/kimi-code @ 0.36.1):
  *   packages/oauth/src/constants.ts
  *   packages/oauth/src/identity.ts
  *   packages/oauth/src/toolkit.ts  → ~/.kimi-code
@@ -63,8 +63,8 @@ export { RateGuardBudgetExceededError, RateGuardCooldownError };
 const KIMI_CODE_CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098";
 const KIMI_OAUTH_HOST = "https://auth.kimi.com";
 const KIMI_COD_BASE_URL = "https://api.kimi.com/coding/v1";
-// Official kimi-code CLI (MoonshotAI/kimi-code apps/kimi-code 0.36.0).
-const KIMI_CODE_CLI_VERSION = "0.36.0";
+// Official kimi-code CLI (MoonshotAI/kimi-code apps/kimi-code 0.36.1).
+const KIMI_CODE_CLI_VERSION = "0.36.1";
 const KIMI_CODE_PRODUCT = "kimi-code-cli";
 const KIMI_CODE_PLATFORM = "kimi_code_cli";
 const KIMI_CODE_SHARE_DIR = join(homedir(), ".kimi-code");

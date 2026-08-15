@@ -70,9 +70,10 @@ const CLAWMONEY_DIR = join(homedir(), ".clawmoney");
 const FINGERPRINT_FILE = join(CLAWMONEY_DIR, "gemini-fingerprint.json");
 
 // Fallback UA used before the capture script has bootstrapped this machine.
-// Official 0.55.1 format (packages/core/src/core/contentGenerator.ts:269-272):
+// Official format (packages/core/src/core/contentGenerator.ts:269-272, still current on HEAD):
 //   `GeminiCLI/${version}/${model} (${platform}; ${arch}; ${surface})`
 // The old "… google-api-nodejs-client/9.15.1" suffix is no longer sent.
+// Published npm is 0.55.1; git HEAD is a 0.56.0 nightly with the same UA template.
 const DEFAULT_CLI_VERSION = "0.55.1";
 const DEFAULT_MODEL_FOR_UA = "gemini-2.5-flash";
 const DEFAULT_USER_AGENT = `GeminiCLI/${DEFAULT_CLI_VERSION}/${DEFAULT_MODEL_FOR_UA} (darwin; arm64; terminal)`;
@@ -661,10 +662,11 @@ async function doCallGeminiApi(
   while (true) {
     const creds = await getFreshCreds();
 
-    // Real gemini-cli headers (packages/core/src/code_assist/server.ts:456):
-    //   content-type: application/json       (+ any httpOptions.headers)
-    //   authorization: Bearer <token>        (set by GoogleAuth client)
-    //   user-agent: GeminiCLI/<ver>/<model> (<os>; <arch>; <surface>) google-api-nodejs-client/<ver>
+    // Real gemini-cli headers:
+    //   packages/core/src/core/contentGenerator.ts:280-283 → User-Agent only in httpOptions
+    //   packages/core/src/code_assist/server.ts:481-484 → Content-Type + httpOptions.headers
+    //   google-auth-library still injects authorization + x-goog-api-client
+    //   user-agent: GeminiCLI/<ver>/<model> (<os>; <arch>; <surface>)
     //   x-goog-api-client: gl-node/<node-ver>
     //   (NO x-goog-user-project — project lives in the body)
     // For streaming the server also returns text/event-stream, so we accept

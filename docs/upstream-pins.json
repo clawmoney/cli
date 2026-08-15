@@ -9,7 +9,7 @@
       "originator": "codex_cli_rs",
       "openaiBeta": "responses_websockets=2026-02-06",
       "userAgentTemplate": "codex_cli_rs/{version} (Mac OS; arm64)",
-      "gitHead": "fdbab67c6",
+      "gitHead": "85fc4def3",
       "adapterFile": "src/relay/upstream/codex-api.ts"
     },
     "gemini": {
@@ -18,28 +18,28 @@
       "version": "0.55.1",
       "endpoint": "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse",
       "userAgentTemplate": "GeminiCLI/{version}/{model} ({platform}; {arch}; terminal)",
-      "gitHead": "c0d19245",
+      "gitHead": "2a87e7b",
       "adapterFile": "src/relay/upstream/gemini-api.ts"
     },
     "kimi-code": {
       "repo": "https://github.com/MoonshotAI/kimi-code.git",
       "npm": "@moonshot-ai/kimi-code",
-      "version": "0.36.0",
+      "version": "0.36.1",
       "product": "kimi-code-cli",
       "platform": "kimi_code_cli",
       "oauthHost": "https://auth.kimi.com",
       "codingBase": "https://api.kimi.com/coding/v1",
       "clientId": "17e5f671-d194-4dfb-9706-5516cb48c098",
       "homeDir": "~/.kimi-code",
-      "gitHead": "741708f9",
+      "gitHead": "6b72345f",
       "adapterFile": "src/relay/upstream/kimi-coding-api.ts"
     },
     "qwen-code": {
       "repo": "https://github.com/QwenLM/qwen-code.git",
       "npm": "@qwen-code/qwen-code",
-      "version": "0.21.11",
+      "version": "0.21.12",
       "codingBase": "https://coding.dashscope.aliyuncs.com/v1",
-      "gitHead": "8517fa9d",
+      "gitHead": "c396fe3d",
       "adapterFile": "src/relay/upstream/passthrough-specs.ts"
     },
     "opencli": {

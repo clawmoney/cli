@@ -20,11 +20,10 @@
  *  - Token source: ~/.codex/auth.json (written by the Codex CLI)
  *  - Upstream transport: WebSocket to chatgpt.com/backend-api/codex/responses
  *  - Handshake header `openai-beta: responses_websockets=2026-02-06`
- *  - Handshake header `version: <codex cli version>`
- *  - Handshake header `chatgpt-account-id` from ~/.codex/auth.json tokens.account_id
+ *  - Handshake headers `session-id` + `thread-id` (codex-api/src/requests/headers.rs)
  *  - First frame is a JSON `response.create` — request body is OpenAI Responses
  *    API shape (input[], instructions, model, store, stream) with `type` added
- *  - Session headers: session_id + conversation_id (not x-claude-code-session-id)
+ *  - Session headers: session-id + thread-id (not x-claude-code-session-id)
  *  - Rate-limit headers surface on the upgrade response or via `rate_limits` /
  *    `response.failed` frames — we parse both
  */
@@ -69,7 +68,7 @@ const CLAWMONEY_DIR = join(homedir(), ".clawmoney");
 const FINGERPRINT_FILE = join(CLAWMONEY_DIR, "codex-fingerprint.json");
 
 // Default fingerprint values. Overridden per-machine by the capture script.
-// Pinned to openai/codex npm @openai/codex@0.147.0 (2026-08-14 source).
+// Pinned to openai/codex npm @openai/codex@0.147.0 (2026-08-15 source).
 const DEFAULT_CLI_VERSION = "0.147.0";
 // Verified against codex-rs/login/src/auth/default_client.rs:40 —
 // `pub const DEFAULT_ORIGINATOR: &str = "codex_cli_rs"`. A prior audit
@@ -628,8 +627,12 @@ function buildCodexRequestFrame(
   // `client_metadata` is a flat string-to-string map. Real CLI populates
   // it via build_ws_client_metadata() (client.rs:575-605). The keys look
   // like HTTP header names but they're JSON fields.
+  // Official client_metadata() always includes session_id + thread_id
+  // (codex-rs/core/src/responses_metadata.rs:278-286).
   const clientMetadata: Record<string, string> = {
     "x-codex-installation-id": fingerprint.installation_id,
+    session_id: sessionId,
+    thread_id: sessionId,
     "x-codex-window-id": `${sessionId}:${windowGeneration}`,
     "x-codex-turn-metadata": turnMetadataHeader,
   };
@@ -1048,6 +1051,7 @@ async function doCallCodexApi(opts: CallCodexApiOptions): Promise<ParsedOutput> 
             : "none";
     const turnMetadata = JSON.stringify({
       session_id: sessionId,
+      thread_id: sessionId,
       turn_id: randomUUID(),
       sandbox: platformSandboxTag,
     });
@@ -1089,22 +1093,20 @@ async function doCallCodexApi(opts: CallCodexApiOptions): Promise<ParsedOutput> 
     const warmupFrameJson = JSON.stringify(warmupFrame);
     const realFrameJson = JSON.stringify(realFrame);
 
-    // Build handshake headers to match Codex CLI 0.118's real upgrade
-    // request. Key sources:
-    //   codex-rs/core/src/client.rs:771-798 → build_websocket_headers
-    //     → build_responses_headers + build_conversation_headers +
-    //       build_responses_identity_headers
-    //   codex-rs/login/src/auth/default_client.rs:228 →
-    //     reqwest-level default header `originator`
+    // Handshake headers from official 0.147 source:
+    //   codex-rs/core/src/client.rs:1122-1155 → build_websocket_headers
+    //   codex-rs/codex-api/src/requests/headers.rs:5-13 → session-id + thread-id
+    //   codex-rs/login/src/auth/default_client.rs:330-346 → originator + UA
     //
     // Real on-wire set for a /backend-api/codex/responses upgrade:
     //   originator: codex_cli_rs
     //   openai-beta: responses_websockets=2026-02-06
     //   x-codex-turn-metadata: <json>
-    //   x-client-request-id: <conversation_id>
-    //   session_id: <conversation_id>        ← from build_conversation_headers
-    //   x-codex-window-id: <conversation_id>:<window_generation>
-    //   (+ authorization: Bearer, user-agent, and whatever the ws client adds)
+    //   x-client-request-id: <thread_id>
+    //   session-id: <session_id>             ← hyphen, not session_id
+    //   thread-id: <thread_id>
+    //   x-codex-window-id: <thread_id>:<window_generation>
+    //   (+ authorization: Bearer, user-agent)
     //
     // NOTE: `chatgpt-account-id` and `version` are NOT sent on the real
     // upgrade path — they belong to other code assist endpoints. We leave
@@ -1114,7 +1116,8 @@ async function doCallCodexApi(opts: CallCodexApiOptions): Promise<ParsedOutput> 
       "authorization": `Bearer ${creds.accessToken}`,
       "originator": fingerprint.originator,
       "openai-beta": fingerprint.openai_beta,
-      "session_id": sessionId,
+      "session-id": sessionId,
+      "thread-id": sessionId,
       "x-client-request-id": sessionId,
       "x-codex-window-id": windowId,
       "x-codex-turn-metadata": turnMetadata,
@@ -1394,6 +1397,8 @@ function buildCodexPassthroughFrame(
   // field; always set it from our fingerprint.
   frame.client_metadata = {
     "x-codex-installation-id": fingerprint.installation_id,
+    session_id: sessionId,
+    thread_id: sessionId,
     "x-codex-window-id": `${sessionId}:${windowGeneration}`,
     "x-codex-turn-metadata": turnMetadataHeader,
   };
@@ -1479,6 +1484,7 @@ async function doCallCodexApiPassthrough(
             : "none";
     const turnMetadata = JSON.stringify({
       session_id: sessionId,
+      thread_id: sessionId,
       turn_id: randomUUID(),
       sandbox: platformSandboxTag,
     });
@@ -1509,7 +1515,8 @@ async function doCallCodexApiPassthrough(
       "authorization": `Bearer ${creds.accessToken}`,
       "originator": fingerprint.originator,
       "openai-beta": fingerprint.openai_beta,
-      "session_id": sessionId,
+      "session-id": sessionId,
+      "thread-id": sessionId,
       "x-client-request-id": sessionId,
       "x-codex-window-id": windowId,
       "x-codex-turn-metadata": turnMetadata,

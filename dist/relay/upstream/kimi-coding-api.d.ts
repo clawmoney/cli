@@ -28,7 +28,7 @@
  *     run kimi-cli locally we synthesize one and persist it (same thing
  *     kimi-cli does on first launch).
  *
- * Source of truth (2026-08-14, MoonshotAI/kimi-code @ 0.36.0):
+ * Source of truth (2026-08-15, MoonshotAI/kimi-code @ 0.36.1):
  *   packages/oauth/src/constants.ts
  *   packages/oauth/src/identity.ts
  *   packages/oauth/src/toolkit.ts  → ~/.kimi-code
