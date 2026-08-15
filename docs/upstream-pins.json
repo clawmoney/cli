@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-14",
+  "updatedAt": "2026-08-15",
   "mirror": "/Users/jacklee/Projects/.upstream-clis",
   "clis": {
     "codex": {
@@ -9,6 +9,7 @@
       "originator": "codex_cli_rs",
       "openaiBeta": "responses_websockets=2026-02-06",
       "userAgentTemplate": "codex_cli_rs/{version} (Mac OS; arm64)",
+      "gitHead": "fdbab67c6",
       "adapterFile": "src/relay/upstream/codex-api.ts"
     },
     "gemini": {
@@ -17,6 +18,7 @@
       "version": "0.55.1",
       "endpoint": "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse",
       "userAgentTemplate": "GeminiCLI/{version}/{model} ({platform}; {arch}; terminal)",
+      "gitHead": "c0d19245",
       "adapterFile": "src/relay/upstream/gemini-api.ts"
     },
     "kimi-code": {
@@ -29,6 +31,7 @@
       "codingBase": "https://api.kimi.com/coding/v1",
       "clientId": "17e5f671-d194-4dfb-9706-5516cb48c098",
       "homeDir": "~/.kimi-code",
+      "gitHead": "741708f9",
       "adapterFile": "src/relay/upstream/kimi-coding-api.ts"
     },
     "qwen-code": {
@@ -36,16 +39,19 @@
       "npm": "@qwen-code/qwen-code",
       "version": "0.21.11",
       "codingBase": "https://coding.dashscope.aliyuncs.com/v1",
+      "gitHead": "8517fa9d",
       "adapterFile": "src/relay/upstream/passthrough-specs.ts"
     },
     "opencli": {
       "repo": "https://github.com/jackwener/OpenCLI.git",
       "npm": "@jackwener/opencli",
-      "version": "1.8.6"
+      "version": "1.8.6",
+      "gitHead": "a86d647"
     },
     "grok-build": {
       "repo": "https://github.com/xai-org/grok-build.git",
       "version": "1.0.3",
+      "gitHead": "eb267fe",
       "baseUrl": "https://cli-chat-proxy.grok.com/v1",
       "userAgentTemplate": "grok-shell/{version} ({os}; {arch})",
       "clientIdentifier": "grok-shell",

@@ -67,14 +67,17 @@ for (const [name, spec] of Object.entries(pins.clis)) {
     || readJsonVersion(git.dir, "apps/kimi-code/package.json")
     || spec.version;
   const published = spec.npm ? npmVersion(spec.npm) : null;
+  const headMoved = Boolean(spec.gitHead) && git.head !== spec.gitHead && !git.head.startsWith(spec.gitHead);
   const stale =
-    (published && spec.version !== "source-head" && published !== spec.version)
+    headMoved
+    || (published && spec.version !== "source-head" && published !== spec.version)
     || (sourceVersion && spec.version !== "source-head" && sourceVersion !== spec.version && !String(sourceVersion).includes("nightly"));
   const item = {
     pin: spec.version,
     npm: published,
     sourceVersion,
     git: { head: git.head, date: git.date, subject: git.subject },
+    pinnedHead: spec.gitHead ?? null,
     adapterFile: spec.adapterFile ?? null,
     stale: Boolean(stale),
   };
