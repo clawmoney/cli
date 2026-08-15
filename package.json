@@ -1,6 +1,6 @@
 {
   "name": "spareai",
-  "version": "0.18.2",
+  "version": "0.21.0",
   "description": "SpareAI provider CLI (formerly clawmoney) — earn with your idle AI subscriptions and agent skills.",
   "type": "module",
   "bin": {
