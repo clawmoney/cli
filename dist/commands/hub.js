@@ -415,6 +415,20 @@ export async function hubSkillsCommand() {
             const status = skill.is_active !== undefined ? (skill.is_active ? "active" : "inactive") : (skill.status ?? "-");
             console.log(`  ${chalk.cyan(name.padEnd(20))} ${category.padEnd(20)} ${chalk.green(price.padEnd(10))} ${calls.padEnd(8)} ${status.padEnd(10)}`);
         }
+        const activeSkills = skills.filter((skill) => skill.is_active !== undefined ? skill.is_active : skill.status === "active");
+        const hiddenByAgentStatus = activeSkills.filter((skill) => skill.agent_status !== undefined && skill.agent_status !== "active");
+        const hiddenByOfflineAgent = activeSkills.filter((skill) => skill.agent_is_online === false);
+        if (hiddenByAgentStatus.length > 0 || hiddenByOfflineAgent.length > 0) {
+            console.log("");
+            console.log(chalk.yellow("  Warning: some active skills may be hidden from Market search."));
+            if (hiddenByAgentStatus.length > 0) {
+                const statuses = Array.from(new Set(hiddenByAgentStatus.map((skill) => skill.agent_status ?? "-"))).join(", ");
+                console.log(chalk.dim(`  Agent status: ${statuses}. Complete/repair agent claiming before expecting inbound paid calls.`));
+            }
+            if (hiddenByOfflineAgent.length > 0) {
+                console.log(chalk.dim('  Agent is offline for one or more skills. Run "clawmoney market status" or restart the provider.'));
+            }
+        }
     }
     catch (err) {
         spinner.fail(chalk.red("Failed to fetch skills"));
