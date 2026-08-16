@@ -383,9 +383,9 @@ export async function relayModelsCommand() {
             spinner.fail(chalk.red(`Failed to fetch models (${resp.status})`));
             process.exit(1);
         }
-        const models = resp.data.data
-            ?? resp.data.models
-            ?? [];
+        const models = Array.isArray(resp.data)
+            ? resp.data
+            : resp.data.data ?? resp.data.models ?? [];
         spinner.succeed(`Available Relay Models (${models.length})`);
         console.log("");
         if (models.length === 0) {
@@ -398,8 +398,10 @@ export async function relayModelsCommand() {
             const model = (m.model ?? "-").slice(0, 27);
             const cli = (m.cli_type ?? "-").slice(0, 9);
             const providers = String(m.provider_count ?? 0);
-            const inputPrice = m.min_price_input != null ? `$${m.min_price_input.toFixed(2)}` : "-";
-            const outputPrice = m.min_price_output != null ? `$${m.min_price_output.toFixed(2)}` : "-";
+            const inputPriceValue = m.min_price_input_per_m ?? m.min_price_input ?? m.avg_price_input_per_m ?? m.avg_price_input;
+            const outputPriceValue = m.min_price_output_per_m ?? m.min_price_output ?? m.avg_price_output_per_m ?? m.avg_price_output;
+            const inputPrice = inputPriceValue != null ? `$${inputPriceValue.toFixed(2)}` : "-";
+            const outputPrice = outputPriceValue != null ? `$${outputPriceValue.toFixed(2)}` : "-";
             const available = m.available !== false ? chalk.green("●") : chalk.dim("○");
             console.log(`  ${available} ${chalk.cyan(model.padEnd(27))} ${cli.padEnd(10)} ${providers.padEnd(12)} ${chalk.green(inputPrice.padEnd(14))} ${chalk.green(outputPrice.padEnd(14))}`);
         }
