@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { apiGet, apiPost } from '../utils/api.js';
 import { requireConfig } from '../utils/config.js';
+import { parseIntegerOption } from '../utils/validation.js';
 import { CdpProvider } from '../wallet/cdp-provider.js';
 import { x402PayJson } from '../wallet/x402-client.js';
 
@@ -140,8 +141,8 @@ export async function promoteVerifyCommand(
 
     // Submit witness verification
     const vote = options.vote || 'approve';
-    const relevanceScore = parseInt(options.relevance, 10);
-    const qualityScore = parseInt(options.quality, 10);
+    const relevanceScore = parseIntegerOption(options.relevance, '--relevance', { min: 1, max: 10 });
+    const qualityScore = parseIntegerOption(options.quality, '--quality', { min: 1, max: 10 });
     const verifySpinner = ora(`Submitting witness verification (${vote}, R:${relevanceScore} Q:${qualityScore})...`).start();
     try {
       const resp = await apiPost<{ id?: string; detail?: string }>(
@@ -177,8 +178,8 @@ export async function promoteVerifyCommand(
   } else {
     // Manual verification
     const vote = options.vote || 'approve';
-    const relevanceScore = parseInt(options.relevance, 10);
-    const qualityScore = parseInt(options.quality, 10);
+    const relevanceScore = parseIntegerOption(options.relevance, '--relevance', { min: 1, max: 10 });
+    const qualityScore = parseIntegerOption(options.quality, '--quality', { min: 1, max: 10 });
     const spinner = ora(`Submitting manual verification (${vote}, R:${relevanceScore} Q:${qualityScore})...`).start();
     try {
       const resp = await apiPost<{ id?: string; detail?: string }>(

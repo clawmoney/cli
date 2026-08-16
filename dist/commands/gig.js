@@ -3,16 +3,13 @@ import chalk from "chalk";
 import ora from "ora";
 import { requireConfig } from "../utils/config.js";
 import { apiGet, apiPost } from "../utils/api.js";
+import { parseIntegerOption, parseNumberOption } from "../utils/validation.js";
 import { uploadFile } from "../hub/media.js";
 import { CdpProvider } from "../wallet/cdp-provider.js";
 import { x402Fetch } from "../wallet/x402-client.js";
 export async function gigCreateCommand(options) {
     const config = requireConfig();
-    const budget = parseFloat(options.budget);
-    if (isNaN(budget) || budget <= 0) {
-        console.error(chalk.red("Invalid budget. Must be a positive number."));
-        process.exit(1);
-    }
+    const budget = parseNumberOption(options.budget, "--budget", { min: 0.01 });
     const spinner = ora("Creating gig...").start();
     try {
         const body = {
@@ -101,6 +98,11 @@ export async function gigCreateCommand(options) {
     }
 }
 export async function gigBrowseCommand(options) {
+    const limit = parseIntegerOption(options.limit, "--limit", {
+        defaultValue: 10,
+        min: 1,
+        max: 100,
+    });
     const spinner = ora("Browsing gigs...").start();
     try {
         const params = new URLSearchParams();
@@ -108,8 +110,7 @@ export async function gigBrowseCommand(options) {
             params.set("category", options.category);
         if (options.status)
             params.set("status", options.status);
-        if (options.limit)
-            params.set("limit", options.limit);
+        params.set("limit", String(limit));
         const resp = await apiGet(`/api/v1/market/escrow?${params}`);
         if (!resp.ok) {
             spinner.fail(chalk.red(`Failed to browse gigs (${resp.status})`));

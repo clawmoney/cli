@@ -5,6 +5,7 @@ import chalk from "chalk";
 import ora from "ora";
 import { requireConfig } from "../utils/config.js";
 import { apiGet, apiPost, getApiBase } from "../utils/api.js";
+import { parseIntegerOption, parseJsonObjectOption, parseNumberOption } from "../utils/validation.js";
 import { readPid, isPidAlive, removePid } from "../hub/provider.js";
 import { CdpProvider } from "../wallet/cdp-provider.js";
 import { x402Fetch } from "../wallet/x402-client.js";
@@ -168,6 +169,14 @@ interface SearchSkill {
 }
 
 export async function hubSearchCommand(options: SearchOptions): Promise<void> {
+  const limit = parseIntegerOption(options.limit, "--limit", {
+    defaultValue: 10,
+    min: 1,
+    max: 100,
+  });
+  const maxPrice = options.maxPrice
+    ? parseNumberOption(options.maxPrice, "--max-price", { min: 0 })
+    : undefined;
   const spinner = ora("Searching Market...").start();
 
   try {
@@ -175,8 +184,10 @@ export async function hubSearchCommand(options: SearchOptions): Promise<void> {
     if (options.query) params.set("q", options.query);
     if (options.category) params.set("category", options.category);
     if (options.sort) params.set("sort", options.sort);
-    if (options.limit) params.set("limit", options.limit);
-    if (options.maxPrice) params.set("max_price", options.maxPrice);
+    params.set("limit", String(limit));
+    if (maxPrice !== undefined) {
+      params.set("max_price", String(maxPrice));
+    }
     params.set("online_only", "true");
 
     const resp = await apiGet<{ data?: SearchSkill[]; count?: number }>(
@@ -287,15 +298,14 @@ export async function hubCallCommand(options: CallOptions): Promise<void> {
 
   let inputData: Record<string, unknown> = {};
   if (options.input) {
-    try {
-      inputData = JSON.parse(options.input);
-    } catch {
-      console.error(chalk.red("Invalid JSON for --input. Example: '{\"prompt\":\"hello\"}'"));
-      process.exit(1);
-    }
+    inputData = parseJsonObjectOption(options.input, "--input");
   }
 
-  const timeout = options.timeout ? parseInt(options.timeout, 10) : 60;
+  const timeout = parseIntegerOption(options.timeout, "--timeout", {
+    defaultValue: 60,
+    min: 1,
+    max: 3600,
+  });
   const spinner = ora(`Calling ${options.agent}/${options.skill}...`).start();
 
   try {
@@ -504,11 +514,7 @@ export async function hubRegisterCommand(
 ): Promise<void> {
   const config = requireConfig();
 
-  const price = parseFloat(options.price);
-  if (isNaN(price) || price < 0) {
-    console.error(chalk.red("Invalid price. Must be a non-negative number."));
-    process.exit(1);
-  }
+  const price = parseNumberOption(options.price, "--price", { min: 0 });
 
   const spinner = ora("Registering skill...").start();
 
@@ -647,10 +653,14 @@ interface HubOrder {
 
 export async function hubHistoryCommand(options: {
   type?: string;
-  limit?: number;
+  limit?: string;
 }): Promise<void> {
   const config = requireConfig();
-  const limit = options.limit ?? 10;
+  const limit = parseIntegerOption(options.limit, "--limit", {
+    defaultValue: 10,
+    min: 1,
+    max: 100,
+  });
   const showType = options.type ?? "all";
 
   console.log(chalk.bold("\n  Market Activity History\n"));

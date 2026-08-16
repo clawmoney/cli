@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { apiGet } from '../utils/api.js';
 import { loadConfig } from '../utils/config.js';
+import { parseIntegerOption } from '../utils/validation.js';
 function formatUsd(amount, decimals = 6) {
     if (amount === undefined || amount === null)
         return '-';
@@ -57,7 +58,11 @@ export async function browseCommand(options) {
     const apiKey = config?.api_key;
     const taskType = options.type || 'engage';
     const status = options.status || 'active';
-    const limit = parseInt(options.limit || '10', 10);
+    const limit = parseIntegerOption(options.limit, '--limit', {
+        defaultValue: 10,
+        min: 1,
+        max: 100,
+    });
     console.log('');
     if (taskType === 'promote' || taskType === 'all') {
         const promoteSpinner = ora('Fetching promote tasks...').start();
