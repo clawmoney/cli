@@ -14,11 +14,15 @@
  * Credential source, in order:
  *   1. Openclaw api_key profile (provider field matches spec.openclawProvider)
  *   2. Environment variable named by spec.envVarName
+ *   3. Official Qwen Code OAuth (`~/.qwen/oauth_creds.json`) for qwen-coding
  *
  * Anything more (spareai-managed keystore, per-request key rotation) is
  * out of scope here; users who need that today set the env var before
  * launching the daemon.
  */
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { fetch, ProxyAgent, setGlobalDispatcher } from "undici";
 import { relayLogger as logger } from "../logger.js";
 import { RateGuard, RateGuardBudgetExceededError, RateGuardCooldownError, } from "./rate-guard.js";
@@ -48,6 +52,30 @@ function configureDispatcher() {
     }
     dispatcherConfigured = true;
 }
+function readQwenOauthCreds() {
+    const path = join(homedir(), ".qwen", "oauth_creds.json");
+    if (!existsSync(path))
+        return null;
+    try {
+        const raw = JSON.parse(readFileSync(path, "utf8"));
+        const token = typeof raw.access_token === "string" ? raw.access_token.trim() : "";
+        if (!token)
+            return null;
+        const resource = typeof raw.resource_url === "string" ? raw.resource_url.trim() : "";
+        const host = resource
+            ? (/^https?:\/\//i.test(resource) ? resource : `https://${resource}`)
+            : "";
+        const baseUrl = host
+            ? host.endsWith("/v1")
+                ? host
+                : `${host.replace(/\/+$/, "")}/v1`
+            : undefined;
+        return { key: token, baseUrl };
+    }
+    catch {
+        return null;
+    }
+}
 function resolveKey(spec) {
     const fromOpenclaw = readOpenclawApiKeyProfile(spec.openclawProvider);
     if (fromOpenclaw) {
@@ -62,9 +90,17 @@ function resolveKey(spec) {
     if (fromEnv && fromEnv.length > 0) {
         return { key: fromEnv, source: "env" };
     }
+    if (spec.cliType === "qwen-coding") {
+        const oauth = readQwenOauthCreds();
+        if (oauth) {
+            return { key: oauth.key, source: "qwen-oauth", baseUrl: oauth.baseUrl };
+        }
+    }
     throw new Error(`No API key found for cli_type="${spec.cliType}" ` +
-        `(checked openclaw provider="${spec.openclawProvider}" and env ${spec.envVarName}). ` +
-        `Run \`openclaw onboard\` or \`export ${spec.envVarName}=...\` before starting the daemon.`);
+        `(checked openclaw provider="${spec.openclawProvider}" and env ${spec.envVarName}` +
+        (spec.cliType === "qwen-coding" ? " and ~/.qwen/oauth_creds.json" : "") +
+        `). ` +
+        `Run \`qwen\` then /auth, \`openclaw onboard\`, or \`export ${spec.envVarName}=...\` before starting the daemon.`);
 }
 // ── Rate guards (one per cli_type) ────────────────────────────────────────
 const rateGuards = new Map();
@@ -113,7 +149,7 @@ export async function preflightPassthroughApi(cliType, config) {
     const resolved = resolveKey(spec);
     logger.info(`[${spec.cliType}] preflight OK (key_source=${resolved.source}` +
         (resolved.source === "openclaw" ? `, profile=${resolved.profileKey}` : "") +
-        `, baseUrl=${spec.baseUrl})`);
+        `, baseUrl=${resolved.baseUrl ?? spec.baseUrl})`);
 }
 export async function callPassthroughApi(opts) {
     const spec = getPassthroughSpec(opts.cliType);
@@ -134,7 +170,8 @@ async function doCallPassthrough(spec, opts) {
             messages: [{ role: "user", content: opts.prompt ?? "" }],
             ...(opts.maxTokens ? { max_tokens: opts.maxTokens } : {}),
         };
-    const url = `${spec.baseUrl.replace(/\/+$/, "")}/chat/completions`;
+    const baseUrl = (resolved.baseUrl ?? spec.baseUrl).replace(/\/+$/, "");
+    const url = `${baseUrl}/chat/completions`;
     const resp = await fetch(url, {
         method: "POST",
         headers: {

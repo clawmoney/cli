@@ -37,10 +37,20 @@ const RESPONSES_REQUEST_TIMEOUT_MS = 10 * 60_000;
 const OFFICIAL_GROK_PROXY_HOST = "cli-chat-proxy.grok.com";
 // cli-chat-proxy rejects requests whose Grok CLI version is absent/too old
 // with a 426 ("version (none) is outdated, need >=0.1.202"). The official
-// grok-shell sends x-grok-client-version + x-grok-client-identifier on every
-// call (see xai-org/grok-build). Mirror that; bump when the floor rises.
-const GROK_CLIENT_VERSION = "0.2.93";
+// grok-shell sends User-Agent + x-grok-client-version + x-grok-client-identifier
+// on every call (xai-org/grok-build 1.0.5). Mirror that; bump when official
+// crates/codegen/xai-grok-version moves.
+const GROK_CLIENT_VERSION = "1.0.5";
 const GROK_CLIENT_IDENTIFIER = "grok-shell";
+
+function grokClientHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  return {
+    "user-agent": `${GROK_CLIENT_IDENTIFIER}/${GROK_CLIENT_VERSION} (${process.platform}; ${process.arch})`,
+    "x-grok-client-version": GROK_CLIENT_VERSION,
+    "x-grok-client-identifier": GROK_CLIENT_IDENTIFIER,
+    ...extra,
+  };
+}
 
 interface GrokCredentials {
   accessKey: string;
@@ -607,12 +617,10 @@ export async function preflightGrokApi(
     const response = await fetchImpl()(endpoint.modelsUrl, {
       method: "GET",
       signal: AbortSignal.timeout(PREFLIGHT_REQUEST_TIMEOUT_MS),
-      headers: {
+      headers: grokClientHeaders({
         accept: "application/json",
         authorization: `Bearer ${creds.accessKey}`,
-        "x-grok-client-version": GROK_CLIENT_VERSION,
-        "x-grok-client-identifier": GROK_CLIENT_IDENTIFIER,
-      },
+      }),
     });
     if (response.status === 401 && attempt === 0) {
       await response.body?.cancel();
@@ -1018,13 +1026,11 @@ async function doCallGrokApi(opts: CallGrokApiOptions): Promise<ParsedOutput> {
     const response = await fetchImpl()(endpoint.responsesUrl, {
       method: "POST",
       signal: AbortSignal.timeout(RESPONSES_REQUEST_TIMEOUT_MS),
-      headers: {
+      headers: grokClientHeaders({
         "content-type": "application/json",
         accept: request.stream ? "text/event-stream" : "application/json",
         authorization: `Bearer ${creds.accessKey}`,
-        "x-grok-client-version": GROK_CLIENT_VERSION,
-        "x-grok-client-identifier": GROK_CLIENT_IDENTIFIER,
-      },
+      }),
       body: serializedBody,
     });
 
