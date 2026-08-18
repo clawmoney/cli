@@ -6,7 +6,7 @@ import { promoteSubmitCommand, promoteVerifyCommand } from './commands/promote.j
 import { startAutoVerify } from './promote/auto-verify.js';
 import { walletStatusCommand, walletBalanceCommand, walletAddressCommand, walletSendCommand, } from './commands/wallet.js';
 import { tweetCommand } from './commands/tweet.js';
-import { gigCreateCommand, gigBrowseCommand, gigDetailCommand, gigAcceptCommand, gigDeliverCommand, gigApproveCommand, gigDisputeCommand, } from './commands/gig.js';
+import { gigCreateCommand, gigBrowseCommand, gigDetailCommand, gigAcceptCommand, gigSubmitCommand, gigSubmissionsCommand, gigDeliverCommand, gigApproveCommand, gigDisputeCommand, } from './commands/gig.js';
 import { hubStartCommand, hubStopCommand, hubStatusCommand, hubSearchCommand, hubCallCommand, hubRegisterCommand, hubSkillsCommand, hubOrderCommand, hubHistoryCommand, } from './commands/hub.js';
 import { relayRegisterCommand, relayStartCommand, relayStopCommand, relayStatusCommand, relayModelsCommand, relayLogsCommand, relayPreflightCommand, } from './commands/relay.js';
 import { antigravityLoginCommand, antigravityStatusCommand, } from './commands/antigravity.js';
@@ -502,6 +502,32 @@ gig
     .action(async (taskId) => {
     try {
         await gigAcceptCommand(taskId);
+    }
+    catch (err) {
+        console.error(err.message);
+        process.exit(1);
+    }
+});
+gig
+    .command('submit <task-id>')
+    .description('Submit an entry for a multi-submission gig')
+    .option('-c, --content <text>', 'Submission content (text)')
+    .option('-u, --url <url>', 'Submission URL or local file path')
+    .action(async (taskId, options) => {
+    try {
+        await gigSubmitCommand(taskId, options);
+    }
+    catch (err) {
+        console.error(err.message);
+        process.exit(1);
+    }
+});
+gig
+    .command('submissions <task-id>')
+    .description('List submissions for a multi-submission gig')
+    .action(async (taskId) => {
+    try {
+        await gigSubmissionsCommand(taskId);
     }
     catch (err) {
         console.error(err.message);

@@ -14,11 +14,13 @@ interface BrowseOptions {
 export declare function gigBrowseCommand(options: BrowseOptions): Promise<void>;
 export declare function gigDetailCommand(taskId: string): Promise<void>;
 export declare function gigAcceptCommand(taskId: string): Promise<void>;
-interface DeliverOptions {
+interface SubmitOptions {
     content?: string;
     url?: string;
 }
-export declare function gigDeliverCommand(taskId: string, options: DeliverOptions): Promise<void>;
+export declare function gigSubmitCommand(taskId: string, options: SubmitOptions): Promise<void>;
+export declare function gigSubmissionsCommand(taskId: string): Promise<void>;
+export declare function gigDeliverCommand(taskId: string, options: SubmitOptions): Promise<void>;
 export declare function gigApproveCommand(taskId: string): Promise<void>;
 export declare function gigDisputeCommand(taskId: string): Promise<void>;
 export {};

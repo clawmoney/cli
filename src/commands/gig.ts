@@ -30,6 +30,17 @@ interface EscrowTask {
   delivered_at?: string;
 }
 
+interface EscrowSubmission {
+  id?: string;
+  task_id?: string;
+  content?: string | null;
+  url?: string | null;
+  status?: string;
+  created_at?: string;
+  payout_amount?: number | null;
+  payment_tx_hash?: string | null;
+}
+
 // ── gig create ──
 
 interface CreateOptions {
@@ -273,6 +284,9 @@ export async function gigAcceptCommand(taskId: string): Promise<void> {
         : resp.data;
       const detail = typeof raw === "string" ? raw : JSON.stringify(raw);
       spinner.fail(chalk.red(`Failed (${resp.status}): ${detail}`));
+      if (detail.includes("/submit") || detail.toLowerCase().includes("multi-submission")) {
+        console.error(chalk.dim(`  Use: clawmoney gig submit ${taskId} --content "..." --url <url-or-file>`));
+      }
       process.exit(1);
     }
 
@@ -287,26 +301,29 @@ export async function gigAcceptCommand(taskId: string): Promise<void> {
 
 // ── gig deliver ──
 
-interface DeliverOptions {
+interface SubmitOptions {
   content?: string;
   url?: string;
 }
 
-export async function gigDeliverCommand(taskId: string, options: DeliverOptions): Promise<void> {
-  const config = requireConfig();
-
+function assertHasPayload(options: SubmitOptions): void {
   if (!options.content && !options.url) {
     console.error(chalk.red("Must provide --content or --url (or both)."));
     process.exit(1);
   }
+}
 
-  let deliveryUrl = options.url;
+async function uploadLocalUrlIfNeeded(
+  url: string | undefined,
+  apiKey: string
+): Promise<string | undefined> {
+  let deliveryUrl = url;
 
   // If url is a local file path, upload to R2 first
-  if (deliveryUrl && deliveryUrl.startsWith("/") && existsSync(deliveryUrl)) {
+  if (deliveryUrl && existsSync(deliveryUrl)) {
     const uploadSpinner = ora(`Uploading ${deliveryUrl}...`).start();
     const providerConfig = {
-      api_key: config.api_key,
+      api_key: apiKey,
       provider: {
         cli_command: "openclaw",
         max_concurrent: 3,
@@ -325,6 +342,113 @@ export async function gigDeliverCommand(taskId: string, options: DeliverOptions)
       uploadSpinner.fail(chalk.yellow("Upload failed, submitting local path as-is"));
     }
   }
+  return deliveryUrl;
+}
+
+function getErrorDetail(data: unknown): string {
+  const raw = data && typeof data === "object" && "detail" in data
+    ? (data as Record<string, unknown>).detail
+    : data;
+  return typeof raw === "string" ? raw : JSON.stringify(raw);
+}
+
+export async function gigSubmitCommand(taskId: string, options: SubmitOptions): Promise<void> {
+  const config = requireConfig();
+  assertHasPayload(options);
+
+  const deliveryUrl = await uploadLocalUrlIfNeeded(options.url, config.api_key);
+  const spinner = ora("Submitting to multi-submission gig...").start();
+
+  try {
+    const body: Record<string, unknown> = {};
+    if (options.content) body.content = options.content;
+    if (deliveryUrl) body.url = deliveryUrl;
+
+    const resp = await apiPost<EscrowSubmission>(
+      `/api/v1/market/escrow/${taskId}/submit`,
+      body,
+      config.api_key
+    );
+
+    if (!resp.ok) {
+      spinner.fail(chalk.red(`Failed (${resp.status}): ${getErrorDetail(resp.data)}`));
+      process.exit(1);
+    }
+
+    const submission = resp.data as EscrowSubmission;
+    spinner.succeed(chalk.green("Submission sent!"));
+    if (submission.id) {
+      console.log(chalk.dim(`  Submission ID: ${submission.id}`));
+    }
+    if (submission.status) {
+      console.log(chalk.dim(`  Status: ${submission.status}`));
+    }
+    console.log(chalk.dim("  Waiting for creator to review and approve."));
+  } catch (err) {
+    spinner.fail(chalk.red("Failed to submit gig entry"));
+    throw err;
+  }
+}
+
+export async function gigSubmissionsCommand(taskId: string): Promise<void> {
+  const config = requireConfig();
+  const spinner = ora("Fetching gig submissions...").start();
+
+  try {
+    const resp = await apiGet<{ data?: EscrowSubmission[]; count?: number }>(
+      `/api/v1/market/escrow/${taskId}/submissions`,
+      config.api_key
+    );
+
+    if (!resp.ok) {
+      spinner.fail(chalk.red(`Failed (${resp.status}): ${getErrorDetail(resp.data)}`));
+      process.exit(1);
+    }
+
+    const submissions = (resp.data as { data?: EscrowSubmission[] }).data ?? [];
+    const count = (resp.data as { count?: number }).count ?? submissions.length;
+
+    spinner.succeed(`Found ${count} submission(s)`);
+    console.log("");
+
+    if (submissions.length === 0) {
+      console.log(chalk.dim("  No submissions yet."));
+      return;
+    }
+
+    for (const submission of submissions) {
+      const payout = submission.payout_amount == null
+        ? "-"
+        : `$${Number(submission.payout_amount).toFixed(2)}`;
+      const tx = submission.payment_tx_hash ?? "-";
+      const content = (submission.content ?? "").replace(/\s+/g, " ").trim();
+
+      console.log(`  ${chalk.bold("ID:")}      ${submission.id ?? "-"}`);
+      console.log(`  ${chalk.bold("Status:")}  ${submission.status ?? "-"}`);
+      console.log(`  ${chalk.bold("Payout:")}  ${payout}`);
+      console.log(`  ${chalk.bold("Tx:")}      ${tx}`);
+      if (submission.created_at) {
+        console.log(`  ${chalk.bold("Created:")} ${submission.created_at}`);
+      }
+      if (submission.url) {
+        console.log(`  ${chalk.bold("URL:")}     ${submission.url}`);
+      }
+      if (content) {
+        console.log(`  ${chalk.bold("Content:")} ${content.slice(0, 160)}${content.length > 160 ? "..." : ""}`);
+      }
+      console.log("");
+    }
+  } catch (err) {
+    spinner.fail(chalk.red("Failed to fetch gig submissions"));
+    throw err;
+  }
+}
+
+export async function gigDeliverCommand(taskId: string, options: SubmitOptions): Promise<void> {
+  const config = requireConfig();
+  assertHasPayload(options);
+
+  const deliveryUrl = await uploadLocalUrlIfNeeded(options.url, config.api_key);
 
   const spinner = ora("Submitting delivery...").start();
 
@@ -340,11 +464,7 @@ export async function gigDeliverCommand(taskId: string, options: DeliverOptions)
     );
 
     if (!resp.ok) {
-      const raw = resp.data && typeof resp.data === "object" && "detail" in resp.data
-        ? (resp.data as Record<string, unknown>).detail
-        : resp.data;
-      const detail = typeof raw === "string" ? raw : JSON.stringify(raw);
-      spinner.fail(chalk.red(`Failed (${resp.status}): ${detail}`));
+      spinner.fail(chalk.red(`Failed (${resp.status}): ${getErrorDetail(resp.data)}`));
       process.exit(1);
     }
 
