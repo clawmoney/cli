@@ -32,11 +32,12 @@ export async function apiGet<T = unknown>(
     headers: buildHeaders(apiKey),
   });
 
+  const text = await response.text();
   let data: T;
   try {
-    data = (await response.json()) as T;
+    data = JSON.parse(text) as T;
   } catch {
-    data = (await response.text()) as unknown as T;
+    data = text as unknown as T;
   }
 
   return {
